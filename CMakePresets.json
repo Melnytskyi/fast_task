@@ -1,0 +1,151 @@
+{
+    "version": 2,
+    "buildPresets": [
+        {
+            "name": "Win-Debug",
+            "configurePreset": "Win-Debug",
+            "configuration": "Debug"
+        },
+        {
+            "name": "Win-Release",
+            "configurePreset": "Win-Release",
+            "configuration": "Release"
+        },
+        {
+            "name": "Win-RelWithDebInfo",
+            "configurePreset": "Win-RelWithDebInfo",
+            "configuration": "RelWithDebInfo"
+        },
+        {
+            "name": "Win-MinSizeRel",
+            "configurePreset": "Win-MinSizeRel",
+            "configuration": "MinSizeRel"
+        },
+        {
+            "name": "Linux-Debug",
+            "configurePreset": "Linux-Debug",
+            "configuration": "Debug"
+        },
+        {
+            "name": "Linux-Release",
+            "configurePreset": "Linux-Release",
+            "configuration": "Release"
+        },
+        {
+            "name": "Win-Test",
+            "configurePreset": "Win-Test",
+            "configuration": "Debug"
+        },
+        {
+            "name": "Linux-Test",
+            "configurePreset": "Linux-Test",
+            "configuration": "Debug"
+        }
+    ],
+    "configurePresets": [
+        {
+            "name": "Win-Basic",
+            "hidden": true,
+            "generator": "Visual Studio 17 2022",
+            "binaryDir": "${sourceDir}/out/build/${presetName}",
+            "cacheVariables": {
+                "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/vcpkg/scripts/buildsystems/vcpkg.cmake",
+                "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/${presetName}",
+                "VCPKG_TARGET_TRIPLET": "x64-windows-static"
+            }
+        },
+        {
+            "name": "Linux-Basic",
+            "hidden": true,
+            "generator": "Ninja",
+            
+            "binaryDir": "${sourceDir}/out/build/${presetName}",
+            "cacheVariables": {
+                "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/vcpkg/scripts/buildsystems/vcpkg.cmake",
+                "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/${presetName}",
+                "VCPKG_TARGET_TRIPLET": "x64-linux"
+            }
+        },
+        {
+            "name": "Test",
+            "hidden": true,
+            "cacheVariables": {
+                "ENABLE_TEST_COVERAGE": "ON",
+                "CMAKE_BUILD_TYPE": "Debug"
+            }
+        },
+        {
+            "name": "Debug",
+            "hidden": true,
+            "cacheVariables": {
+                "ENABLE_TEST_COVERAGE": "OFF",
+                "CMAKE_BUILD_TYPE": "Debug"
+            }
+        },
+        {
+            "name": "Release",
+            "hidden": true,
+            "cacheVariables": {
+                "ENABLE_TEST_COVERAGE": "OFF",
+                "CMAKE_BUILD_TYPE": "Release"
+            }
+        },
+        {
+            "name": "RelWithDebInfo",
+            "hidden": true,
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+            }
+        },
+        {
+            "name": "MinSizeRel",
+            "hidden": true,
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "MinSizeRel"
+            }
+        },
+
+
+        
+        {
+            "name": "Win-Debug",
+            "displayName": "Win-Debug",
+            "inherits": [ "Win-Basic", "Debug" ]
+        },
+        {
+            "name": "Win-Release",
+            "displayName": "Win-Release",
+            "inherits": [ "Win-Basic", "Release" ]
+        },
+        {
+            "name": "Win-RelWithDebInfo",
+            "displayName": "Win-RelWithDebInfo",
+            "inherits": [ "Win-Basic", "RelWithDebInfo" ]
+        },
+        {
+            "name": "Win-MinSizeRel",
+            "displayName": "Win-MinSizeRel",
+            "inherits": [ "Win-Basic", "MinSizeRel" ]
+        },
+        {
+            "name": "Linux-Debug",
+            "displayName": "Linux-Debug",
+            "inherits": [ "Linux-Basic", "Debug" ]
+        },
+        {
+            "name": "Linux-Release",
+            "displayName": "Linux-Release",
+            "inherits": [ "Linux-Basic", "Release" ]
+        },
+        {
+            "name": "Win-Test",
+            "displayName": "Win-Test",
+            "inherits": [ "Win-Basic", "Test" ]
+        },
+        {
+            "name": "Linux-Test",
+            "displayName": "Linux-Test",
+            "inherits": [ "Linux-Basic", "Test" ]
+        }
+    ]
+}
