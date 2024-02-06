@@ -13,8 +13,10 @@ namespace fast_task {
 
     task_rw_mutex::~task_rw_mutex() {
         std::lock_guard lg(no_race);
-        if (current_writer_task || !readers.empty())
-            throw std::logic_error("Mutex destroyed while locked");
+        if (current_writer_task || !readers.empty()) {
+            assert(false && "Mutex destroyed while locked");
+            std::terminate();
+        }
     }
 
     void task_rw_mutex::read_lock() {

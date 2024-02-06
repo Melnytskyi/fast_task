@@ -220,6 +220,8 @@ namespace fast_task {
 
     bool execute_task(const std::string& old_name) {
         bool pseudo_handle_caught_ex = false;
+        if (!loc.curr_task)
+            return false;
         if (!loc.curr_task->func)
             return true;
         if (loc.curr_task->end_of_life)
@@ -295,6 +297,18 @@ namespace fast_task {
         ++glob.executors;
 
         while (true) {
+            if (taskExecutor_check_next(guard, end_in_task_out)) {
+                break;
+            } else {
+                if (loadTask())
+                    continue;
+                guard.unlock();
+                if (loc.curr_task->bind_to_worker_id != (uint16_t)-1) {
+                    transfer_task(loc.curr_task);
+                    guard.lock();
+                    continue;
+                }
+            }
             if (execute_task(old_name)) {
                 guard.lock();
                 break;
@@ -328,9 +342,13 @@ namespace fast_task {
         std::unique_lock guard(safety);
         context.executors++;
         while (true) {
+            if (!queue.empty()) {
+                while (queue.empty())
+                    notifier.wait(guard);
+                loc.curr_task = std::move(queue.front());
+                queue.pop_front();
+            }
             guard.unlock();
-            if (!loc.curr_task->func)
-                break;
 
             if (loc.curr_task->bind_to_worker_id != (uint16_t)id) {
                 transfer_task(loc.curr_task);

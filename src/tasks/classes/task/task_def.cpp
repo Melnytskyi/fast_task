@@ -8,6 +8,7 @@
 #include <tasks/_internal.hpp>
 
 namespace fast_task {
+    bool task::enable_task_naming = false;
 
     task::task(task&& mov) noexcept
         : fres(std::move(mov.fres)) {
@@ -342,6 +343,18 @@ namespace fast_task {
         glob.tasks.swap(e0);
         glob.cold_tasks.swap(e1);
         glob.timed_tasks.shrink_to_fit();
+    }
+
+    std::shared_ptr<task> task::cxx_native_bridge(bool& checker, std::condition_variable_any& cd) {
+        return std::make_shared<task>([&] {
+            checker = true;
+            {
+                std::lock_guard l(glob.task_thread_safety);
+                glob.in_exec--;
+            }
+            loc.in_exec_decreased = true;
+            cd.notify_one();
+        });
     }
 
     std::shared_ptr<task> task::dummy_task() {

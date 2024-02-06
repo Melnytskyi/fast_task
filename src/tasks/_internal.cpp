@@ -26,7 +26,7 @@ namespace fast_task {
 
 #if PLATFORM_WINDOWS
     bool _set_name_thread_dbg(const std::string& name, unsigned long thread_id) {
-        std::wstring_convert<std::codecvt<char16_t, char, mbstate_t>> convert;
+        std::wstring_convert<std::codecvt<wchar_t, char, mbstate_t>> convert;
         std::wstring wname = convert.from_bytes(name);
         HANDLE thread = OpenThread(THREAD_SET_LIMITED_INFORMATION, false, thread_id);
         if (!thread)
@@ -37,7 +37,7 @@ namespace fast_task {
     }
 
     bool _set_name_thread_dbg(const std::string& name) {
-        std::wstring_convert<std::codecvt<char16_t, char, mbstate_t>> convert;
+        std::wstring_convert<std::codecvt<wchar_t, char, mbstate_t>> convert;
         std::wstring wname = convert.from_bytes(name);
         return SUCCEEDED(SetThreadDescription(GetCurrentThread(), wname.c_str()));
     }
@@ -48,7 +48,7 @@ namespace fast_task {
             return "";
         WCHAR* res;
         if (SUCCEEDED(GetThreadDescription(thread, &res))) {
-            std::wstring_convert<std::codecvt<char16_t, char, mbstate_t>> convert;
+            std::wstring_convert<std::codecvt<wchar_t, char, mbstate_t>> convert;
             std::string result = convert.to_bytes(res);
             LocalFree(res);
             CloseHandle(thread);
