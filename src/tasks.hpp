@@ -118,6 +118,34 @@ namespace fast_task {
         bool is_own();
     };
 
+    class read_lock {
+        task_rw_mutex& mutex;
+
+    public:
+        read_lock(task_rw_mutex& mutex)
+            : mutex(mutex) {
+            mutex.read_lock();
+        }
+
+        ~read_lock() {
+            mutex.read_unlock();
+        }
+    };
+
+    class write_lock {
+        task_rw_mutex& mutex;
+
+    public:
+        write_lock(task_rw_mutex& mutex)
+            : mutex(mutex) {
+            mutex.write_lock();
+        }
+
+        ~write_lock() {
+            mutex.write_unlock();
+        }
+    };
+
     enum class mutex_unify_type : uint8_t {
         noting,
         nmut,

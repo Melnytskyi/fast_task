@@ -253,7 +253,7 @@ namespace fast_task {
         }
     end_task:
         loc.is_task_thread = false;
-        if (!loc.curr_task->fres.end_of_life) {
+        if (!loc.curr_task->fres.end_of_life && loc.curr_task.use_count() == 1) {
             loc.curr_task->invalid_switch_caught = true;
             glob.tasks.push(loc.curr_task);
         }
