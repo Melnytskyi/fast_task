@@ -227,6 +227,7 @@ namespace fast_task {
         void notify_one();
         void notify_all();
         bool has_waiters();
+        void callback(std::unique_lock<mutex_unify>& mut, const std::shared_ptr<task>& task);
     };
 
     struct task_result {

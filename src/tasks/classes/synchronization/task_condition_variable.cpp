@@ -42,7 +42,7 @@ namespace fast_task {
         task_not_ended:
             //prevent destruct cd, because it is used in task
             task->no_race.lock();
-            if (!task->fres.end_of_life) {
+            if (!task->end_of_life) {
                 task->no_race.unlock();
                 goto task_not_ended;
             }
@@ -85,7 +85,7 @@ namespace fast_task {
         task_not_ended:
             //prevent destruct cd, because it is used in task
             task->no_race.lock();
-            if (!task->fres.end_of_life) {
+            if (!task->end_of_life) {
                 task->no_race.unlock();
                 goto task_not_ended;
             }
@@ -117,7 +117,7 @@ namespace fast_task {
             }
             glob.tasks_notifier.notify_one();
             if (task::max_running_tasks && loc.is_task_thread) {
-                if (can_be_scheduled_task_to_hot() && loc.curr_task && !loc.curr_task->fres.end_of_life)
+                if (can_be_scheduled_task_to_hot() && loc.curr_task && !loc.curr_task->end_of_life)
                     to_yield = true;
             }
         }
@@ -162,5 +162,17 @@ namespace fast_task {
     bool task_condition_variable::has_waiters() {
         std::lock_guard guard(no_race);
         return !resume_task.empty();
+    }
+
+    void task_condition_variable::callback(std::unique_lock<mutex_unify>& mut, const std::shared_ptr<task>& task) {
+        if (task->started)
+            throw std::logic_error("Task already started");
+        if (mut.mutex()->nmut == &no_race) {
+            resume_task.emplace_back(task, task->awake_check);
+        } else {
+            std::lock_guard guard(no_race);
+            resume_task.emplace_back(task, task->awake_check);
+        }
+        task->started = true;
     }
 }

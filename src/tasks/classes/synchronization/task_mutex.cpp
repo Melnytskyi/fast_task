@@ -50,10 +50,11 @@ namespace fast_task {
                 resume_task.emplace_back(task, task->awake_check);
                 while (!has_res)
                     cd.wait(ul);
+                ul.unlock();
             task_not_ended:
                 //prevent destruct cd, because it is used in task
                 task->no_race.lock();
-                if (!task->fres.end_of_life) {
+                if (!task->end_of_life) {
                     task->no_race.unlock();
                     goto task_not_ended;
                 }
@@ -166,7 +167,7 @@ namespace fast_task {
     void task_mutex::lifecycle_lock(const std::shared_ptr<task>& lock_task) {
         task::start(std::make_shared<task>([&] {
             std::unique_lock guard(*this, std::defer_lock);
-            while (!lock_task->fres.end_of_life) {
+            while (!lock_task->end_of_life) {
                 guard.lock();
                 task::await_task(lock_task);
                 guard.unlock();

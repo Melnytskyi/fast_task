@@ -50,7 +50,7 @@ namespace fast_task {
             task_not_ended:
                 //prevent destruct cd, because it is used in task
                 task->no_race.lock();
-                if (!task->fres.end_of_life) {
+                if (!task->end_of_life) {
                     task->no_race.unlock();
                     goto task_not_ended;
                 }
@@ -203,7 +203,7 @@ namespace fast_task {
             task_not_ended:
                 //prevent destruct cd, because it is used in task
                 task->no_race.lock();
-                if (!task->fres.end_of_life) {
+                if (!task->end_of_life) {
                     task->no_race.unlock();
                     goto task_not_ended;
                 }
@@ -220,7 +220,7 @@ namespace fast_task {
             task_not_ended2:
                 //prevent destruct cd, because it is used in task
                 task->no_race.lock();
-                if (!task->fres.end_of_life) {
+                if (!task->end_of_life) {
                     task->no_race.unlock();
                     goto task_not_ended2;
                 }
@@ -314,7 +314,7 @@ namespace fast_task {
         else
             self_mask = reinterpret_cast<task*>((size_t)_thread_id() | native_thread_flag);
 
-        if (current_writer_task == self_mask)
+        if (current_writer_task != self_mask)
             throw std::logic_error("Tried unlock non owned mutex");
         current_writer_task = nullptr;
         while (resume_task.size()) {
