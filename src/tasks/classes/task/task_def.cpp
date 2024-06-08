@@ -380,6 +380,15 @@ namespace fast_task {
         glob.time_notifier.notify_all();
     }
 
+    void task::callback(std::shared_ptr<task>& target, const std::shared_ptr<task>& task) {
+        mutex_unify unify(target->no_race);
+        std::unique_lock lock(unify);
+        if (target->end_of_life)
+            task::start(task);
+        else
+            target->fres.result_notify.callback(lock, task);
+    }
+
 #pragma optimize("", off)
 #if defined(__GNUC__) && !defined(__clang__)
     #pragma GCC push_options

@@ -327,6 +327,7 @@ namespace fast_task {
 
         static void explicitStartTimer();
         static void shutDown();
+        static void callback(std::shared_ptr<task>& target, const std::shared_ptr<task>& task);
     };
 
     #pragma pack(pop)
