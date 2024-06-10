@@ -146,6 +146,30 @@ namespace fast_task {
         }
     };
 
+    template <class T>
+    class protected_value {
+        T value;
+
+    public:
+        task_rw_mutex mutex;
+
+        template <class... Args>
+        protected_value(Args&&... args)
+            : value(std::forward<Args>(args)...) {}
+
+        template <class _Accessor>
+        auto get(_Accessor&& accessor) const {
+            read_lock lock(const_cast<task_rw_mutex&>(mutex));
+            return accessor(const_cast<const T&>(value));
+        }
+
+        template <class _Accessor>
+        auto set(_Accessor&& accessor) {
+            write_lock lock(mutex);
+            return accessor(value);
+        }
+    };
+
     enum class mutex_unify_type : uint8_t {
         noting,
         nmut,
