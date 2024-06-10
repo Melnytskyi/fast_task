@@ -71,10 +71,15 @@ namespace fast_task {
 
         if (current_task)
             return false;
-        else if (loc.is_task_thread || loc.context_in_swap)
+        else if (loc.is_task_thread || loc.context_in_swap) {
+            if (current_task == &*loc.curr_task)
+                return false;
             current_task = &*loc.curr_task;
-        else
+        } else {
+            if (current_task == reinterpret_cast<task*>((size_t)_thread_id() | native_thread_flag))
+                return false;
             current_task = reinterpret_cast<task*>((size_t)_thread_id() | native_thread_flag);
+        }
         return true;
     }
 
@@ -88,6 +93,8 @@ namespace fast_task {
         std::unique_lock ul(no_race, std::adopt_lock);
 
         if (loc.is_task_thread && !loc.context_in_swap) {
+            if (current_task == &*loc.curr_task)
+                return false;
             while (current_task) {
                 std::lock_guard guard(loc.curr_task->no_race);
                 makeTimeWait(time_point);
@@ -99,6 +106,8 @@ namespace fast_task {
             current_task = &*loc.curr_task;
             return true;
         } else {
+            if (current_task == reinterpret_cast<task*>((size_t)_thread_id() | native_thread_flag))
+                return false;
             bool has_res;
             std::condition_variable_any cd;
             while (current_task) {
