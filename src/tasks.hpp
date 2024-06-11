@@ -27,14 +27,13 @@ namespace fast_task {
         };
     }
 
-    //it do abort when catched, recommended do rethrow manually and catching by const reference
     class task_cancellation {
         bool in_landing = false;
         friend void forceCancelCancellation(task_cancellation& cancel_token);
 
     public:
         task_cancellation();
-        ~task_cancellation() noexcept(false);
+        ~task_cancellation();
         bool _in_landing();
     };
 
@@ -57,8 +56,7 @@ namespace fast_task {
         bool try_lock_until(std::chrono::high_resolution_clock::time_point time_point);
         void unlock();
         bool is_locked();
-        //put here child task(not started), and it will lock mutex, and unlock it when it will be finished
-        void lifecycle_lock(const std::shared_ptr<task>& task);
+        void lifecycle_lock(std::shared_ptr<task>& task);
         bool is_own();
     };
 
@@ -69,15 +67,14 @@ namespace fast_task {
     public:
         task_recursive_mutex() = default;
 
-        ~task_recursive_mutex() noexcept(false);
+        ~task_recursive_mutex();
         void lock();
         bool try_lock();
         bool try_lock_for(size_t milliseconds);
         bool try_lock_until(std::chrono::high_resolution_clock::time_point time_point);
         void unlock();
         bool is_locked();
-        //put here child task(not started), and it will lock mutex, and unlock it when it will be finished
-        void lifecycle_lock(const std::shared_ptr<task>& task);
+        void lifecycle_lock(std::shared_ptr<task>& task);
         bool is_own();
     };
 
@@ -99,10 +96,7 @@ namespace fast_task {
         bool try_read_lock_until(std::chrono::high_resolution_clock::time_point time_point);
         void read_unlock();
         bool is_read_locked();
-        //put here child task(not started), and it will lock mutex, and unlock it when it will be finished
-        void lifecycle_read_lock(const std::shared_ptr<task>& task);
-        //put here child task(not started), and it will lock mutex and relock it when received value from child task, and unlock it when it will be finished
-        void sequence_read_lock(const std::shared_ptr<task>& task);
+        void lifecycle_read_lock(std::shared_ptr<task>& task);
 
         void write_lock();
         bool try_write_lock();
@@ -110,10 +104,7 @@ namespace fast_task {
         bool try_write_lock_until(std::chrono::high_resolution_clock::time_point time_point);
         void write_unlock();
         bool is_write_locked();
-        //put here child task(not started), and it will lock mutex, and unlock it when it will be finished
-        void lifecycle_write_lock(const std::shared_ptr<task>& task);
-        //put here child task(not started), and it will lock mutex and relock it when received value from child task, and unlock it when it will be finished
-        void sequence_write_lock(const std::shared_ptr<task>& task);
+        void lifecycle_write_lock(std::shared_ptr<task>& task);
 
         bool is_own();
     };
@@ -278,7 +269,7 @@ namespace fast_task {
         static bool enable_task_naming;
 
         task_result fres;
-        std::function<void(const std::exception_ptr&)> ex_handle; //if ex_handle is nullptr then exception will be stored in fres
+        std::function<void(const std::exception_ptr&)> ex_handle;
         std::function<void()> func;
         std::mutex no_race;
         mutex_unify relock_0;
@@ -286,13 +277,13 @@ namespace fast_task {
         mutex_unify relock_2;
         std::chrono::high_resolution_clock::time_point timeout = std::chrono::high_resolution_clock::time_point::min();
         uint16_t awake_check = 0;
-        uint16_t bind_to_worker_id = -1; //-1 - not binded
+        uint16_t bind_to_worker_id = -1;
         bool time_end_flag : 1 = false;
         bool started : 1 = false;
         bool awaked : 1 = false;
         bool end_of_life : 1 = false;
         bool make_cancel : 1 = false;
-        bool auto_bind_worker : 1 = false; //can be binded to regular worker
+        bool auto_bind_worker : 1 = false;
         bool invalid_switch_caught : 1 = false;
 
     public:
@@ -302,7 +293,7 @@ namespace fast_task {
         task(task&& mov) noexcept;
         ~task();
         void set_auto_bind_worker(bool enable = true);
-        void set_worker_id(uint16_t id); //disables auto_bind_worker and manually bind task to worker
+        void set_worker_id(uint16_t id);
 
         static void schedule(std::shared_ptr<task>&& task, size_t milliseconds);
         static void schedule(const std::shared_ptr<task>& task, size_t milliseconds);
@@ -312,8 +303,7 @@ namespace fast_task {
         static void start(std::list<std::shared_ptr<task>>& lgr_task);
         static void start(const std::shared_ptr<task>& lgr_task);
 
-        //if count zero then threads count will be dynamically calculated
-        static uint16_t create_bind_only_executor(uint16_t fixed_count, bool allow_implicit_start); //return id of executor, this worker can't be used for regular tasks, only for binded tasks
+        static uint16_t create_bind_only_executor(uint16_t fixed_count, bool allow_implicit_start);
         static void close_bind_only_executor(uint16_t id);
 
         static void create_executor(size_t count = 1);
@@ -339,19 +329,17 @@ namespace fast_task {
         static bool is_task();
 
 
-        //clean unused memory, used for debug purposes, ie memory leak
-        //not recommended use in production
-        static void clean_up();
-
         static std::shared_ptr<task> dummy_task();
-
-        //unsafe function, checker and cd must be alive during task bridge lifetime
         static std::shared_ptr<task> cxx_native_bridge(bool& checker, std::condition_variable_any& cd);
-
 
         static void explicitStartTimer();
         static void shutDown();
         static void callback(std::shared_ptr<task>& target, const std::shared_ptr<task>& task);
+
+
+        //DEBUG ONLY, not recommended use in production
+        static void clean_up();
+        //DEBUG ONLY, not recommended use in production
     };
 
     #pragma pack(pop)
@@ -399,15 +387,14 @@ namespace fast_task {
     };
 
     class task_query {
-        std::list<std::shared_ptr<task>> tasks;
         class task_query_handle* handle;
-        bool is_running;
-        friend void __TaskQuery_add_task_leave(class task_query_handle* tqh, task_query* tq);
+        friend void __TaskQuery_add_task_leave(class task_query_handle* tqh);
 
     public:
         task_query(size_t at_execution_max = 0);
         ~task_query();
-        void add(const std::shared_ptr<task>&);
+        void add(std::shared_ptr<task>&);
+        void add(std::shared_ptr<task>&&);
         void enable();
         void disable();
         bool in_query(const std::shared_ptr<task>& task);

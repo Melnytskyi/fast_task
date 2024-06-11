@@ -40,7 +40,6 @@ namespace fast_task {
                     cd.wait(mut);
             }
         task_not_ended:
-            //prevent destruct cd, because it is used in task
             task->no_race.lock();
             if (!task->end_of_life) {
                 task->no_race.unlock();
@@ -83,7 +82,6 @@ namespace fast_task {
             }
 
         task_not_ended:
-            //prevent destruct cd, because it is used in task
             task->no_race.lock();
             if (!task->end_of_life) {
                 task->no_race.unlock();

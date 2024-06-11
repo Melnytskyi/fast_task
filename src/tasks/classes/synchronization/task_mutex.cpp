@@ -52,7 +52,6 @@ namespace fast_task {
                     cd.wait(ul);
                 ul.unlock();
             task_not_ended:
-                //prevent destruct cd, because it is used in task
                 task->no_race.lock();
                 if (!task->end_of_life) {
                     task->no_race.unlock();
@@ -173,14 +172,15 @@ namespace fast_task {
         return true;
     }
 
-    void task_mutex::lifecycle_lock(const std::shared_ptr<task>& lock_task) {
-        task::start(std::make_shared<task>([&] {
-            std::unique_lock guard(*this, std::defer_lock);
-            while (!lock_task->end_of_life) {
-                guard.lock();
-                task::await_task(lock_task);
-                guard.unlock();
-            }
-        }));
+    void task_mutex::lifecycle_lock(std::shared_ptr<task>& lock_task) {
+        if (lock_task->started)
+            throw std::logic_error("Task already started");
+
+        auto old_func = std::move(lock_task->func);
+        lock_task->func = [old_func = std::move(old_func), this]() {
+            std::lock_guard guard(*this);
+            old_func();
+        };
+        task::start(lock_task);
     }
 }

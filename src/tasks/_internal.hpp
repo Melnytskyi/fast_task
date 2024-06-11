@@ -96,7 +96,6 @@ namespace fast_task {
 #endif
     };
 
-    //scheduler functions
     void startTimeController();
     void swapCtx();
     void checkCancellation();
@@ -108,7 +107,7 @@ namespace fast_task {
     void taskExecutor(bool end_in_task_out = false);
     void bindedTaskExecutor(uint16_t id);
     void unsafe_put_task_to_timed_queue(std::deque<timing>& queue, std::chrono::high_resolution_clock::time_point t, std::shared_ptr<task>& task);
-    bool can_be_scheduled_task_to_hot(); //returns if task can be scheduled to hot queue
+    bool can_be_scheduled_task_to_hot();
     void forceCancelCancellation(task_cancellation& restart);
 
 

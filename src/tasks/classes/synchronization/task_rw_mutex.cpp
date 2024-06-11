@@ -48,7 +48,6 @@ namespace fast_task {
                 while (!has_res)
                     cd.wait(ul);
             task_not_ended:
-                //prevent destruct cd, because it is used in task
                 task->no_race.lock();
                 if (!task->end_of_life) {
                     task->no_race.unlock();
@@ -148,24 +147,16 @@ namespace fast_task {
         return it != readers.end();
     }
 
-    void task_rw_mutex::lifecycle_read_lock(const std::shared_ptr<task>& lock_task) {
-        task::start(std::make_shared<task>([&] {
-            struct Guard_lock {
-                task_rw_mutex& mtx;
-                bool locked;
-                Guard_lock(task_rw_mutex& mtx)
-                    : mtx(mtx), locked(true) {
-                    mtx.read_lock();
-                }
-                ~Guard_lock() {
-                    if (locked) {
-                        locked = false;
-                        mtx.read_unlock();
-                    }
-                }
-            } lock(*this);
-            task::await_task(lock_task, true);
-        }));
+    void task_rw_mutex::lifecycle_read_lock(std::shared_ptr<task>& lock_task) {
+        if (lock_task->started)
+            throw std::logic_error("Task already started");
+
+        auto old_func = std::move(lock_task->func);
+        lock_task->func = [old_func = std::move(old_func), this]() {
+            fast_task::read_lock guard(*this);
+            old_func();
+        };
+        task::start(lock_task);
     }
 
     void task_rw_mutex::write_lock() {
@@ -340,24 +331,16 @@ namespace fast_task {
         return current_writer_task == self_mask;
     }
 
-    void task_rw_mutex::lifecycle_write_lock(const std::shared_ptr<task>& lock_task) {
-        task::start(std::make_shared<task>([&] {
-            struct Guard_lock {
-                task_rw_mutex& mtx;
-                bool locked;
-                Guard_lock(task_rw_mutex& mtx)
-                    : mtx(mtx), locked(true) {
-                    mtx.write_lock();
-                }
-                ~Guard_lock() {
-                    if (locked) {
-                        locked = false;
-                        mtx.write_unlock();
-                    }
-                }
-            } lock(*this);
-            task::await_task(lock_task, true);
-        }));
+    void task_rw_mutex::lifecycle_write_lock(std::shared_ptr<task>& lock_task) {
+        if (lock_task->started)
+            throw std::logic_error("Task already started");
+
+        auto old_func = std::move(lock_task->func);
+        lock_task->func = [old_func = std::move(old_func), this]() {
+            fast_task::write_lock guard(*this);
+            old_func();
+        };
+        task::start(lock_task);
     }
 
     bool task_rw_mutex::is_own() {

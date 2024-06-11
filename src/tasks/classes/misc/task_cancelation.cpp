@@ -10,10 +10,9 @@
 namespace fast_task {
     task_cancellation::task_cancellation() {}
 
-    task_cancellation::~task_cancellation() noexcept(false) {
-        if (!in_landing) {
+    task_cancellation::~task_cancellation() {
+        if (!in_landing)
             abort();
-        }
     }
 
     bool task_cancellation::_in_landing() {

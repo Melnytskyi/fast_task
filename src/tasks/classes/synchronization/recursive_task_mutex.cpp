@@ -8,9 +8,8 @@
 #include <tasks/_internal.hpp>
 
 namespace fast_task {
-    task_recursive_mutex::~task_recursive_mutex() noexcept(false) {
-        if (recursive_count)
-            throw std::logic_error("Mutex destroyed while locked");
+    task_recursive_mutex::~task_recursive_mutex() {
+        assert(recursive_count == 0 && "Mutex destroyed while locked");
     }
 
     void task_recursive_mutex::lock() {
@@ -145,7 +144,7 @@ namespace fast_task {
             return false;
     }
 
-    void task_recursive_mutex::lifecycle_lock(const std::shared_ptr<task>& task) {
+    void task_recursive_mutex::lifecycle_lock(std::shared_ptr<task>& task) {
         mutex.lifecycle_lock(task);
     }
 
