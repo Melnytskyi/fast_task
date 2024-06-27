@@ -342,12 +342,10 @@ namespace fast_task {
         std::unique_lock guard(safety);
         context.executors++;
         while (true) {
-            if (!queue.empty()) {
-                while (queue.empty())
-                    notifier.wait(guard);
-                loc.curr_task = std::move(queue.front());
-                queue.pop_front();
-            }
+            while (queue.empty())
+                notifier.wait(guard);
+            loc.curr_task = std::move(queue.front());
+            queue.pop_front();
             guard.unlock();
 
             if (loc.curr_task->bind_to_worker_id != (uint16_t)id) {
