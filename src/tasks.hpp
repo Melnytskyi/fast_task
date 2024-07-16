@@ -148,6 +148,9 @@ namespace fast_task {
         protected_value(Args&&... args)
             : value(std::forward<Args>(args)...) {}
 
+        protected_value(protected_value&& move)
+            : value(std::move(move.value)) {}
+
         template <class _Accessor>
         auto get(_Accessor&& accessor) const {
             read_lock lock(const_cast<task_rw_mutex&>(mutex));
