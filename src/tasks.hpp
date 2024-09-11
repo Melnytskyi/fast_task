@@ -152,13 +152,13 @@ namespace fast_task {
             : value(std::move(move.value)) {}
 
         template <class _Accessor>
-        auto get(_Accessor&& accessor) const {
+        decltype(auto) get(_Accessor&& accessor) const {
             read_lock lock(const_cast<task_rw_mutex&>(mutex));
             return accessor(const_cast<const T&>(value));
         }
 
         template <class _Accessor>
-        auto set(_Accessor&& accessor) {
+        decltype(auto) set(_Accessor&& accessor) {
             write_lock lock(mutex);
             return accessor(value);
         }
