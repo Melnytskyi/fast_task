@@ -94,6 +94,7 @@ namespace fast_task {
         }
         std::lock_guard l(loc.curr_task->no_race);
         loc.curr_task->end_of_life = true;
+        loc.curr_task->fres.end_of_life = true;
         loc.curr_task->fres.result_notify.notify_all();
         --glob.in_run_tasks;
         if (task::max_running_tasks)
@@ -117,6 +118,7 @@ namespace fast_task {
         mutex_unify uni(loc.curr_task->no_race);
         std::unique_lock l(uni);
         loc.curr_task->end_of_life = true;
+        loc.curr_task->fres.end_of_life = true;
         loc.curr_task->fres.result_notify.notify_all();
         --glob.in_run_tasks;
         if (task::max_running_tasks)
@@ -252,6 +254,8 @@ namespace fast_task {
             loc.ex_ptr = nullptr;
         }
     end_task:
+        loc.curr_task->fres.context = loc.current_context;
+        loc.current_context = nullptr;
         loc.is_task_thread = false;
         if (!loc.curr_task->fres.end_of_life && loc.curr_task.use_count() == 1) {
             loc.curr_task->invalid_switch_caught = true;
