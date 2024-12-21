@@ -43,7 +43,7 @@ namespace fast_task {
                 throw std::runtime_error("Caught task that switched context but not scheduled or finalized self");
             }
         } else
-            throw std::runtime_error("swapCtx() not allowed call in non-task thread or in dispatcher");
+            throw std::runtime_error("swapCtx() not allowed to call in non-task thread or in dispatcher");
     }
 
     void swapCtxRelock(const mutex_unify& mut0) {

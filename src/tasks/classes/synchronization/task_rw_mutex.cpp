@@ -19,6 +19,7 @@ namespace fast_task {
         }
     }
 
+#pragma optimize("", off)
     void task_rw_mutex::read_lock() {
         if (loc.is_task_thread) {
             loc.curr_task->awaked = false;
@@ -322,6 +323,7 @@ namespace fast_task {
         }
     }
 
+#pragma optimize("", on)
     bool task_rw_mutex::is_write_locked() {
         task* self_mask;
         if (loc.is_task_thread || loc.context_in_swap)
