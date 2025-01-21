@@ -136,6 +136,19 @@ namespace fast_task {
         return id;
     }
 
+    void task::assign_bind_only_executor(uint16_t id, uint16_t fixed_count, bool allow_implicit_start) {
+        std::lock_guard guard(glob.binded_workers_safety);
+        uint16_t try_count = 0;
+        if (glob.binded_workers.contains(id))
+            throw std::runtime_error("Worker already assigned!");
+        if (id == (uint16_t)-1)
+            throw std::runtime_error("Invalid id");
+        glob.binded_workers[id].allow_implicit_start = allow_implicit_start;
+        glob.binded_workers[id].fixed_size = (bool)fixed_count;
+        for (size_t i = 0; i < fixed_count; i++)
+            std::thread(bindedTaskExecutor, id).detach();
+    }
+
     void task::close_bind_only_executor(uint16_t id) {
         mutex_unify unify(glob.binded_workers_safety);
         std::unique_lock guard(unify);
@@ -148,9 +161,14 @@ namespace fast_task {
             if (context.in_close)
                 return;
             context.in_close = true;
+
+            std::swap(transfer_tasks, context.tasks);
             for (uint16_t i = 0; i < context.executors; i++) {
-                context.tasks.emplace_back(new task(nullptr));
+                std::shared_ptr<task> tsk = std::make_shared<task>(nullptr);
+                tsk->set_worker_id(id);
+                context.tasks.emplace_back(tsk);
             }
+
             context.new_task_notifier.notify_all();
             {
                 multiply_mutex mmut{unify, context.no_race};
@@ -160,7 +178,7 @@ namespace fast_task {
                     context.on_closed_notifier.wait(re_lock);
                 re_lock.release();
             }
-            std::swap(transfer_tasks, context.tasks);
+
             context_lock.unlock();
             glob.binded_workers.erase(id);
         }
@@ -323,6 +341,18 @@ namespace fast_task {
     void task::notify_cancel(std::list<std::shared_ptr<task>>& tasks) {
         for (auto& it : tasks)
             notify_cancel(it);
+    }
+
+    void task::await_notify_cancel(std::shared_ptr<task>& lgr_task) {
+        mutex_unify uni(lgr_task->no_race);
+        std::unique_lock l(uni);
+        lgr_task->make_cancel = true;
+        lgr_task->fres.awaitEnd(l);
+    }
+
+    void task::await_notify_cancel(std::list<std::shared_ptr<task>>& tasks) {
+        for (auto& it : tasks)
+            await_notify_cancel(it);
     }
 
     size_t task::task_id() {

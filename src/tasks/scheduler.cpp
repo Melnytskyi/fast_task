@@ -354,6 +354,7 @@ namespace fast_task {
 
             if (loc.curr_task->bind_to_worker_id != (uint16_t)id) {
                 transfer_task(loc.curr_task);
+                guard.lock();
                 continue;
             }
             loc.is_task_thread = true;

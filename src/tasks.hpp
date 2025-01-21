@@ -307,6 +307,7 @@ namespace fast_task {
         static void start(const std::shared_ptr<task>& lgr_task);
 
         static uint16_t create_bind_only_executor(uint16_t fixed_count, bool allow_implicit_start);
+        static void assign_bind_only_executor(uint16_t id, uint16_t fixed_count, bool allow_implicit_start);
         static void close_bind_only_executor(uint16_t id);
 
         static void create_executor(size_t count = 1);
@@ -326,6 +327,8 @@ namespace fast_task {
         static void await_multiple(std::shared_ptr<task>* tasks, size_t len, bool pre_started = false, bool release = false);
         static void notify_cancel(std::shared_ptr<task>& task);
         static void notify_cancel(std::list<std::shared_ptr<task>>& tasks);
+        static void await_notify_cancel(std::shared_ptr<task>& task);
+        static void await_notify_cancel(std::list<std::shared_ptr<task>>& tasks);
         static size_t task_id();
         static void check_cancellation();
         static void self_cancel();
