@@ -18,25 +18,17 @@ namespace fast_task {
     void task_semaphore::lock() {
         loc.curr_task->awaked = false;
         loc.curr_task->time_end_flag = false;
-    re_try:
-        no_race.lock();
-        if (!allow_threshold) {
+        std::unique_lock keeper(no_race);
+        while (!allow_threshold) {
             if (loc.is_task_thread) {
                 std::lock_guard guard(glob.task_thread_safety);
                 resume_task.emplace_back(loc.curr_task, loc.curr_task->awake_check);
-                no_race.unlock();
+                keeper.unlock();
                 swapCtxRelock(glob.task_thread_safety);
-            } else {
-                std::mutex mtx;
-                std::unique_lock guard(mtx);
-                no_race.unlock();
-                native_notify.wait(guard);
-            }
-            goto re_try;
-        } else
-            --allow_threshold;
-        no_race.unlock();
-        return;
+            } else
+                native_notify.wait(keeper);
+        }
+        --allow_threshold;
     }
 
     bool task_semaphore::try_lock() {
@@ -56,28 +48,23 @@ namespace fast_task {
     }
 
     bool task_semaphore::try_lock_until(std::chrono::high_resolution_clock::time_point time_point) {
-    re_try:
         if (!no_race.try_lock_until(time_point))
             return false;
-        if (!allow_threshold) {
+        std::unique_lock keeper(no_race);
+
+        while (!allow_threshold) {
             if (loc.is_task_thread) {
                 std::lock_guard guard(glob.task_thread_safety);
                 makeTimeWait(time_point);
                 resume_task.emplace_back(loc.curr_task, loc.curr_task->awake_check);
-                no_race.unlock();
+                keeper.unlock();
                 swapCtxRelock(glob.task_thread_safety);
                 if (!loc.curr_task->awaked)
                     return false;
-            } else {
-                no_race.unlock();
-                std::mutex mtx;
-                std::unique_lock guard(mtx);
-                if (native_notify.wait_until(guard, time_point) == std::cv_status::timeout)
-                    return false;
-            }
-            goto re_try;
-        } else
-            --allow_threshold;
+            } else if (native_notify.wait_until(keeper, time_point) == std::cv_status::timeout)
+                return false;
+        }
+        --allow_threshold;
         no_race.unlock();
         return true;
     }

@@ -48,6 +48,7 @@ namespace fast_task {
                 resume_task.emplace_back(task, task->awake_check);
                 while (!has_res)
                     cd.wait(ul);
+                ul.unlock();
             task_not_ended:
                 task->no_race.lock();
                 if (!task->end_of_life) {
@@ -55,6 +56,7 @@ namespace fast_task {
                     goto task_not_ended;
                 }
                 task->no_race.unlock();
+                ul.lock();
             }
             readers.push_back(self_mask);
         }

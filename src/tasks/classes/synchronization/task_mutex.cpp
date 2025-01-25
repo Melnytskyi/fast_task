@@ -58,6 +58,7 @@ namespace fast_task {
                     goto task_not_ended;
                 }
                 task->no_race.unlock();
+                ul.lock();
             }
             current_task = reinterpret_cast<fast_task::task*>((size_t)_thread_id() | native_thread_flag);
         }

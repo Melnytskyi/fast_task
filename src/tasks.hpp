@@ -353,7 +353,7 @@ namespace fast_task {
     class task_semaphore {
         std::list<__::resume_task> resume_task;
         std::timed_mutex no_race;
-        std::condition_variable native_notify;
+        std::condition_variable_any native_notify;
         size_t allow_threshold = 0;
         size_t max_threshold = 0;
 
