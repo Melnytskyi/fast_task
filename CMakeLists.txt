@@ -27,12 +27,9 @@ set(ENABLE_BOOST_PREPROCESSOR ON)
 
 FILE(GLOB SRCFILES 
         src/*.cpp
-        src/tasks/*.cpp
-        src/tasks/classes/*.cpp
-        src/tasks/classes/misc/*.cpp
-        src/tasks/classes/synchronization/*.cpp
-        src/tasks/classes/task/*.cpp
-        src/tasks/util/*.cpp
+        src/*/*.cpp
+        src/*/*/*.cpp
+        src/*/*/*/*.cpp
 )
 
 

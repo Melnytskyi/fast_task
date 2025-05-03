@@ -153,9 +153,11 @@ namespace fast_task {
     void task_rw_mutex::lifecycle_read_lock(std::shared_ptr<task>& lock_task) {
         if (lock_task->started)
             throw std::logic_error("Task already started");
+        if (lock_task->callbacks.is_extended_mode)
+            throw std::logic_error("Extended mode does not support lifecycle lock");
 
-        auto old_func = std::move(lock_task->func);
-        lock_task->func = [old_func = std::move(old_func), this]() {
+        auto old_func = std::move(lock_task->callbacks.normal_mode.func);
+        lock_task->callbacks.normal_mode.func = [old_func = std::move(old_func), this]() {
             fast_task::read_lock guard(*this);
             old_func();
         };
@@ -338,9 +340,11 @@ namespace fast_task {
     void task_rw_mutex::lifecycle_write_lock(std::shared_ptr<task>& lock_task) {
         if (lock_task->started)
             throw std::logic_error("Task already started");
+        if (lock_task->callbacks.is_extended_mode)
+            throw std::logic_error("Extended mode does not support lifecycle lock");
 
-        auto old_func = std::move(lock_task->func);
-        lock_task->func = [old_func = std::move(old_func), this]() {
+        auto old_func = std::move(lock_task->callbacks.normal_mode.func);
+        lock_task->callbacks.normal_mode.func = [old_func = std::move(old_func), this]() {
             fast_task::write_lock guard(*this);
             old_func();
         };

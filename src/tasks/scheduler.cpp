@@ -84,7 +84,11 @@ namespace fast_task {
         *loc.stack_current_context = std::move(sink);
         try {
             checkCancellation();
-            loc.curr_task->func();
+            if (loc.curr_task->callbacks.is_extended_mode) {
+                if (loc.curr_task->callbacks.extended_mode.on_start)
+                    loc.curr_task->callbacks.extended_mode.on_start(loc.curr_task->callbacks.extended_mode.data);
+            } else
+                loc.curr_task->callbacks.normal_mode.func();
         } catch (task_cancellation& cancel) {
             forceCancelCancellation(cancel);
         } catch (const boost::context::detail::forced_unwind&) {
@@ -106,7 +110,9 @@ namespace fast_task {
         *loc.stack_current_context = std::move(sink);
         try {
             checkCancellation();
-            loc.curr_task->ex_handle(loc.ex_ptr);
+            if (!loc.curr_task->callbacks.is_extended_mode)
+                loc.curr_task->callbacks.normal_mode.ex_handle(loc.ex_ptr);
+            //TODO : implement extended mode
         } catch (task_cancellation& cancel) {
             forceCancelCancellation(cancel);
         } catch (const boost::context::detail::forced_unwind&) {
@@ -224,8 +230,9 @@ namespace fast_task {
         bool pseudo_handle_caught_ex = false;
         if (!loc.curr_task)
             return false;
-        if (!loc.curr_task->func)
-            return true;
+        if (!loc.curr_task->callbacks.is_extended_mode)
+            if (!loc.curr_task->callbacks.normal_mode.func)
+                return true;
         if (loc.curr_task->end_of_life)
             goto end_task;
 

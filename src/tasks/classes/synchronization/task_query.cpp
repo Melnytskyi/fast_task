@@ -48,8 +48,10 @@ namespace fast_task {
     }
 
     void redefine_start_function(std::shared_ptr<task>& task, task_query_handle* tqh) {
-        auto old_func = std::move(task->func);
-        task->func = [old_func = std::move(old_func), tqh]() {
+        if (task->callbacks.is_extended_mode)
+            throw std::runtime_error("Extended mode does not support task queries");
+        auto old_func = std::move(task->callbacks.normal_mode.func);
+        task->callbacks.normal_mode.func = [old_func = std::move(old_func), tqh]() {
             try {
                 old_func();
             } catch (...) {

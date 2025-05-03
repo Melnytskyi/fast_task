@@ -10,10 +10,18 @@
 namespace fast_task {
     bool task::enable_task_naming = false;
 
+    task::task(void* data, void (*on_start)(void*), void (*on_await)(void*), void (*on_cancel)(void*), void (*on_destruct)(void*))
+        : timeout(std::chrono::high_resolution_clock::time_point::min()) {
+        callbacks.is_extended_mode = true;
+        callbacks.extended_mode.data = data;
+        callbacks.extended_mode.on_start = on_start;
+        callbacks.extended_mode.on_await = on_await;
+        callbacks.extended_mode.on_cancel = on_cancel;
+        callbacks.extended_mode.on_destruct = on_destruct;
+    }
+
     task::task(task&& mov) noexcept
-        : fres(std::move(mov.fres)) {
-        ex_handle = mov.ex_handle;
-        func = mov.func;
+        : fres(std::move(mov.fres)), callbacks(std::move(mov.callbacks)), timeout(std::move(mov.timeout)) {
         time_end_flag = mov.time_end_flag;
         awaked = mov.awaked;
         started = mov.started;
@@ -92,9 +100,13 @@ namespace fast_task {
 
         if (!lgr_task->started && make_start)
             task::start(lgr_task);
-        mutex_unify uni(lgr_task->no_race);
-        std::unique_lock l(uni);
-        lgr_task->fres.awaitEnd(l);
+        if (lgr_task->callbacks.is_extended_mode)
+            lgr_task->callbacks.extended_mode.on_await(lgr_task->callbacks.extended_mode.data);
+        else {
+            mutex_unify uni(lgr_task->no_race);
+            std::unique_lock l(uni);
+            lgr_task->fres.awaitEnd(l);
+        }
     }
 
     void task::start(const std::shared_ptr<task>& tsk) {
@@ -335,7 +347,10 @@ namespace fast_task {
     }
 
     void task::notify_cancel(std::shared_ptr<task>& lgr_task) {
-        lgr_task->make_cancel = true;
+        if (lgr_task->callbacks.is_extended_mode)
+            lgr_task->callbacks.extended_mode.on_cancel(lgr_task->callbacks.extended_mode.data);
+        else
+            lgr_task->make_cancel = true;
     }
 
     void task::notify_cancel(std::list<std::shared_ptr<task>>& tasks) {
@@ -344,6 +359,9 @@ namespace fast_task {
     }
 
     void task::await_notify_cancel(std::shared_ptr<task>& lgr_task) {
+        if (lgr_task->callbacks.is_extended_mode)
+            lgr_task->callbacks.extended_mode.on_cancel(lgr_task->callbacks.extended_mode.data);
+
         mutex_unify uni(lgr_task->no_race);
         std::unique_lock l(uni);
         lgr_task->make_cancel = true;
@@ -385,6 +403,14 @@ namespace fast_task {
             loc.in_exec_decreased = true;
             cd.notify_one();
         });
+    }
+
+    std::shared_ptr<task> task::callback_dummy(void* dummy_data, void (*on_start)(void*), void (*on_await)(void*), void (*on_cancel)(void*), void (*on_destruct)(void*)) {
+        return std::make_shared<task>(dummy_data, on_start, on_await, on_cancel, on_destruct);
+    }
+
+    std::shared_ptr<task> task::callback_dummy(void* dummy_data, void (*on_await)(void*), void (*on_cancel)(void*), void (*on_destruct)(void*)) {
+        return std::make_shared<task>(dummy_data, nullptr, on_await, on_cancel, on_destruct);
     }
 
     std::shared_ptr<task> task::dummy_task() {

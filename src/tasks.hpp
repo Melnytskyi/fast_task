@@ -272,8 +272,59 @@ namespace fast_task {
         static bool enable_task_naming;
 
         task_result fres;
-        std::function<void(const std::exception_ptr&)> ex_handle;
-        std::function<void()> func;
+
+        union callbacks_data {
+            bool is_extended_mode : 1 = false;
+
+            struct {
+                bool is_extended_mode : 1;
+                std::function<void(const std::exception_ptr&)> ex_handle;
+                std::function<void()> func;
+            } normal_mode;
+
+            struct {
+                bool is_extended_mode : 1;
+                void* data;
+                void (*on_start)(void*);
+                void (*on_await)(void*);
+                void (*on_cancel)(void*);
+                void (*on_destruct)(void*);
+            } extended_mode;
+
+            callbacks_data() : normal_mode() {}
+
+            callbacks_data(callbacks_data&& move) noexcept {
+                if (move.is_extended_mode) {
+                    is_extended_mode = true;
+                    extended_mode.data = move.extended_mode.data;
+                    extended_mode.on_start = move.extended_mode.on_start;
+                    extended_mode.on_await = move.extended_mode.on_await;
+                    extended_mode.on_cancel = move.extended_mode.on_cancel;
+                    extended_mode.on_destruct = move.extended_mode.on_destruct;
+                    move.extended_mode.on_destruct = nullptr;
+                } else {
+                    is_extended_mode = false;
+                    normal_mode.ex_handle = std::move(move.normal_mode.ex_handle);
+                    normal_mode.func = std::move(move.normal_mode.func);
+                }
+            }
+
+            ~callbacks_data() {
+                if (is_extended_mode) {
+                    if (extended_mode.on_destruct)
+                        extended_mode.on_destruct(extended_mode.data);
+                    extended_mode.data = nullptr;
+                    extended_mode.on_start = nullptr;
+                    extended_mode.on_await = nullptr;
+                    extended_mode.on_cancel = nullptr;
+                    extended_mode.on_destruct = nullptr;
+                } else {
+                    normal_mode.ex_handle = nullptr;
+                    normal_mode.func = nullptr;
+                }
+            }
+        } callbacks;
+
         std::mutex no_race;
         mutex_unify relock_0;
         mutex_unify relock_1;
@@ -289,9 +340,16 @@ namespace fast_task {
         bool auto_bind_worker : 1 = false;
         bool invalid_switch_caught : 1 = false;
 
+        task(void* data, void (*on_start)(void*), void (*on_await)(void*), void (*on_cancel)(void*), void (*on_destruct)(void*));
+
+        void _extended_end();
+
     public:
-        task(std::function<void()> func, std::function<void(const std::exception_ptr&)> ex_handle = nullptr, std::chrono::high_resolution_clock::time_point timeout = std::chrono::high_resolution_clock::time_point::min())
-            : func(func), ex_handle(ex_handle), timeout(timeout) {}
+        task(std::function<void()> func, std::function<void(const std::exception_ptr&)> ex_handle = nullptr, std::chrono::high_resolution_clock::time_point timeout = std::chrono::high_resolution_clock::time_point::min()) : timeout(timeout) {
+            callbacks.is_extended_mode = false;
+            callbacks.normal_mode.func = func;
+            callbacks.normal_mode.ex_handle = ex_handle;
+        }
 
         task(task&& mov) noexcept;
         ~task();
@@ -305,6 +363,10 @@ namespace fast_task {
         static void start(std::shared_ptr<task>&& lgr_task);
         static void start(std::list<std::shared_ptr<task>>& lgr_task);
         static void start(const std::shared_ptr<task>& lgr_task);
+
+        inline static void run(std::function<void()>&& func) {
+            start(std::shared_ptr<task>(new task(std::move(func))));
+        }
 
         static uint16_t create_bind_only_executor(uint16_t fixed_count, bool allow_implicit_start);
         static void assign_bind_only_executor(uint16_t id, uint16_t fixed_count, bool allow_implicit_start);
@@ -334,6 +396,28 @@ namespace fast_task {
         static void self_cancel();
         static bool is_task();
 
+        static std::shared_ptr<task> callback_dummy(void* dummy_data, void (*on_start)(void*), void (*on_await)(void*), void (*on_cancel)(void*), void (*on_destruct)(void*));
+        static std::shared_ptr<task> callback_dummy(void* dummy_data, void (*on_await)(void*), void (*on_cancel)(void*), void (*on_destruct)(void*));
+
+        template <class FN>
+        static void access_dummy(std::shared_ptr<task>& task, FN&& fn) {
+            if (task->callbacks.is_extended_mode)
+                fn(task->callbacks.extended_mode.data);
+            else
+                throw std::runtime_error("This task is not in extended mode");
+        };
+
+        template <class FN>
+        static void end_dummy(std::shared_ptr<task>& task, FN&& fn) {
+            if (task->callbacks.is_extended_mode) {
+                fn(task->callbacks.extended_mode.data);
+                std::lock_guard l(task->no_race);
+                task->end_of_life = true;
+                task->fres.end_of_life = true;
+                task->fres.result_notify.notify_all();
+            } else
+                throw std::runtime_error("This task is not in extended mode");
+        };
 
         static std::shared_ptr<task> dummy_task();
         static std::shared_ptr<task> cxx_native_bridge(bool& checker, std::condition_variable_any& cd);
