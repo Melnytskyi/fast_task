@@ -236,7 +236,7 @@ namespace fast_task::networking {
 }
 
 namespace fast_task::networking {
-#if PLATFORM_WINDOWS
+#if _WIN64
     bool inited = false;
 
     ::LPFN_ACCEPTEX _AcceptEx;
