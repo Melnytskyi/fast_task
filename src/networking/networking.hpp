@@ -47,7 +47,13 @@ namespace fast_task {
             bool operator==(const address& other) const;
             bool operator!=(const address& other) const;
 
-            void* get_data() const { return data; }
+            void* get_data() const {
+                return data;
+            }
+
+            bool is_loopback() const;
+
+            static size_t data_size();
         };
 
         struct TcpConfiguration {
@@ -190,5 +196,15 @@ namespace fast_task {
         void deinit_networking();
         bool ipv6_supported();
     }
+}
+
+namespace std {
+    template <>
+    struct hash<fast_task::networking::address> {
+        size_t operator()(const fast_task::networking::address& addr) const {
+            std::string_view data{(char*)addr.get_data(), addr.data_size()};
+            return std::hash<std::string_view>()(data);
+        }
+    };
 }
 #endif /* SRC_NETWORKING */

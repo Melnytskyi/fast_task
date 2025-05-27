@@ -34,6 +34,7 @@ namespace fast_task::networking {
     using universal_address = ::sockaddr_storage;
 
     void internal_makeIP4(universal_address& addr_storage, const char* ip, uint16_t port) {
+        init_networking();
         sockaddr_in6 addr6;
         memset(&addr6, 0, sizeof(addr6));
         addr6.sin6_family = AF_INET6;
@@ -48,6 +49,7 @@ namespace fast_task::networking {
     }
 
     void internal_makeIP6(universal_address& addr_storage, const char* ip, uint16_t port) {
+        init_networking();
         sockaddr_in6 addr6;
         memset(&addr6, 0, sizeof(addr6));
         addr6.sin6_family = AF_INET6;
@@ -60,6 +62,7 @@ namespace fast_task::networking {
     }
 
     void internal_makeIP(universal_address& addr_storage, const char* ip, uint16_t port) {
+        init_networking();
         sockaddr_in6 addr6;
         memset(&addr6, 0, sizeof(addr6));
         addr6.sin6_family = AF_INET6;
@@ -68,22 +71,50 @@ namespace fast_task::networking {
         addr6.sin6_addr.s6_addr[11] = 0xFF;
         if (inet_pton(AF_INET, ip, &addr6.sin6_addr + 12) == 1)
             ;
-        else if (inet_pton(AF_INET6, ip, &addr6.sin6_addr) != 1)
-            throw std::invalid_argument("Invalid ip address");
+        else if (inet_pton(AF_INET6, ip, &addr6.sin6_addr) == 1)
+            ;
+        else {
+            std::string port_(std::to_string(port));
+            addrinfo* addr_res;
+            if (auto res = getaddrinfo(ip, port_.c_str(), nullptr, &addr_res)) {
+                freeaddrinfo(addr_res);
+                throw std::invalid_argument("Invalid ip address");
+            }
+            auto& res = *addr_res;
+            memset(&addr_storage, 0, sizeof(addr_storage));
+            memcpy(&addr_storage, addr_res->ai_addr, addr_res->ai_addrlen);
+            freeaddrinfo(addr_res);
+            return;
+        }
         memset(&addr_storage, 0, sizeof(addr_storage));
         memcpy(&addr_storage, &addr6, sizeof(addr6));
     }
 
     void internal_makeIP4_port(universal_address& addr_storage, const char* ip_port) {
+        init_networking();
         const char* port = strchr(ip_port, ':');
         if (!port)
             throw std::invalid_argument("Invalid ip4 address");
         uint16_t port_num = (uint16_t)std::stoi(port + 1);
         std::string ip(ip_port, port);
-        internal_makeIP4(addr_storage, ip.c_str(), port_num);
+        char first_ch = ip[0];
+        if (std::isdigit(first_ch))
+            internal_makeIP4(addr_storage, ip.c_str(), port_num);
+        else {
+            addrinfo* addr_res;
+            if (auto res = getaddrinfo(ip.c_str(), port + 1, nullptr, &addr_res)) {
+                freeaddrinfo(addr_res);
+                throw std::invalid_argument("Invalid ip4 address");
+            }
+            auto& res = *addr_res;
+            memset(&addr_storage, 0, sizeof(addr_storage));
+            memcpy(&addr_storage, addr_res->ai_addr, addr_res->ai_addrlen);
+            freeaddrinfo(addr_res);
+        }
     }
 
     void internal_makeIP6_port(universal_address& addr_storage, const char* ip_port) {
+        init_networking();
         if (ip_port[0] != '[')
             throw std::invalid_argument("Invalid ip6:port address");
         const char* port = strchr(ip_port, ']');
@@ -118,7 +149,7 @@ namespace fast_task::networking {
     address::address(void* ip) {
         if (ip) {
             data = new universal_address();
-            memccpy(data, ip, sizeof(universal_address), 0);
+            memcpy(data, ip, sizeof(universal_address));
         }
     }
 
@@ -194,22 +225,25 @@ namespace fast_task::networking {
             return "";
         universal_address* addr = (universal_address*)data;
         static constexpr size_t addr_len = (INET6_ADDRSTRLEN > INET_ADDRSTRLEN ? INET6_ADDRSTRLEN : INET_ADDRSTRLEN) + 1;
+        std::string res;
         char str[addr_len] = {'\0'};
         switch (addr->ss_family) {
         case AF_INET: {
             struct sockaddr_in* addr_in = (struct sockaddr_in*)addr;
             inet_ntop(AF_INET, &(addr_in->sin_addr), str, INET_ADDRSTRLEN);
+            res = std::string(str) + ":" + std::to_string(ntohs(addr_in->sin_port));
             break;
         }
         case AF_INET6: {
             struct sockaddr_in6* addr_in6 = (struct sockaddr_in6*)addr;
             inet_ntop(AF_INET6, &(addr_in6->sin6_addr), str, INET6_ADDRSTRLEN);
+            res = "[" + std::string(str) + "]:" + std::to_string(ntohs(addr_in6->sin6_port));
             break;
         }
         default:
             break;
         }
-        return str;
+        return res;
     }
 
     bool address::operator==(const address& other) const {
@@ -220,6 +254,25 @@ namespace fast_task::networking {
 
     bool address::operator!=(const address& other) const {
         return !(*this == other);
+    }
+
+    bool address::is_loopback() const {
+        if (data == nullptr)
+            return false;
+        universal_address* addr = (universal_address*)data;
+        switch (addr->ss_family) {
+        case AF_INET:
+            return ((sockaddr_in*)addr)->sin_addr.s_addr == htonl(INADDR_LOOPBACK);
+        case AF_INET6:
+            return IN6_IS_ADDR_LOOPBACK(&((sockaddr_in6*)addr)->sin6_addr);
+        default:
+            break;
+        }
+        return false;
+    }
+
+    size_t address::data_size() {
+        return sizeof(universal_address);
     }
 
     address to_address(void* addr) {
@@ -291,6 +344,7 @@ namespace fast_task::networking {
         uint32_t max_read_queue_size;
         TcpError invalid_reason = TcpError::none;
         enum class Opcode : uint8_t {
+            HALT,
             ACCEPT,
             READ,
             WRITE,
@@ -420,11 +474,24 @@ namespace fast_task::networking {
         void read_data() {
             if (!data)
                 return;
-            mutex_unify mutex(cv_mutex);
-            std::unique_lock<mutex_unify> lock(mutex);
-            opcode = Opcode::READ;
-            read();
-            cv.wait(lock);
+            if (read_queue.empty()) {
+                mutex_unify mutex(cv_mutex);
+                std::unique_lock<mutex_unify> lock(mutex);
+                opcode = Opcode::READ;
+                read();
+                cv.wait(lock);
+                opcode = Opcode::HALT;
+            } else {
+                auto item = read_queue.front();
+                read_queue.pop_front();
+                auto& read_data = std::get<0>(item);
+                auto& val_len = std::get<1>(item);
+                std::unique_ptr<char[]> read_data_ptr(read_data);
+                buffer.buf = data;
+                buffer.len = data_len;
+                readed_bytes = val_len;
+                memcpy(data, read_data, val_len);
+            }
         }
 
         void read_available_no_block(char* extern_buffer, int buffer_len, int& readed) {
@@ -444,21 +511,8 @@ namespace fast_task::networking {
         }
 
         void read_available(char* extern_buffer, int buffer_len, int& readed) {
-            if (!readed_bytes) {
-                if (read_queue.empty())
-                    read_data();
-                else {
-                    auto item = read_queue.front();
-                    read_queue.pop_front();
-                    auto& read_data = std::get<0>(item);
-                    auto& val_len = std::get<1>(item);
-                    std::unique_ptr<char[]> read_data_ptr(read_data);
-                    buffer.buf = data;
-                    buffer.len = data_len;
-                    readed_bytes = val_len;
-                    memcpy(data, read_data, val_len);
-                }
-            }
+            if (!readed_bytes)
+                read_data();
             if (readed_bytes < buffer_len) {
                 readed = readed_bytes;
                 memcpy(extern_buffer, data, readed_bytes);
@@ -656,7 +710,7 @@ namespace fast_task::networking {
         }
 
         void connection_reset() {
-            if (opcode == Opcode::INTERNAL_CLOSE) {
+            if (opcode != Opcode::HALT) {
                 mutex_unify mutex(cv_mutex);
                 std::unique_lock<mutex_unify> lock(mutex);
                 data = nullptr;
@@ -696,7 +750,7 @@ namespace fast_task::networking {
             std::unique_lock<mutex_unify> lock(mutex);
             std::list<std::tuple<char*, size_t>> clear_write_queue;
             std::list<std::tuple<char*, size_t>> clear_read_queue;
-            if (opcode != Opcode::FINISH && opcode != Opcode::ACCEPT)
+            if (opcode != Opcode::FINISH && opcode != Opcode::ACCEPT && opcode != Opcode::HALT)
                 cv.wait(lock);
             readed_bytes = 0;
             sent_bytes = 0;
@@ -725,6 +779,7 @@ namespace fast_task::networking {
                 cv.wait(lock);
             }
             closesocket(socket);
+            opcode = Opcode::HALT;
         }
 
         bool handle_error() {
@@ -767,8 +822,10 @@ namespace fast_task::networking {
             DWORD flags = 0;
             opcode = Opcode::WRITE;
             int result = WSASend(socket, &buffer, 1, NULL, flags, &overlapped, NULL);
-            if ((SOCKET_ERROR == result))
+            if ((SOCKET_ERROR == result)) {
+                opcode = Opcode::HALT;
                 return handle_error();
+            }
             return true;
         }
 
@@ -778,6 +835,7 @@ namespace fast_task::networking {
             if (!send())
                 return false;
             cv.wait(lock);
+            opcode = Opcode::HALT;
             return data; //if data is null, then socket is closed
         }
 
@@ -791,6 +849,7 @@ namespace fast_task::networking {
             if (!res && WSAGetLastError() != WSA_IO_PENDING)
                 res = false;
             cv.wait(lock);
+            opcode = Opcode::HALT;
             return res;
         }
     };
@@ -1514,8 +1573,8 @@ namespace fast_task::networking {
                 throw std::runtime_error("TcpNetworkManager is corrupted");
 
             sockaddr_storage addr;
+            memset((char*)&addr, 0, sizeof(sockaddr_storage));
             memcpy(&addr, &connectionAddress, sizeof(sockaddr_in6));
-            memset(((char*)&addr) + sizeof(sockaddr_in6), 0, sizeof(sockaddr_storage) - sizeof(sockaddr_in6));
             return to_address(addr);
         }
 
@@ -1871,23 +1930,23 @@ namespace fast_task::networking {
     };
 
     uint8_t init_networking() {
-
-        if (WSAStartup(MAKEWORD(2, 2), &wsaData)) {
-            auto err = WSAGetLastError();
-            switch (err) {
-            case WSASYSNOTREADY:
-                return 1;
-            case WSAVERNOTSUPPORTED:
-                return 2;
-                return 3;
-            case WSAEPROCLIM:
-                return 4;
-            case WSAEFAULT:
-                return 5;
-            default:
-                return 0xFF;
-            }
-        };
+        if (!inited)
+            if (WSAStartup(MAKEWORD(2, 2), &wsaData)) {
+                auto err = WSAGetLastError();
+                switch (err) {
+                case WSASYSNOTREADY:
+                    return 1;
+                case WSAVERNOTSUPPORTED:
+                    return 2;
+                    return 3;
+                case WSAEPROCLIM:
+                    return 4;
+                case WSAEFAULT:
+                    return 5;
+                default:
+                    return 0xFF;
+                }
+            };
         inited = true;
         return 0;
     }
@@ -2087,11 +2146,24 @@ namespace fast_task::networking {
         void read_data() {
             if (!data)
                 return;
-            mutex_unify mutex(cv_mutex);
-            std::unique_lock<mutex_unify> lock(mutex);
-            opcode = Opcode::READ;
-            read();
-            cv.wait(lock);
+
+            if (read_queue.empty()) {
+                mutex_unify mutex(cv_mutex);
+                std::unique_lock<mutex_unify> lock(mutex);
+                opcode = Opcode::READ;
+                read();
+                cv.wait(lock);
+            } else {
+                auto item = read_queue.front();
+                read_queue.pop_front();
+                auto& read_data = std::get<0>(item);
+                auto& val_len = std::get<1>(item);
+                std::unique_ptr<char[]> read_data_ptr(read_data);
+                buffer.buf = data;
+                buffer.len = data_len;
+                readed_bytes = val_len;
+                memcpy(data, read_data, val_len);
+            }
         }
 
         void read_available_no_block(char* extern_buffer, int buffer_len, int& readed) {
@@ -2111,21 +2183,8 @@ namespace fast_task::networking {
         }
 
         void read_available(char* extern_buffer, int buffer_len, int& readed) {
-            if (!readed_bytes) {
-                if (read_queue.empty())
-                    read_data();
-                else {
-                    auto item = read_queue.front();
-                    read_queue.pop_front();
-                    auto& read_data = std::get<0>(item);
-                    auto& val_len = std::get<1>(item);
-                    std::unique_ptr<char[]> read_data_ptr(read_data);
-                    buffer.buf = data;
-                    buffer.len = data_len;
-                    readed_bytes = val_len;
-                    memcpy(data, read_data, val_len);
-                }
-            }
+            if (!readed_bytes)
+                read_data();
             if (readed_bytes < buffer_len) {
                 readed = readed_bytes;
                 memcpy(extern_buffer, data, readed_bytes);
@@ -3142,8 +3201,8 @@ namespace fast_task::networking {
                 throw std::runtime_error("TcpNetworkManager is corrupted");
 
             sockaddr_storage addr;
+            memset((char*)&addr, 0, sizeof(sockaddr_storage));
             memcpy(&addr, &connectionAddress, sizeof(sockaddr_in6));
-            memset(((char*)&addr) + sizeof(sockaddr_in6), 0, sizeof(sockaddr_storage) - sizeof(sockaddr_in6));
             return to_address(addr);
             
         }

@@ -297,7 +297,6 @@ namespace fast_task {
 
     void taskExecutor(bool end_in_task_out) {
         std::string old_name = end_in_task_out ? _get_name_thread_dbg(_thread_id()) : "";
-
         if (old_name.empty())
             _set_name_thread_dbg("Worker " + std::to_string(_thread_id()));
         else
@@ -329,6 +328,7 @@ namespace fast_task {
         --glob.executors;
         taskNotifyIfEmpty(guard);
         glob.executor_shutdown_notifier.notify_all();
+        _set_name_thread_dbg(old_name);
     }
 
     void bindedTaskExecutor(uint16_t id) {

@@ -495,6 +495,41 @@ namespace fast_task {
         bool wait_until(std::chrono::high_resolution_clock::time_point time_point);
     };
 
+    class deadline_timer {
+        struct handle;
+        std::shared_ptr<handle> hh;
+
+    public:
+        enum class status {
+            timeouted, //normal timeout
+            canceled,  //set when used cancel,cancel_one, expires_from_now or expires_at
+            shutdown,  //set when deadline_timer is destructed
+        };
+        deadline_timer();
+        deadline_timer(std::chrono::high_resolution_clock::duration);
+        deadline_timer(std::chrono::high_resolution_clock::time_point);
+        deadline_timer(deadline_timer&&);
+
+        ~deadline_timer();
+
+        size_t cancel();
+        bool cancel_one();
+
+        //awoken when timeouted
+        void async_wait(const std::shared_ptr<task>&);
+
+        //true if got timeout
+        void async_wait(std::function<void(status)>&&);
+        void async_wait(const std::function<void(status)>&);
+
+        //returns count of canceled tasks
+        size_t expires_from_now(std::chrono::high_resolution_clock::duration dur);
+        size_t expires_at(std::chrono::high_resolution_clock::time_point dur);
+
+        status wait();
+        status wait(std::unique_lock<mutex_unify>& lock);
+    };
+
     #pragma pop_macro("min")
 }
 #endif

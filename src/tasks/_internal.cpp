@@ -53,8 +53,10 @@ namespace fast_task {
             LocalFree(res);
             CloseHandle(thread);
             return result;
-        } else
+        } else {
+            CloseHandle(thread);
             return "";
+        }
     }
 
     unsigned long _thread_id() {
