@@ -20,6 +20,7 @@ namespace fast_task {
     }
 
 #pragma optimize("", off)
+
     void task_rw_mutex::read_lock() {
         if (loc.is_task_thread) {
             loc.curr_task->awaked = false;
@@ -92,10 +93,36 @@ namespace fast_task {
         if (!no_race.try_lock_until(time_point))
             return false;
         std::unique_lock ul(no_race, std::adopt_lock);
-
-        if (current_writer_task)
-            return false;
-        else {
+        if (loc.is_task_thread) {
+            while (current_writer_task) {
+                loc.curr_task->awaked = false;
+                loc.curr_task->time_end_flag = false;
+                resume_task.emplace_back(loc.curr_task, loc.curr_task->awake_check);
+                makeTimeWait(time_point);
+                swapCtxRelock(loc.curr_task->no_race, no_race);
+                if (!loc.curr_task->awaked)
+                    return false;
+            }
+        } else {
+            while (current_writer_task) {
+                std::condition_variable_any cd;
+                bool has_res = false;
+                std::shared_ptr<task> task = task::cxx_native_bridge(has_res, cd);
+                resume_task.emplace_back(task, task->awake_check);
+                while (!has_res)
+                    cd.wait(ul);
+                ul.unlock();
+            task_not_ended:
+                task->no_race.lock();
+                if (!task->end_of_life) {
+                    task->no_race.unlock();
+                    goto task_not_ended;
+                }
+                task->no_race.unlock();
+                ul.lock();
+            }
+        }
+        {
             task* self_mask;
             if (loc.is_task_thread || loc.context_in_swap)
                 self_mask = &*loc.curr_task;
@@ -249,6 +276,8 @@ namespace fast_task {
         std::unique_lock ul(no_race, std::adopt_lock);
 
         if (loc.is_task_thread && !loc.context_in_swap) {
+            loc.curr_task->awaked = false;
+            loc.curr_task->time_end_flag = false;
             while (current_writer_task) {
                 std::lock_guard guard(loc.curr_task->no_race);
                 makeTimeWait(time_point);
@@ -328,6 +357,7 @@ namespace fast_task {
     }
 
 #pragma optimize("", on)
+
     bool task_rw_mutex::is_write_locked() {
         task* self_mask;
         if (loc.is_task_thread || loc.context_in_swap)

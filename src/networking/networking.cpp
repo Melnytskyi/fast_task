@@ -146,6 +146,18 @@ namespace fast_task::networking {
             return internal_makeIP4_port(addr_storage, ip_port);
     }
 
+    address address::any() {
+        address res;
+        internal_makeIP(*(universal_address*)res.data, "[::]", 0);
+        return res;
+    }
+
+    address address::any(uint16_t port) {
+        address res;
+        internal_makeIP(*(universal_address*)res.data, "[::]", port);
+        return res;
+    }
+
     address::address(void* ip) {
         if (ip) {
             data = new universal_address();
@@ -157,15 +169,23 @@ namespace fast_task::networking {
         data = nullptr;
     }
 
-    address::address(const std::string& ip_port) {
+    address::address(std::string_view ip_port) {
         data = new universal_address();
-        internal_makeIP_port(*((universal_address*)data), ip_port.c_str());
+        if (ip_port.empty())
+            ip_port = "[::]:0";
+        internal_makeIP_port(*((universal_address*)data), ip_port.data());
     }
 
-    address::address(const std::string& ip, uint16_t port) {
+    address::address(std::string_view ip, uint16_t port) {
         data = new universal_address();
-        internal_makeIP(*((universal_address*)data), ip.c_str(), port);
+        if (ip.empty())
+            ip = "[::]";
+        internal_makeIP(*((universal_address*)data), ip.data(), port);
     }
+
+    address::address(const std::string& ip_port) : address(std::string_view(ip_port)) {}
+
+    address::address(const std::string& ip, uint16_t port) : address(std::string_view(ip), port) {}
 
     address::address(const address& ip) {
         data = new universal_address(*((universal_address*)ip.data));
@@ -263,8 +283,14 @@ namespace fast_task::networking {
         switch (addr->ss_family) {
         case AF_INET:
             return ((sockaddr_in*)addr)->sin_addr.s_addr == htonl(INADDR_LOOPBACK);
-        case AF_INET6:
-            return IN6_IS_ADDR_LOOPBACK(&((sockaddr_in6*)addr)->sin6_addr);
+        case AF_INET6: {
+            auto& tmp = ((sockaddr_in6*)addr)->sin6_addr;
+            if (IN6_IS_ADDR_V4MAPPED(&tmp)) {
+                char* p = (char*)(&tmp);
+                return p[12] == 127 && p[13] == 0 && p[14] == 0 && p[15] == 1;
+            } else
+                return IN6_IS_ADDR_LOOPBACK(&tmp);
+        }
         default:
             break;
         }
@@ -1218,7 +1244,7 @@ namespace fast_task::networking {
         task_mutex safety;
         std::variant<std::function<void(TcpNetworkBlocking&)>, std::function<void(TcpNetworkStream&)>> handler_fn;
         std::function<bool(address& client, address& server)> accept_filter;
-        sockaddr_in6 connectionAddress;
+        address _address;
         SOCKET main_socket;
         int timeout_ms;
 
@@ -1414,7 +1440,7 @@ namespace fast_task::networking {
             }
 
             init_win_fns(main_socket);
-            if (bind(main_socket, (sockaddr*)&connectionAddress, sizeof(sockaddr_in6)) == SOCKET_ERROR) {
+            if (bind(main_socket, (sockaddr*)_address.get_data(), _address.data_size()) == SOCKET_ERROR) {
                 corrupted = true;
                 return;
             }
@@ -1430,8 +1456,7 @@ namespace fast_task::networking {
 
     public:
         TcpNetworkManager(const address& ip_port, size_t acceptors, const TcpConfiguration& config)
-            : acceptors(acceptors), config(config), main_socket(INVALID_SOCKET), timeout_ms(0) {
-            memcpy(&connectionAddress, &from_address(ip_port), sizeof(sockaddr_in6));
+            : acceptors(acceptors), config(config), main_socket(INVALID_SOCKET), timeout_ms(0), _address(ip_port) {
         }
 
         ~TcpNetworkManager() override {
@@ -1445,7 +1470,7 @@ namespace fast_task::networking {
                 new_connection(data, !((FALSE == status) || ((true == status) && (0 == dwBytesTransferred))));
             else if (!((FALSE == status) || ((true == status) && (0 == dwBytesTransferred))))
                 data.handle(dwBytesTransferred);
-            else 
+            else
                 data.connection_reset();
         }
 
@@ -1561,21 +1586,18 @@ namespace fast_task::networking {
         uint16_t port() {
             if (corrupted)
                 throw std::runtime_error("TcpNetworkManager is corrupted");
-            return htons(connectionAddress.sin6_port);
+            return _address.port();
         }
 
         std::string ip() {
-            return address().to_string();
+            return _address.to_string();
         }
 
         address get_address() {
             if (corrupted)
                 throw std::runtime_error("TcpNetworkManager is corrupted");
 
-            sockaddr_storage addr;
-            memset((char*)&addr, 0, sizeof(sockaddr_storage));
-            memcpy(&addr, &connectionAddress, sizeof(sockaddr_in6));
-            return to_address(addr);
+            return _address;
         }
 
         bool is_paused() {
@@ -3204,7 +3226,6 @@ namespace fast_task::networking {
             memset((char*)&addr, 0, sizeof(sockaddr_storage));
             memcpy(&addr, &connectionAddress, sizeof(sockaddr_in6));
             return to_address(addr);
-            
         }
 
         bool is_paused() {
@@ -3590,6 +3611,7 @@ namespace fast_task::networking {
         handle = new TcpNetworkManager(ip_port, acceptors, config);
         handle->set_on_connect(on_connect);
     }
+
     TcpNetworkServer::~TcpNetworkServer() {
         if (handle)
             delete handle;

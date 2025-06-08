@@ -21,8 +21,13 @@ namespace fast_task {
 
             friend address to_address(void* addr);
             address(void* ip);
+
         public:
-        address();
+            static address any();
+            static address any(uint16_t port);
+            address();
+            address(std::string_view ip_port);
+            address(std::string_view ip, uint16_t port);
             address(const std::string& ip_port);
             address(const std::string& ip, uint16_t port);
             address(const address& ip);
