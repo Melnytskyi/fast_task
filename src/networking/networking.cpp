@@ -504,7 +504,15 @@ namespace fast_task::networking {
                 mutex_unify mutex(cv_mutex);
                 std::unique_lock<mutex_unify> lock(mutex);
                 opcode = Opcode::READ;
-                read();
+
+                if ((SOCKET_ERROR == read())) {
+                    lock.unlock();
+                    if (handle_error())
+                        lock.lock();
+                    else
+                        return;
+                }
+
                 cv.wait(lock);
                 opcode = Opcode::HALT;
             } else {
@@ -595,7 +603,11 @@ namespace fast_task::networking {
                         write_queue.push_front(std::make_tuple(data, buffer.len));
                         if (force_mode) {
                             opcode = Opcode::INTERNAL_READ;
-                            read();
+                            if ((SOCKET_ERROR == read())) {
+                                lock.unlock();
+                                handle_error();
+                                lock.lock();
+                            }
                         } else
                             cv.notify_all();
                     }
@@ -614,8 +626,11 @@ namespace fast_task::networking {
                 if (!data_available()) {
                     if (read_queue.size() > max_read_queue_size)
                         close(TcpError::read_queue_overflow);
-                    else
-                        read();
+                    else if (SOCKET_ERROR == read()) {
+                        lock.unlock();
+                        handle_error();
+                        lock.lock();
+                    }
                 } else {
                     if (write_queue.empty())
                         close(TcpError::invalid_state);
@@ -833,15 +848,11 @@ namespace fast_task::networking {
             }
         }
 
-        void read() {
+        int read() {
             DWORD flags = 0;
             buffer.buf = this->data;
             buffer.len = data_len;
-            int result = WSARecv(socket, &buffer, 1, NULL, &flags, &overlapped, NULL);
-            if ((SOCKET_ERROR == result)) {
-                handle_error();
-                return;
-            }
+            return WSARecv(socket, &buffer, 1, NULL, &flags, &overlapped, NULL);
         }
 
         bool send() {

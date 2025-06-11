@@ -152,7 +152,7 @@ namespace fast_task {
                 throw std::logic_error("Tried unlock non owned mutex");
             readers.erase(it);
 
-            if (resume_task.size() && readers.empty() && !current_writer_task) {
+            if (resume_task.size() && readers.empty()) {
                 std::shared_ptr<task> it = resume_task.front().task;
                 uint16_t awake_check = resume_task.front().awake_check;
                 resume_task.pop_front();

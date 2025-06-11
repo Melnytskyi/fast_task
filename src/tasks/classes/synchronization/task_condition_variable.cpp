@@ -33,9 +33,9 @@ namespace fast_task {
                 while (!has_res)
                     cd.wait(mut);
             } else {
-                no_race.lock();
+                std::unique_lock no_race_guard(no_race);
                 resume_task.emplace_back(task, task->awake_check);
-                no_race.unlock();
+                no_race_guard.unlock();
                 while (!has_res)
                     cd.wait(mut);
             }
@@ -74,9 +74,9 @@ namespace fast_task {
                 while (!has_res)
                     cd.wait(mut);
             } else {
-                no_race.lock();
+                std::unique_lock no_race_guard(no_race);
                 resume_task.emplace_back(task, task->awake_check);
-                no_race.unlock();
+                no_race_guard.unlock();
                 while (!has_res)
                     cd.wait(mut);
             }

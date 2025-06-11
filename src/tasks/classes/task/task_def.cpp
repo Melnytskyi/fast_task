@@ -247,7 +247,7 @@ namespace fast_task {
         if (be_executor && !loc.is_task_thread) {
             std::unique_lock l(glob.task_thread_safety);
         binded_workers:
-            while (glob.tasks.size() || glob.cold_tasks.size() || glob.timed_tasks.size() || glob.cold_timed_tasks.size() || glob.in_exec || glob.tasks_in_swap) {
+            while (glob.tasks.size() || glob.cold_tasks.size() || glob.timed_tasks.size() || glob.cold_timed_tasks.size() || glob.in_exec || glob.tasks_in_swap || glob.in_run_tasks) {
                 l.unlock();
                 try {
                     taskExecutor(true);
@@ -271,13 +271,13 @@ namespace fast_task {
                 std::unique_lock l(uni);
 
                 if (loc.is_task_thread)
-                    while ((glob.tasks.size() || glob.cold_tasks.size() || glob.timed_tasks.size() || glob.cold_timed_tasks.size()) && glob.in_exec != 1 && glob.tasks_in_swap != 1) {
+                    while ((glob.tasks.size() || glob.cold_tasks.size() || glob.timed_tasks.size() || glob.cold_timed_tasks.size()) && glob.in_exec != 1 && glob.tasks_in_swap != 1 && glob.in_run_tasks != 1) {
                         if (!total_executors())
                             create_executor(1);
                         glob.no_tasks_execute_notifier.wait(l);
                     }
                 else
-                    while (glob.tasks.size() || glob.cold_tasks.size() || glob.timed_tasks.size() || glob.cold_timed_tasks.size() || glob.in_exec || glob.tasks_in_swap) {
+                    while (glob.tasks.size() || glob.cold_tasks.size() || glob.timed_tasks.size() || glob.cold_timed_tasks.size() || glob.in_exec || glob.tasks_in_swap || glob.in_run_tasks) {
                         if (!total_executors())
                             create_executor(1);
                         glob.no_tasks_execute_notifier.wait(l);

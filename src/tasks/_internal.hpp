@@ -89,11 +89,6 @@ namespace fast_task {
 
         std::mutex binded_workers_safety;
         std::unordered_map<uint16_t, binded_context, std::hash<uint16_t>> binded_workers;
-#if _configuration_tasks_enable_debug_mode
-        std::rw_mutex debug_safety;
-        std::list<task*> alive_tasks;
-        std::list<task*> on_workers_tasks;
-#endif
     };
 
     void startTimeController();
