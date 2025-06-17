@@ -273,7 +273,7 @@ namespace fast_task {
         return false;
     }
 
-    bool taskExecutor_check_next(std::unique_lock<std::recursive_mutex>& guard, bool end_in_task_out) {
+    bool taskExecutor_check_next(std::unique_lock<std::recursive_mutex>& guard, bool end_in_task_out, bool still_wait) {
         loc.context_in_swap = false;
         loc.current_context = nullptr;
         loc.stack_current_context = nullptr;
@@ -287,15 +287,21 @@ namespace fast_task {
                 }
             }
 
-            if (end_in_task_out)
-                return true;
-            glob.tasks_notifier.wait(guard);
+            if (end_in_task_out) {
+                if (still_wait) {
+                    glob.tasks_notifier.wait(guard);
+                    if (glob.tasks.empty() && glob.cold_tasks.empty())
+                        return true;
+                } else
+                    return true;
+            } else
+                glob.tasks_notifier.wait(guard);
         }
         loc.is_task_thread = true;
         return false;
     }
 
-    void taskExecutor(bool end_in_task_out) {
+    void taskExecutor(bool end_in_task_out, bool still_wait) {
         std::string old_name = end_in_task_out ? _get_name_thread_dbg(_thread_id()) : "";
         if (old_name.empty())
             _set_name_thread_dbg("Worker " + std::to_string(_thread_id()));
@@ -307,7 +313,7 @@ namespace fast_task {
         ++glob.executors;
 
         while (true) {
-            if (taskExecutor_check_next(guard, end_in_task_out)) {
+            if (taskExecutor_check_next(guard, end_in_task_out, still_wait)) {
                 break;
             } else {
                 if (loadTask())

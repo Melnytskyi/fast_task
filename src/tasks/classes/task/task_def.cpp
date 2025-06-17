@@ -202,7 +202,7 @@ namespace fast_task {
 
     void task::create_executor(size_t count) {
         for (size_t i = 0; i < count; i++)
-            std::thread(taskExecutor, false).detach();
+            std::thread(taskExecutor, false, false).detach();
     }
 
     size_t task::total_executors() {
@@ -250,7 +250,7 @@ namespace fast_task {
             while (glob.tasks.size() || glob.cold_tasks.size() || glob.timed_tasks.size() || glob.cold_timed_tasks.size() || glob.in_exec || glob.tasks_in_swap || glob.in_run_tasks) {
                 l.unlock();
                 try {
-                    taskExecutor(true);
+                    taskExecutor(true, true);
                 } catch (...) {
                     l.lock();
                     throw;
