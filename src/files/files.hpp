@@ -8,10 +8,10 @@
 #define SRC_FILES
 #include "../future.hpp"
 #include "../tasks.hpp"
-#include <vector>
+#include <filesystem>
 #include <istream>
 #include <ostream>
-#include <filesystem>
+#include <vector>
 
 #if _WIN64
     #define FILE_HANDLE void*
@@ -102,10 +102,13 @@ namespace fast_task {
         public:
             FileHandle(const char* path, size_t path_len, open_mode open, on_open_action action, _async_flags flags = {}, share_mode share = {}, pointer_mode pointer_mode = pointer_mode::combined) noexcept(false);
             FileHandle(const char* path, size_t path_len, open_mode open, on_open_action action, _sync_flags flags = {}, share_mode share = {}, pointer_mode pointer_mode = pointer_mode::combined) noexcept(false);
-            FileHandle(const std::string& path, open_mode open, on_open_action action, _async_flags flags = {}, share_mode share = {}, pointer_mode pointer_mode = pointer_mode::combined) noexcept(false):
-                FileHandle(path.c_str(), path.size(), open, action, flags, share, pointer_mode) {}
-            FileHandle(const std::string& path, open_mode open, on_open_action action, _sync_flags flags = {}, share_mode share = {}, pointer_mode pointer_mode = pointer_mode::combined) noexcept(false):
-                FileHandle(path.c_str(), path.size(), open, action, flags, share, pointer_mode) {}
+
+            FileHandle(const std::string& path, open_mode open, on_open_action action, _async_flags flags = {}, share_mode share = {}, pointer_mode pointer_mode = pointer_mode::combined) noexcept(false)
+                : FileHandle(path.c_str(), path.size(), open, action, flags, share, pointer_mode) {}
+
+            FileHandle(const std::string& path, open_mode open, on_open_action action, _sync_flags flags = {}, share_mode share = {}, pointer_mode pointer_mode = pointer_mode::combined) noexcept(false)
+                : FileHandle(path.c_str(), path.size(), open, action, flags, share, pointer_mode) {}
+
             ~FileHandle();
 
             future_ptr<std::vector<uint8_t>> read(uint32_t size);
@@ -144,7 +147,7 @@ namespace fast_task {
             std::streamsize xsgetn(char* s, std::streamsize n) override {
                 if (gptr() == egptr()) {
                     uint32_t bytes_read = file_handle.read(reinterpret_cast<uint8_t*>(buffer.data()), buffer_size);
-                    if (bytes_read == 0) 
+                    if (bytes_read == 0)
                         return traits_type::eof();
                     setg(buffer.data(), buffer.data(), buffer.data() + bytes_read);
                 }
@@ -158,7 +161,7 @@ namespace fast_task {
                 size_t bytes_to_write = std::min(static_cast<size_t>(n), size_t(epptr() - pptr()));
                 traits_type::copy(pptr(), s, bytes_to_write);
                 pbump(static_cast<int>(bytes_to_write));
-                if (flush_buffer() == traits_type::eof()) 
+                if (flush_buffer() == traits_type::eof())
                     return traits_type::eof();
                 return static_cast<std::streamsize>(bytes_to_write);
             }
@@ -166,7 +169,7 @@ namespace fast_task {
             int_type underflow() override {
                 if (gptr() == egptr()) {
                     uint32_t bytes_read = file_handle.read(reinterpret_cast<uint8_t*>(buffer.data()), buffer_size);
-                    if (bytes_read == 0) 
+                    if (bytes_read == 0)
                         return traits_type::eof();
                     setg(buffer.data(), buffer.data(), buffer.data() + bytes_read);
                 }
@@ -178,7 +181,7 @@ namespace fast_task {
                     *pptr() = traits_type::to_char_type(ch);
                     pbump(1);
                 }
-                if (flush_buffer() == traits_type::eof()) 
+                if (flush_buffer() == traits_type::eof())
                     return traits_type::eof();
                 return traits_type::not_eof(ch);
             }
@@ -235,7 +238,7 @@ namespace fast_task {
                 sync();
             }
         };
-    
+
         class async_iofstream : public std::iostream {
             FileHandle handle;
 
@@ -274,16 +277,16 @@ namespace fast_task {
                 } else if (mode & _SH_DENYRD) {
                     protection_mode.read = false;
                     protection_mode.write = true;
-                } else if(mode & _SH_DENYNO) {
+                } else if (mode & _SH_DENYNO) {
                     protection_mode.read = true;
                     protection_mode.write = true;
-                } else if(mode & _SH_SECURE) {
+                } else if (mode & _SH_SECURE) {
                     if (op_mod & ios_base::in)
                         protection_mode.read = true;
-                    else 
+                    else
                         protection_mode.read = false;
                     protection_mode.write = false;
-                }else {
+                } else {
                     protection_mode.read = true;
                     protection_mode.write = true;
                 }
@@ -291,13 +294,13 @@ namespace fast_task {
             }
 
 
-        public :
+        public:
             explicit async_iofstream(
                 const char* str,
                 ios_base::openmode mode = ios_base::in,
                 int prot = ios_base::_Default_open_prot
             )
-                :async_iofstream(std::filesystem::path(str), mode, prot) {}
+                : async_iofstream(std::filesystem::path(str), mode, prot) {}
 
             explicit async_iofstream(
                 const std::string& str,
@@ -327,6 +330,18 @@ namespace fast_task {
             )
                 : std::iostream(new async_filebuf(handle)),
                   handle(path.string(), to_open_mode(mode), to_open_action(mode), _sync_flags{}, to_protection_mode(mode, prot)) {
+            }
+
+            explicit async_iofstream(
+                const std::filesystem::path& path,
+                open_mode open,
+                on_open_action action,
+                _sync_flags flags = {},
+                share_mode share = {},
+                pointer_mode pointer_mode = pointer_mode::combined
+            )
+                : std::iostream(new async_filebuf(handle)),
+                  handle(path.string(), open, action, flags, share) {
             }
 
             ~async_iofstream() {

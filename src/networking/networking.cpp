@@ -353,56 +353,49 @@ namespace fast_task::networking {
 
     #pragma region TCP
 
-    struct tcp_handle : public util::native_worker_handle {
-        std::list<std::tuple<char*, size_t>> write_queue;
-        std::list<std::tuple<char*, size_t>> read_queue;
-        task_condition_variable cv;
-        task_mutex cv_mutex;
-        ::SOCKET socket;
-        ::WSABUF buffer;
-        char* data;
-        int total_bytes;
-        int sent_bytes;
-        int readed_bytes;
-        int data_len;
-        bool force_mode;
-        bool is_bound = false;
-        uint32_t max_read_queue_size;
-        TcpError invalid_reason = TcpError::none;
-        enum class Opcode : uint8_t {
-            HALT,
-            ACCEPT,
-            READ,
-            WRITE,
-            TRANSMIT_FILE,
-            INTERNAL_READ,
-            INTERNAL_CLOSE,
-            FINISH
-        } opcode = Opcode::ACCEPT;
+    struct tcp_handle_2 {
+        struct operation : public util::native_worker_handle {
+            std::shared_ptr<task_mutex> cv_mutex;
+            task_condition_variable cv;
+            WSABUF buffer;
+            tcp_handle_2* self;
+            unsigned long transferred = 0;
+            bool accept_flag = false;
+            bool close_flag = false;
 
-        tcp_handle(SOCKET socket, int32_t buffer_len, util::native_worker_manager* manager, uint32_t read_queue_size = 10)
-            : socket(socket), util::native_worker_handle(manager), max_read_queue_size(read_queue_size) {
+            operation(tcp_handle_2* self, const std::shared_ptr<task_mutex>& lock, util::native_worker_manager* manager) : self(self), cv_mutex(lock), util::native_worker_handle(manager) {}
+
+            void handle(void* _, unsigned long dwBytesTransferred, util::native_worker_handle* overlapped) {
+                std::unique_lock lock(*cv_mutex);
+                auto res = static_cast<operation*>(overlapped);
+                res->transferred = dwBytesTransferred;
+                res->cv.notify_all();
+            }
+        };
+
+        std::shared_ptr<task_mutex> cv_mutex = std::make_shared<task_mutex>();
+        util::native_worker_manager* manager;
+        ::SOCKET socket;
+        int32_t buffer_size = 0x1000;
+        std::vector<char>* temp_read_buffer = nullptr;
+        TcpError invalid_reason = TcpError::none;
+        bool bound = false;
+        bool delayed_buffer_clean = false;
+
+        tcp_handle_2(SOCKET socket, int32_t buffer_len, util::native_worker_manager* manager)
+            : socket(socket), buffer_size(buffer_len), manager(manager) {
             if (buffer_len < 0)
-                throw std::invalid_argument("buffer_len must be positive");
-            data = new char[buffer_len];
-            buffer.buf = data;
-            buffer.len = buffer_len;
-            data_len = buffer_len;
-            total_bytes = 0;
-            sent_bytes = 0;
-            readed_bytes = 0;
-            force_mode = false;
+                buffer_size = 0x1000;
         }
 
-        ~tcp_handle() {
+        ~tcp_handle_2() {
             close();
         }
 
-        uint32_t available_bytes() {
-            if (!data)
-                return 0;
-            if (readed_bytes)
-                return true;
+        uint32_t bytes_available_count() {
+            std::unique_lock lock(*cv_mutex);
+            if (temp_read_buffer)
+                return std::min<size_t>(temp_read_buffer->size(), UINT32_MAX);
             DWORD value = 0;
             int result = ::ioctlsocket(socket, FIONREAD, &value);
             if (result == SOCKET_ERROR)
@@ -411,280 +404,136 @@ namespace fast_task::networking {
                 return value;
         }
 
-        bool data_available() {
-            return available_bytes() > 0;
+        bool bytes_available() {
+            return bytes_available_count() > 0;
         }
 
-        void send_data(const char* data, int len) {
-            if (!data)
-                return;
-            char* new_data = new char[len];
-            memcpy(new_data, data, len);
-            write_queue.push_back(std::make_tuple(new_data, len));
-        }
+        int send(const char* data, int len) {
+            if (!valid())
+                return 0;
 
-        //async
-        bool send_queue_item() {
-            if (!data)
-                return false;
-            if (write_queue.empty())
-                return false;
-            auto item = write_queue.front();
-            write_queue.pop_front();
-            auto& send_data = std::get<0>(item);
-            auto& val_len = std::get<1>(item);
-            std::unique_ptr<char[]> send_data_ptr(send_data);
-            //set buffer
-            buffer.len = data_len;
-            buffer.buf = data;
-            while (val_len) {
-                size_t to_sent_bytes = val_len > data_len ? data_len : val_len;
-                memcpy(data, send_data, to_sent_bytes);
-                buffer.len = to_sent_bytes;
-                buffer.buf = data;
-                if (!send_await()) {
-                    return false;
-                }
-                if (val_len < sent_bytes)
-                    return true;
-                val_len -= sent_bytes;
-                send_data += sent_bytes;
+            auto op = std::make_unique<operation>(this, cv_mutex, manager);
+            op->buffer.buf = (CHAR*)data;
+            op->buffer.len = len;
+            DWORD sent = 0;
+            mutex_unify mutex(*cv_mutex);
+            std::unique_lock lock(mutex);
+            auto res = WSASend(socket, &op->buffer, 1, &sent, 0, &op->overlapped, NULL);
+            if (res) {
+                if (!handle_error(lock, invalid_reason))
+                    return 0;
             }
-            return true;
+            op->cv.wait(lock);
+            return op->transferred;
         }
 
-        void read_force(uint32_t buffer_len, char* buffer) {
-            if (!data)
+        void read(char* extern_buffer, int buffer_len, int& readed) {
+            if (!valid()) {
+                readed = 0;
                 return;
-            if (!buffer_len)
-                return;
-            if (!buffer)
-                return;
-            while (buffer_len) {
-                int readed = 0;
-                read_available(buffer, buffer_len, readed);
-                buffer += readed;
-                if (readed > buffer_len)
+            }
+            auto op = std::make_unique<operation>(this, cv_mutex, manager);
+            op->buffer.buf = extern_buffer;
+            op->buffer.len = buffer_len;
+            readed = 0;
+            DWORD flags = 0, recvd = 0;
+            mutex_unify mutex(*cv_mutex);
+            std::unique_lock lock(mutex);
+            if (temp_read_buffer) {
+                if (!delayed_buffer_clean) {
+                    auto to_read = std::min<size_t>(temp_read_buffer->size(), buffer_len);
+                    std::memcpy(extern_buffer, temp_read_buffer->data(), to_read);
+                    readed = to_read;
+                    temp_read_buffer->erase(temp_read_buffer->begin(), temp_read_buffer->begin() + to_read);
+                    if (temp_read_buffer->empty()) {
+                        delete temp_read_buffer;
+                        temp_read_buffer = nullptr;
+                    }
                     return;
+                } else {
+                    delete temp_read_buffer;
+                    temp_read_buffer = nullptr;
+                }
+            }
+            auto res = WSARecv(socket, &op->buffer, 1, &recvd, &flags, &op->overlapped, NULL);
+            if (res) {
+                if (!handle_error(lock, invalid_reason))
+                    return;
+            }
+            op->cv.wait(lock);
+            readed = op->transferred;
+        }
+
+        void read_fixed(char* extern_buffer, int buffer_len) {
+            while (valid() && buffer_len) {
+                int readed = 0;
+                read(extern_buffer, buffer_len, readed);
+                extern_buffer += readed;
                 buffer_len -= readed;
             }
         }
 
-        int64_t write_force(const char* to_write, uint32_t to_write_len) {
-            if (!data)
-                return -1;
-            if (!to_write_len)
-                return -1;
-            if (!to_write)
-                return -1;
-
-            force_mode = true;
-            if (data_len < to_write_len) {
-                buffer.len = data_len;
-                buffer.buf = this->data;
-                if (!send_await())
-                    return -1;
-                force_mode = false;
-                return sent_bytes;
-            } else {
-                buffer.len = to_write_len;
-                buffer.buf = this->data;
-                memcpy(this->data, to_write, to_write_len);
-                if (!send_await())
-                    return -1;
-                force_mode = false;
-                return sent_bytes;
-            }
-        }
-
-        void read_data() {
-            if (!data)
-                return;
-            if (read_queue.empty()) {
-                mutex_unify mutex(cv_mutex);
-                std::unique_lock<mutex_unify> lock(mutex);
-                opcode = Opcode::READ;
-
-                if ((SOCKET_ERROR == read())) {
-                    lock.unlock();
-                    if (handle_error())
-                        lock.lock();
-                    else
-                        return;
-                }
-
-                cv.wait(lock);
-                opcode = Opcode::HALT;
-            } else {
-                auto item = read_queue.front();
-                read_queue.pop_front();
-                auto& read_data = std::get<0>(item);
-                auto& val_len = std::get<1>(item);
-                std::unique_ptr<char[]> read_data_ptr(read_data);
-                buffer.buf = data;
-                buffer.len = data_len;
-                readed_bytes = val_len;
-                memcpy(data, read_data, val_len);
-            }
-        }
-
-        void read_available_no_block(char* extern_buffer, int buffer_len, int& readed) {
-            if (!readed_bytes)
+        char* read_no_copy(unsigned long& readed) {
+            if (!valid()) {
                 readed = 0;
-            else if (readed_bytes < buffer_len) {
-                readed = readed_bytes;
-                memcpy(extern_buffer, data, readed_bytes);
-                readed_bytes = 0;
+                return nullptr;
+            }
+            bool reuse_buf = false;
+            std::unique_lock lock(*cv_mutex);
+            if (temp_read_buffer) {
+                if (!delayed_buffer_clean) {
+                    readed = temp_read_buffer->size();
+                    delayed_buffer_clean = true;
+                    return temp_read_buffer->data();
+                } else {
+                    if (buffer_size != temp_read_buffer->size()) {
+                        delete temp_read_buffer;
+                        temp_read_buffer = nullptr;
+                    } else
+                        reuse_buf = true;
+                }
+            }
+            std::vector<char> buf;
+            if (reuse_buf) {
+                buf = std::move(*temp_read_buffer);
+            } else
+                buf = std::vector<char>(buffer_size);
+            lock.unlock();
+            int _readed = 0;
+            read(buf.data(), buf.size(), _readed);
+            if (_readed) {
+                buf.resize(_readed);
+                readed = _readed;
+                lock.lock();
+                temp_read_buffer = new std::vector<char>(std::move(buf));
+                delayed_buffer_clean = true;
+                return temp_read_buffer->data();
             } else {
-                readed = buffer_len;
-                memcpy(extern_buffer, buffer.buf, buffer_len);
-                readed_bytes -= buffer_len;
-                buffer.buf += buffer_len;
-                buffer.len -= buffer_len;
+                readed = 0;
+                return nullptr;
             }
         }
 
-        void read_available(char* extern_buffer, int buffer_len, int& readed) {
-            if (!readed_bytes)
-                read_data();
-            if (readed_bytes < buffer_len) {
-                readed = readed_bytes;
-                memcpy(extern_buffer, data, readed_bytes);
-                readed_bytes = 0;
-            } else {
-                readed = buffer_len;
-                memcpy(extern_buffer, buffer.buf, buffer_len);
-                readed_bytes -= buffer_len;
-                buffer.buf += buffer_len;
-                buffer.len -= buffer_len;
-            }
-        }
-
-        char* read_available_no_copy(int& readed) {
-            if (!readed_bytes)
-                read_data();
-            readed = readed_bytes;
-            readed_bytes = 0;
-            return data;
+        void close(std::unique_lock<mutex_unify>& lock, TcpError err = TcpError::local_close) {
+            if (!valid())
+                return;
+            invalid_reason = err;
+            internal_close(lock);
         }
 
         void close(TcpError err = TcpError::local_close) {
-            if (!data)
-                return;
-            pre_close(err);
-            internal_close();
-        }
-
-        void handle(unsigned long dwBytesTransferred) {
-            DWORD flags = 0, bytes = 0;
-            if (!data) {
-                if (opcode != Opcode::INTERNAL_CLOSE)
-                    return;
-            }
-            mutex_unify mutex(cv_mutex);
-            std::unique_lock<mutex_unify> lock(mutex);
-            switch (opcode) {
-            case Opcode::READ: {
-                readed_bytes = dwBytesTransferred;
-                cv.notify_all();
-                break;
-            }
-            case Opcode::WRITE:
-                sent_bytes += dwBytesTransferred;
-                if (sent_bytes < total_bytes) {
-                    buffer.buf = data + sent_bytes;
-                    buffer.len = total_bytes - sent_bytes;
-                    if (!data_available()) {
-                        if (!send())
-                            cv.notify_all();
-                    } else {
-                        char* data = new char[buffer.len];
-                        memcpy(data, buffer.buf, buffer.len);
-                        write_queue.push_front(std::make_tuple(data, buffer.len));
-                        if (force_mode) {
-                            opcode = Opcode::INTERNAL_READ;
-                            if ((SOCKET_ERROR == read())) {
-                                lock.unlock();
-                                handle_error();
-                                lock.lock();
-                            }
-                        } else
-                            cv.notify_all();
-                    }
-                } else
-                    cv.notify_all();
-                break;
-            case Opcode::TRANSMIT_FILE:
-                cv.notify_all();
-                break;
-            case Opcode::INTERNAL_READ:
-                if (dwBytesTransferred) {
-                    char* buffer = new char[dwBytesTransferred];
-                    memcpy(buffer, data, dwBytesTransferred);
-                    read_queue.push_back(std::make_tuple(buffer, dwBytesTransferred));
-                }
-                if (!data_available()) {
-                    if (read_queue.size() > max_read_queue_size)
-                        close(TcpError::read_queue_overflow);
-                    else if (SOCKET_ERROR == read()) {
-                        lock.unlock();
-                        handle_error();
-                        lock.lock();
-                    }
-                } else {
-                    if (write_queue.empty())
-                        close(TcpError::invalid_state);
-                    else {
-                        auto item = write_queue.front();
-                        write_queue.pop_front();
-                        auto& write_data = std::get<0>(item);
-                        auto& val_len = std::get<1>(item);
-                        memcpy(data, write_data, val_len);
-                        delete[] write_data;
-                        buffer.buf = data;
-                        buffer.len = val_len;
-                        if (!send())
-                            cv.notify_all();
-                    }
-                }
-                break;
-            case Opcode::INTERNAL_CLOSE:
-                closesocket(socket);
-                socket = INVALID_SOCKET;
-                cv.notify_all();
-                break;
-            default:
-                break;
-            }
-            opcode = Opcode::FINISH;
+            mutex_unify mutex(*cv_mutex);
+            std::unique_lock lock(mutex);
+            close(lock, err);
         }
 
         void send_and_close(const char* data, int len) {
-            if (!data)
-                return;
-            buffer.len = data_len;
-            buffer.buf = this->data;
-            write_queue = {};
-            force_mode = true;
-            while (data_len < len) {
-                memcpy(buffer.buf, data, buffer.len);
-                if (!send_await())
-                    return;
-                data += buffer.len;
-                len -= buffer.len;
-            }
-            if (len) {
-                //send last part of data and close
-                memcpy(buffer.buf, data, len);
-                buffer.len = len;
-                send_await();
-            }
-            force_mode = false;
+            send(data, len);
             close();
         }
 
         bool send_file(void* file, uint64_t data_len, uint64_t offset, uint32_t chunks_size) {
-            if (!data)
+            if (!valid())
                 return false;
             if (chunks_size == 0)
                 chunks_size = 0x1000;
@@ -722,7 +571,7 @@ namespace fast_task::networking {
         }
 
         bool send_file(const char* path, size_t path_len, uint64_t data_len, uint64_t offset, uint32_t chunks_size) {
-            if (!data)
+            if (!valid())
                 return false;
             auto wpath = std::filesystem::path(path, path + path_len).wstring();
             HANDLE file = CreateFileW(wpath.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, NULL);
@@ -740,90 +589,53 @@ namespace fast_task::networking {
         }
 
         bool valid() {
-            return data != nullptr;
+            return socket != INVALID_SOCKET;
         }
 
         void reset() {
-            if (!data)
+            mutex_unify mutex(*cv_mutex);
+            std::unique_lock lock(mutex);
+            if (!valid())
                 return;
-            pre_close(TcpError::local_reset);
+            invalid_reason = TcpError::local_reset;
             closesocket(socket); //with iocp socket not send everything and cancel all operations
         }
 
         void connection_reset() {
-            if (opcode != Opcode::HALT) {
-                mutex_unify mutex(cv_mutex);
-                std::unique_lock<mutex_unify> lock(mutex);
-                data = nullptr;
-                invalid_reason = TcpError::remote_close;
-                readed_bytes = 0;
-                cv.notify_all();
-            } else {
-                mutex_unify mutex(cv_mutex);
-                std::unique_lock<mutex_unify> lock(mutex);
-                data = nullptr;
-                invalid_reason = TcpError::remote_close;
-                readed_bytes = 0;
-                cv.notify_all();
-                lock.unlock();
-                internal_close();
-            }
+            mutex_unify mutex(*cv_mutex);
+            std::unique_lock lock(mutex);
+            invalid_reason = TcpError::remote_close;
+            internal_close(lock);
         }
 
         void rebuffer(int32_t buffer_len) {
-            if (!data)
-                return;
             if (buffer_len < 0)
                 throw std::invalid_argument("buffer_len must be positive");
             if (buffer_len == 0)
                 buffer_len = 0x1000;
-            if (buffer_len == data_len)
+            if (buffer_len == buffer_size)
                 return;
-            char* new_data = new char[buffer_len];
-            delete[] data;
-            data = new_data;
-            data_len = buffer_len;
+            std::unique_lock lock(*cv_mutex);
+            if (!valid())
+                return;
+            buffer_size = buffer_len;
         }
 
     private:
-        void pre_close(TcpError err) {
-            mutex_unify mutex(cv_mutex);
-            std::unique_lock<mutex_unify> lock(mutex);
-            std::list<std::tuple<char*, size_t>> clear_write_queue;
-            std::list<std::tuple<char*, size_t>> clear_read_queue;
-            if (opcode != Opcode::FINISH && opcode != Opcode::ACCEPT && opcode != Opcode::HALT)
-                cv.wait(lock);
-            readed_bytes = 0;
-            sent_bytes = 0;
-            delete[] data;
-            data = nullptr;
-            invalid_reason = err;
-            write_queue.swap(clear_write_queue);
-            read_queue.swap(clear_read_queue);
-            cv.notify_all();
-
-            lock.unlock();
-            for (auto& item : clear_write_queue)
-                delete[] std::get<0>(item);
-            for (auto& item : clear_read_queue)
-                delete[] std::get<0>(item);
-        }
-
-        void internal_close() {
-            mutex_unify mutex(cv_mutex);
-            std::unique_lock<mutex_unify> lock(mutex);
-            opcode = Opcode::INTERNAL_CLOSE;
+        void internal_close(std::unique_lock<mutex_unify>& lock) {
+            auto op = std::make_unique<operation>(this, cv_mutex, manager);
+            op->close_flag = true;
             shutdown(socket, SD_BOTH);
-            if (!_DisconnectEx(socket, &overlapped, TF_REUSE_SOCKET, 0)) {
+            if (!_DisconnectEx(socket, &op->overlapped, TF_REUSE_SOCKET, 0)) {
                 if (WSAGetLastError() != ERROR_IO_PENDING)
                     invalid_reason = TcpError::local_close;
-                cv.wait(lock);
+                op->cv.wait(lock);
             }
             closesocket(socket);
-            opcode = Opcode::HALT;
+            socket = INVALID_SOCKET;
         }
 
-        bool handle_error() {
+        bool handle_error(std::unique_lock<mutex_unify>& lock, TcpError& invalid_reason) {
             auto error = WSAGetLastError();
             if (WSA_IO_PENDING == error)
                 return true;
@@ -843,50 +655,24 @@ namespace fast_task::networking {
                     invalid_reason = TcpError::undefined_error;
                     break;
                 }
-                close();
+                close(lock);
                 return false;
             }
-        }
-
-        int read() {
-            DWORD flags = 0;
-            buffer.buf = this->data;
-            buffer.len = data_len;
-            return WSARecv(socket, &buffer, 1, NULL, &flags, &overlapped, NULL);
-        }
-
-        bool send() {
-            DWORD flags = 0;
-            opcode = Opcode::WRITE;
-            int result = WSASend(socket, &buffer, 1, NULL, flags, &overlapped, NULL);
-            if ((SOCKET_ERROR == result)) {
-                opcode = Opcode::HALT;
-                return handle_error();
-            }
-            return true;
-        }
-
-        bool send_await() {
-            mutex_unify mutex(cv_mutex);
-            std::unique_lock<mutex_unify> lock(mutex);
-            if (!send())
-                return false;
-            cv.wait(lock);
-            opcode = Opcode::HALT;
-            return data; //if data is null, then socket is closed
         }
 
         bool transfer_file(SOCKET sock, HANDLE FILE, uint32_t block, uint32_t chunks_size, uint64_t offset) {
-            mutex_unify mutex(cv_mutex);
-            std::unique_lock<mutex_unify> lock(mutex);
-            overlapped.Offset = offset & 0xFFFFFFFF;
-            overlapped.OffsetHigh = offset >> 32;
-            opcode = Opcode::TRANSMIT_FILE;
-            bool res = _TransmitFile(sock, FILE, block, chunks_size, &overlapped, NULL, TF_USE_KERNEL_APC | TF_WRITE_BEHIND);
+            auto op = std::make_unique<operation>(this, cv_mutex, manager);
+            op->overlapped.Offset = offset & 0xFFFFFFFF;
+            op->overlapped.OffsetHigh = offset >> 32;
+            mutex_unify mutex(*cv_mutex);
+            std::unique_lock lock(mutex);
+            if (!valid())
+                return false;
+            bool res = _TransmitFile(sock, FILE, block, chunks_size, &op->overlapped, NULL, TF_USE_KERNEL_APC | TF_WRITE_BEHIND);
             if (!res && WSAGetLastError() != WSA_IO_PENDING)
                 res = false;
-            cv.wait(lock);
-            opcode = Opcode::HALT;
+            if (res)
+                op->cv.wait(lock);
             return res;
         }
     };
@@ -895,8 +681,8 @@ namespace fast_task::networking {
 
     class TcpNetworkStreamImpl : public TcpNetworkStream {
         friend class TcpNetworkManager;
-        struct tcp_handle* handle;
-        task_mutex mutex;
+        struct tcp_handle_2* handle;
+        task_rw_mutex mutex;
         TcpError last_error;
 
         bool checkup() {
@@ -904,20 +690,18 @@ namespace fast_task::networking {
                 return false;
             if (!handle->valid()) {
                 last_error = handle->invalid_reason;
-                delete handle;
-                handle = nullptr;
                 return false;
             }
             return true;
         }
 
     public:
-        TcpNetworkStreamImpl(tcp_handle* handle)
+        TcpNetworkStreamImpl(tcp_handle_2* handle)
             : handle(handle), last_error(TcpError::none) {}
 
         ~TcpNetworkStreamImpl() override {
             if (handle) {
-                std::lock_guard lg(mutex);
+                write_lock lg(mutex);
                 handle->close();
                 delete handle;
             }
@@ -925,76 +709,51 @@ namespace fast_task::networking {
         }
 
         std::span<char> read_available_ref() override {
-            std::lock_guard lg(mutex);
+            read_lock lock(mutex);
             if (!handle)
                 return {};
-            while (!handle->data_available()) {
-                if (!handle->send_queue_item())
-                    break;
-            }
-            if (!checkup())
-                return {};
-            int readed = 0;
-            char* data = handle->read_available_no_copy(readed);
+            unsigned long readed = 0;
+            char* data = handle->read_no_copy(readed);
             return {data, (size_t)readed};
         }
 
         int read_available(char* buffer, int buffer_len) override {
-            std::lock_guard lg(mutex);
+            read_lock lock(mutex);
             if (!handle)
                 return 0;
-            while (!handle->data_available()) {
-                if (!handle->send_queue_item())
-                    break;
-            }
-
-            if (!checkup())
-                return (uint32_t)0;
             int readed = 0;
-            handle->read_available(buffer, buffer_len, readed);
+            handle->read(buffer, buffer_len, readed);
             return readed;
         }
 
         bool data_available() override {
-            std::lock_guard lg(mutex);
+            read_lock lock(mutex);
             if (handle)
-                return handle->data_available();
+                return handle->bytes_available();
             return false;
         }
 
         void write(const char* data, size_t size) override {
-            std::lock_guard lg(mutex);
+            read_lock lock(mutex);
             if (handle) {
-                handle->send_data(data, size);
-                while (!handle->data_available()) {
-                    if (!handle->send_queue_item())
-                        break;
-                }
+                handle->send(data, size);
                 checkup();
             }
         }
 
         bool write_file(char* path, size_t path_len, uint64_t data_len, uint64_t offset, uint32_t chunks_size) override {
-            std::lock_guard lg(mutex);
+            read_lock lock(mutex);
             if (handle) {
-                while (handle->valid())
-                    if (!handle->send_queue_item())
-                        break;
-
                 if (!checkup())
                     return false;
-
                 return handle->send_file(path, path_len, data_len, offset, chunks_size);
             }
             return false;
         }
 
         bool write_file(void* fhandle, uint64_t data_len, uint64_t offset, uint32_t chunks_size) override {
-            std::lock_guard lg(mutex);
+            read_lock lock(mutex);
             if (handle) {
-                while (handle->valid())
-                    if (!handle->send_queue_item())
-                        break;
                 if (!checkup())
                     return false;
                 return handle->send_file(fhandle, data_len, offset, chunks_size);
@@ -1004,73 +763,52 @@ namespace fast_task::networking {
 
         //write all data from write_queue
         void force_write() override {
-            std::lock_guard lg(mutex);
-            if (handle) {
-                while (handle->valid())
-                    if (!handle->send_queue_item())
-                        break;
-                checkup();
-            }
         }
 
         void force_write_and_close(const char* data, size_t size) override {
-            std::lock_guard lg(mutex);
+            read_lock lock(mutex);
             if (handle) {
                 handle->send_and_close(data, size);
                 last_error = handle->invalid_reason;
-                delete handle;
             }
-            handle = nullptr;
         }
 
         void close() override {
-            std::lock_guard lg(mutex);
+            read_lock lock(mutex);
             if (handle) {
                 handle->close();
                 last_error = handle->invalid_reason;
-                delete handle;
             }
-            handle = nullptr;
         }
 
         void reset() override {
-            std::lock_guard lg(mutex);
+            read_lock lock(mutex);
             if (handle) {
                 handle->reset();
                 last_error = handle->invalid_reason;
-                delete handle;
             }
-            handle = nullptr;
         }
 
         void rebuffer(int32_t new_size) override {
-            std::lock_guard lg(mutex);
+            read_lock lock(mutex);
             if (handle)
                 handle->rebuffer(new_size);
         }
 
         bool is_closed() override {
-            std::lock_guard lg(mutex);
-            if (handle) {
-                bool res = handle->valid();
-                if (!res) {
-                    delete handle;
-                    handle = nullptr;
-                }
-                return !res;
-            }
-            return true;
+            read_lock lock(mutex);
+            return handle ? !handle->valid() : true;
         }
 
         TcpError error() override {
-            std::lock_guard lg(mutex);
+            read_lock lock(mutex);
             if (handle)
                 return handle->invalid_reason;
             return last_error;
         }
 
         address local_address() override {
-            std::lock_guard lg(mutex);
+            write_lock lg(mutex);
             if (!handle)
                 return {};
             universal_address addr;
@@ -1081,8 +819,8 @@ namespace fast_task::networking {
         }
 
         address remote_address() override {
-            std::lock_guard lg(mutex);
-            if (!handle)
+            write_lock lg(mutex);
+            if (!handle->valid())
                 return {};
             universal_address addr;
             int socklen = sizeof(universal_address);
@@ -1098,7 +836,7 @@ namespace fast_task::networking {
 
     class TcpNetworkBlockingImpl : public TcpNetworkBlocking {
         friend class TcpNetworkManager;
-        tcp_handle* handle;
+        tcp_handle_2* handle;
         task_mutex mutex;
         TcpError last_error;
 
@@ -1115,7 +853,7 @@ namespace fast_task::networking {
         }
 
     public:
-        TcpNetworkBlockingImpl(tcp_handle* handle)
+        TcpNetworkBlockingImpl(tcp_handle_2* handle)
             : handle(handle), last_error(TcpError::none) {}
 
         ~TcpNetworkBlockingImpl() override {
@@ -1132,7 +870,7 @@ namespace fast_task::networking {
                     return {};
                 std::vector<char> buf;
                 buf.resize(len);
-                handle->read_force(len, buf.data());
+                handle->read_fixed(buf.data(), len);
                 if (len == 0)
                     return {};
                 else
@@ -1145,7 +883,7 @@ namespace fast_task::networking {
         uint32_t available_bytes() override {
             std::lock_guard lg(mutex);
             if (handle)
-                return handle->available_bytes();
+                return handle->bytes_available_count();
             return 0ui32;
         }
 
@@ -1154,7 +892,7 @@ namespace fast_task::networking {
             if (handle) {
                 if (!checkup())
                     return 0;
-                return handle->write_force(data, len);
+                return handle->send(data, len);
             }
             return 0;
         }
@@ -1269,42 +1007,62 @@ namespace fast_task::networking {
         size_t acceptors;
         task_condition_variable state_changed_cv;
 
-        void make_acceptEx(tcp_handle* pClientContext) {
+        tcp_handle_2::operation* make_acceptEx(tcp_handle_2* pClientContext) {
         re_try:
             static const auto address_len = sizeof(sockaddr_storage) + 16;
+
+            auto op = new tcp_handle_2::operation(pClientContext, std::make_shared<task_mutex>(), this);
+            op->accept_flag = true;
             auto new_sock = WSASocketW(AF_INET, SOCK_STREAM, IPPROTO_TCP, NULL, 0, WSA_FLAG_OVERLAPPED);
             pClientContext->socket = new_sock;
-            pClientContext->opcode = tcp_handle::Opcode::ACCEPT;
-            BOOL success = _AcceptEx(
-                main_socket,
-                new_sock,
-                pClientContext->buffer.buf,
-                0,
-                address_len,
-                address_len,
-                nullptr,
-                &pClientContext->overlapped
-            );
+            BOOL success;
+            if (config.fast_open_queue) {
+                op->buffer.len = config.buffer_size;
+                op->buffer.buf = new char[op->buffer.len + sizeof(universal_address) + 16 + sizeof(universal_address) + 16];
+                success = _AcceptEx(
+                    main_socket,
+                    new_sock,
+                    op->buffer.buf,
+                    op->buffer.len,
+                    address_len,
+                    address_len,
+                    nullptr,
+                    &op->overlapped
+                );
+            } else {
+                success = _AcceptEx(
+                    main_socket,
+                    new_sock,
+                    nullptr,
+                    0,
+                    address_len,
+                    address_len,
+                    nullptr,
+                    &op->overlapped
+                );
+            }
+            util::native_workers_singleton::register_handle((HANDLE)new_sock, nullptr);
             if (success != TRUE) {
                 auto err = WSAGetLastError();
                 if (err == WSA_IO_PENDING)
-                    return;
+                    return op;
                 else if (err == WSAECONNRESET) {
                     closesocket(new_sock);
                     goto re_try;
                 } else {
                     closesocket(new_sock);
-                    return;
+                    return op;
                 }
             }
+            return op;
         }
 
         void make_acceptEx(void) {
-            tcp_handle* pClientContext = new tcp_handle(0, config.buffer_size, this);
+            tcp_handle_2* pClientContext = new tcp_handle_2(0, config.buffer_size, this);
             make_acceptEx(pClientContext);
         }
 
-        void accepted(tcp_handle* self, address&& clientAddr, address&& localAddr) {
+        void accepted(tcp_handle_2* self, address&& clientAddr, address&& localAddr) {
             if (!allow_new_connections) {
                 delete self;
                 return;
@@ -1327,46 +1085,40 @@ namespace fast_task::networking {
             });
         }
 
-        void new_connection(tcp_handle& data, bool good) {
-            if (!data.is_bound)
+        void new_connection(tcp_handle_2::operation* op, tcp_handle_2& data, bool good) {
+            if (!data.bound)
                 make_acceptEx();
 
             universal_address* pClientAddr = NULL;
             universal_address* pLocalAddr = NULL;
             int remoteLen = sizeof(universal_address);
             int localLen = sizeof(universal_address);
-            _GetAcceptExSockaddrs(data.buffer.buf, 0, sizeof(universal_address) + 16, sizeof(universal_address) + 16, (LPSOCKADDR*)&pLocalAddr, &localLen, (LPSOCKADDR*)&pClientAddr, &remoteLen);
+            _GetAcceptExSockaddrs(op->buffer.buf, op->transferred, sizeof(universal_address) + 16, sizeof(universal_address) + 16, (LPSOCKADDR*)&pLocalAddr, &localLen, (LPSOCKADDR*)&pClientAddr, &remoteLen);
             address clientAddress = to_address(*pClientAddr);
             address localAddress = to_address(*pLocalAddr);
             if (accept_filter) {
                 if (accept_filter(clientAddress, localAddress)) {
                     closesocket(data.socket);
-                    if (!data.is_bound)
+                    if (!data.bound)
                         delete &data;
-                    else
-                        make_acceptEx(&data);
                     return;
                 }
             }
 
             setsockopt(data.socket, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT, (char*)&main_socket, sizeof(main_socket));
-            {
-                std::lock_guard lock(safety);
-                if (!util::native_workers_singleton::register_handle((HANDLE)data.socket, &data)) {
-                    closesocket(data.socket);
-                    if (!data.is_bound)
-                        delete &data;
-                    else
-                        make_acceptEx(&data);
-                    return;
-                }
+            if (op->buffer.buf) {
+                data.temp_read_buffer = new std::vector<char>(op->buffer.buf, op->buffer.buf + op->transferred);
+                delete[] (char*)op->buffer.buf;
+                op->buffer.buf = nullptr;
             }
-            if (data.is_bound) {
-                std::lock_guard guard(data.cv_mutex);
-                data.cv.notify_all();
-            } else
+
+            if (data.bound) {
+                std::lock_guard guard(*data.cv_mutex);
+                op->cv.notify_all();
+            } else {
                 accepted(&data, std::move(clientAddress), std::move(localAddress));
-            return;
+                delete op;
+            }
         }
 
         void make_socket() {
@@ -1476,13 +1228,18 @@ namespace fast_task::networking {
         }
 
         void handle(void* _data, util::native_worker_handle* overlapped, unsigned long dwBytesTransferred, bool status) override {
-            auto& data = *(tcp_handle*)overlapped;
-            if (data.opcode == tcp_handle::Opcode::ACCEPT)
-                new_connection(data, !((FALSE == status) || ((true == status) && (0 == dwBytesTransferred))));
-            else if (!((FALSE == status) || ((true == status) && (0 == dwBytesTransferred))))
-                data.handle(dwBytesTransferred);
-            else
-                data.connection_reset();
+            auto& data = *(tcp_handle_2::operation*)overlapped;
+            if (data.accept_flag) {
+                data.transferred = dwBytesTransferred;
+                new_connection(&data, *data.self, !((FALSE == status) || ((true == status) && (0 == dwBytesTransferred))));
+            } else if (!((FALSE == status) || ((true == status) && (0 == dwBytesTransferred))))
+                data.handle(_data, dwBytesTransferred, &data);
+            else {
+                if (!data.close_flag)
+                    data.self->connection_reset();
+                std::lock_guard lock(*data.cv_mutex);
+                data.cv.notify_all();
+            }
         }
 
         void set_configuration(const TcpConfiguration& tcp) {
@@ -1547,7 +1304,7 @@ namespace fast_task::networking {
             state_changed_cv.notify_all();
         }
 
-        tcp_handle* base_accept(bool ignore_acceptors) {
+        tcp_handle_2* base_accept(bool ignore_acceptors) {
             if (!ignore_acceptors && acceptors)
                 throw std::runtime_error("Tried to accept connection with enabled acceptors and ignore_acceptors = false");
             if (corrupted)
@@ -1556,13 +1313,12 @@ namespace fast_task::networking {
                 throw std::runtime_error("TcpNetworkManager is disabled");
             if (!allow_new_connections)
                 throw std::runtime_error("TcpNetworkManager is paused");
-            tcp_handle* data = new tcp_handle(0, config.buffer_size, this);
-            mutex_unify um(data->cv_mutex);
+            tcp_handle_2* data = new tcp_handle_2(0, config.buffer_size, this);
+            mutex_unify um(*data->cv_mutex);
             std::unique_lock lock(um);
-            data->opcode = tcp_handle::Opcode::ACCEPT;
-            data->is_bound = true;
-            make_acceptEx(data);
-            data->cv.wait(lock);
+            data->bound = true;
+            auto res = make_acceptEx(data);
+            res->cv.wait(lock);
             return data;
         }
 
@@ -1623,7 +1379,7 @@ namespace fast_task::networking {
     class TcpClientManager : public util::native_worker_manager {
         task_mutex mutex;
         sockaddr_in6 connectionAddress;
-        tcp_handle* _handle;
+        tcp_handle_2* _handle;
         bool corrupted = false;
 
         void set_configuration(SOCKET sock, const TcpConfiguration& config) {
@@ -1697,13 +1453,15 @@ namespace fast_task::networking {
 
     public:
         void handle(void* _data, util::native_worker_handle* overlapped, unsigned long dwBytesTransferred, bool status) override {
-            tcp_handle& handle = *(tcp_handle*)overlapped;
-            if ((FALSE == status) || ((true == status) && (0 == dwBytesTransferred)))
-                handle.connection_reset();
-            else if (handle.opcode == tcp_handle::Opcode::ACCEPT)
-                handle.cv.notify_all();
+            auto& data = *(tcp_handle_2::operation*)overlapped;
+            if (data.accept_flag) {
+                std::lock_guard lock(*data.cv_mutex);
+                data.transferred = dwBytesTransferred;
+                data.cv.notify_all();
+            } else if (!((FALSE == status) || ((true == status) && (0 == dwBytesTransferred))))
+                data.handle(_data, dwBytesTransferred, &data);
             else
-                handle.handle(dwBytesTransferred);
+                data.self->connection_reset();
         }
 
         TcpClientManager(sockaddr_in6& _connectionAddress, const TcpConfiguration& config)
@@ -1719,10 +1477,12 @@ namespace fast_task::networking {
                 return;
             }
 
-            _handle = new tcp_handle(clientSocket, 4096, this);
-            mutex_unify umutex(_handle->cv_mutex);
+            _handle = new tcp_handle_2(clientSocket, config.buffer_size, this);
+            auto op = std::make_unique<tcp_handle_2::operation>(_handle, std::make_shared<task_mutex>(), this);
+            op->accept_flag = true;
+            mutex_unify umutex(*_handle->cv_mutex);
             std::unique_lock<mutex_unify> lock(umutex);
-            if (!_ConnectEx(clientSocket, (sockaddr*)&connectionAddress, sizeof(connectionAddress), NULL, 0, nullptr, (OVERLAPPED*)_handle)) {
+            if (!_ConnectEx(clientSocket, (sockaddr*)&connectionAddress, sizeof(connectionAddress), NULL, 0, nullptr, (OVERLAPPED*)&op->overlapped)) {
                 auto err = WSAGetLastError();
                 if (err != ERROR_IO_PENDING) {
                     corrupted = true;
@@ -1730,14 +1490,15 @@ namespace fast_task::networking {
                     return;
                 }
             }
+            util::native_workers_singleton::register_handle((HANDLE)clientSocket, nullptr);
             if (config.connection_timeout_ms > 0) {
-                if (!_handle->cv.wait_for(lock, config.connection_timeout_ms)) {
+                if (!op->cv.wait_for(lock, config.connection_timeout_ms)) {
                     corrupted = true;
                     _handle->reset();
                     return;
                 }
             } else
-                _handle->cv.wait(lock);
+                op->cv.wait(lock);
         }
 
         TcpClientManager(sockaddr_in6& _connectionAddress, char* data, uint32_t len, const TcpConfiguration& config)
@@ -1759,32 +1520,29 @@ namespace fast_task::networking {
                 return;
             }
 
-            _handle = new tcp_handle(clientSocket, 4096, this);
-            char* old_buffer = _handle->data;
-            _handle->data = data;
-            _handle->buffer.buf = data;
-            _handle->buffer.len = len;
-            _handle->total_bytes = len;
-            _handle->opcode = tcp_handle::Opcode::WRITE;
-            mutex_unify umutex(_handle->cv_mutex);
+            _handle = new tcp_handle_2(clientSocket, 4096, this);
+            auto op = std::make_unique<tcp_handle_2::operation>(_handle, std::make_shared<task_mutex>(), this);
+            op->accept_flag = true;
+            op->buffer.buf = data;
+            op->buffer.len = len;
+            mutex_unify umutex(*_handle->cv_mutex);
             std::unique_lock<mutex_unify> lock(umutex);
-            if (!_ConnectEx(clientSocket, (sockaddr*)&connectionAddress, sizeof(connectionAddress), data, len, nullptr, (OVERLAPPED*)_handle)) {
+            if (!_ConnectEx(clientSocket, (sockaddr*)&connectionAddress, sizeof(connectionAddress), data, len, nullptr, (OVERLAPPED*)&op->overlapped)) {
                 auto err = WSAGetLastError();
                 if (err != ERROR_IO_PENDING) {
                     corrupted = true;
                     return;
                 }
             }
+            util::native_workers_singleton::register_handle((HANDLE)clientSocket, nullptr);
             if (config.connection_timeout_ms > 0) {
-                if (!_handle->cv.wait_for(lock, config.connection_timeout_ms)) {
+                if (!op->cv.wait_for(lock, config.connection_timeout_ms)) {
                     corrupted = true;
-                    _handle->data = old_buffer;
                     _handle->reset();
                     return;
                 }
             } else
-                _handle->cv.wait(lock);
-            _handle->data = old_buffer;
+                op->cv.wait(lock);
         }
 
         ~TcpClientManager() override {
@@ -1808,10 +1566,7 @@ namespace fast_task::networking {
                 throw std::runtime_error("TcpClientManager::read, corrupted");
             std::lock_guard<task_mutex> lock(mutex);
             int32_t readed = 0;
-            while (!_handle->available_bytes())
-                if (!_handle->send_queue_item())
-                    break;
-            _handle->read_available(data, len, readed);
+            _handle->read(data, len, readed);
             return readed;
         }
 
@@ -1819,10 +1574,7 @@ namespace fast_task::networking {
             if (corrupted)
                 throw std::runtime_error("TcpClientManager::write, corrupted");
             std::lock_guard<task_mutex> lock(mutex);
-            _handle->send_data(data, len);
-            while (!_handle->available_bytes())
-                if (!_handle->send_queue_item())
-                    break;
+            _handle->send(data, len);
             return _handle->valid();
         }
 
@@ -1830,9 +1582,6 @@ namespace fast_task::networking {
             if (corrupted)
                 throw std::runtime_error("TcpClientManager::write_file, corrupted");
             std::lock_guard<task_mutex> lock(mutex);
-            while (!_handle->available_bytes())
-                if (!_handle->send_queue_item())
-                    break;
             return _handle->send_file(path, len, data_len, offset, chunks_size);
         }
 
@@ -1840,9 +1589,6 @@ namespace fast_task::networking {
             if (corrupted)
                 throw std::runtime_error("TcpClientManager::write_file, corrupted");
             std::lock_guard<task_mutex> lock(mutex);
-            while (!_handle->available_bytes())
-                if (!_handle->send_queue_item())
-                    break;
             return _handle->send_file(handle, data_len, offset, chunks_size);
         }
 
@@ -2978,7 +2724,7 @@ namespace fast_task::networking {
             socklen_t localLen = sizeof(universal_address);
             getsockname(client_socket, (sockaddr*)&pLocalAddr, &localLen);
             getpeername(client_socket, (sockaddr*)&pClientAddr, &remoteLen);
-            
+
             address clientAddress = to_address(*pClientAddr);
             address localAddress = to_address(*pLocalAddr);
             if (accept_filter) {

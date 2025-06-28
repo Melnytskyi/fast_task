@@ -405,7 +405,8 @@ namespace fast_task {
         std::list<std::shared_ptr<task>> cached_cold;
         while (glob.time_control_enabled) {
             if (glob.timed_tasks.size()) {
-                while (glob.timed_tasks.front().wait_timepoint <= std::chrono::high_resolution_clock::now()) {
+                auto current_now = std::chrono::high_resolution_clock::now();
+                while (glob.timed_tasks.front().wait_timepoint <= current_now) {
                     timing& tmng = glob.timed_tasks.front();
                     if (tmng.check_id != tmng.awake_task->awake_check) {
                         glob.timed_tasks.pop_front();
@@ -427,7 +428,8 @@ namespace fast_task {
                 }
             }
             if (glob.cold_timed_tasks.size()) {
-                while (glob.cold_timed_tasks.front().wait_timepoint <= std::chrono::high_resolution_clock::now()) {
+                auto current_now = std::chrono::high_resolution_clock::now();
+                while (glob.cold_timed_tasks.front().wait_timepoint <= current_now) {
                     timing& tmng = glob.cold_timed_tasks.front();
                     if (tmng.check_id != tmng.awake_task->awake_check) {
                         glob.cold_timed_tasks.pop_front();

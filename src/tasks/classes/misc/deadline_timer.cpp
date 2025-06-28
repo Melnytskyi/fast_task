@@ -173,4 +173,11 @@ namespace fast_task {
 
         return wait();
     }
+
+    bool deadline_timer::timed_out() {
+        if (!hh)
+            return false;
+        std::unique_lock lock(hh->no_race);
+        return hh->time_point <= std::chrono::high_resolution_clock::now();
+    }
 }

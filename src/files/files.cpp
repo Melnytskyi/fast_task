@@ -314,6 +314,7 @@ namespace fast_task::files {
         uint64_t write_pointer;
         uint64_t read_pointer;
         pointer_mode pointer_mode;
+        bool make_append = false;
         friend class File_;
 
         uint64_t _file_size() {
@@ -367,7 +368,8 @@ namespace fast_task::files {
                 wopen = GENERIC_WRITE;
                 break;
             case open_mode::append:
-                wopen = FILE_APPEND_DATA;
+                wopen = GENERIC_WRITE;
+                make_append = true;
                 break;
             case open_mode::read_write:
                 wopen = GENERIC_READ | GENERIC_WRITE;
@@ -485,6 +487,9 @@ namespace fast_task::files {
         }
 
         future_ptr<void> write(const uint8_t* data_, uint32_t size) {
+            if (make_append)
+                return append(data_, size);
+
             File_* file = File_::command_write(this, _handle, (char*)data_, size, write_pointer);
             switch (pointer_mode) {
             case pointer_mode::separated:
@@ -513,6 +518,8 @@ namespace fast_task::files {
         }
 
         void write_inline(const uint8_t* data_, uint32_t size) {
+            if (make_append)
+                return append_inline(data_, size);
             File_* file = File_::command_write_inline(this, _handle, (char*)data_, size, write_pointer);
             switch (pointer_mode) {
             case pointer_mode::separated:

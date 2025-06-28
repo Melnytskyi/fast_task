@@ -127,11 +127,6 @@ namespace fast_task::util {
 
                 auto status = GetQueuedCompletionStatus(m_hCompletionPort.get(), &dwBytesTransferred, &data, (OVERLAPPED**)&lpOverlapped, INFINITE);
 
-                if (NULL == data) {
-                    //"GetQueuedCompletionStatus data is null"
-                    continue;
-                }
-
                 if (!lpOverlapped) {
                     //"GetQueuedCompletionStatus overlapped result is null"
                     continue;
@@ -173,8 +168,8 @@ namespace fast_task::util {
             return get_instance()._register_handle(hFile, data);
         }
 
-        static bool post_work(native_worker_handle* overlapped, DWORD dwBytesTransferred = 0) {
-            return PostQueuedCompletionStatus(get_instance().m_hCompletionPort.get(), dwBytesTransferred, (ULONG_PTR)overlapped, (OVERLAPPED*)overlapped);
+        static bool post_work(native_worker_handle* overlapped, size_t completion_key, DWORD dwBytesTransferred = 0) {
+            return PostQueuedCompletionStatus(get_instance().m_hCompletionPort.get(), dwBytesTransferred, completion_key, (OVERLAPPED*)overlapped);
         }
 
         static std::pair<uint32_t, uint32_t> hill_climb_proceed(std::chrono::high_resolution_clock::duration sample_time) {

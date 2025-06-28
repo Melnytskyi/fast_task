@@ -528,6 +528,8 @@ namespace fast_task {
 
         status wait();
         status wait(std::unique_lock<mutex_unify>& lock);
+
+        bool timed_out();
     };
 
     #pragma pop_macro("min")
