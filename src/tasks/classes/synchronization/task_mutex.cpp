@@ -9,7 +9,7 @@
 
 namespace fast_task {
     task_mutex::~task_mutex() {
-        std::lock_guard lg(no_race);
+        fast_task::lock_guard lg(no_race);
         while (!resume_task.empty()) {
             auto& tsk = resume_task.back();
             task::notify_cancel(tsk.task);
@@ -26,38 +26,38 @@ namespace fast_task {
 
     void task_mutex::lock() {
         if (loc.is_task_thread) {
-            loc.curr_task->awaked = false;
-            loc.curr_task->time_end_flag = false;
+            get_data(loc.curr_task).awaked = false;
+            get_data(loc.curr_task).time_end_flag = false;
 
-            std::lock_guard lg(no_race);
+            fast_task::lock_guard lg(no_race);
             if (current_task == &*loc.curr_task)
                 throw std::logic_error("Tried lock mutex twice");
             while (current_task) {
-                resume_task.emplace_back(loc.curr_task, loc.curr_task->awake_check);
+                resume_task.emplace_back(loc.curr_task, get_data(loc.curr_task).awake_check);
                 swapCtxRelock(no_race);
             }
             current_task = &*loc.curr_task;
         } else {
-            std::unique_lock ul(no_race);
+            fast_task::unique_lock ul(no_race);
             std::shared_ptr<task> task;
 
             if (current_task == reinterpret_cast<fast_task::task*>((size_t)_thread_id() | native_thread_flag))
                 throw std::logic_error("Tried lock mutex twice");
             while (current_task) {
-                std::condition_variable_any cd;
+                fast_task::condition_variable_any cd;
                 bool has_res = false;
                 task = task::cxx_native_bridge(has_res, cd);
-                resume_task.emplace_back(task, task->awake_check);
+                resume_task.emplace_back(task, get_data(task).awake_check);
                 while (!has_res)
                     cd.wait(ul);
                 ul.unlock();
             task_not_ended:
-                task->no_race.lock();
-                if (!task->end_of_life) {
-                    task->no_race.unlock();
+                get_data(task).no_race.lock();
+                if (!get_data(task).end_of_life) {
+                    get_data(task).no_race.unlock();
                     goto task_not_ended;
                 }
-                task->no_race.unlock();
+                get_data(task).no_race.unlock();
                 ul.lock();
             }
             current_task = reinterpret_cast<fast_task::task*>((size_t)_thread_id() | native_thread_flag);
@@ -67,7 +67,7 @@ namespace fast_task {
     bool task_mutex::try_lock() {
         if (!no_race.try_lock())
             return false;
-        std::unique_lock ul(no_race, std::adopt_lock);
+        fast_task::unique_lock ul(no_race, fast_task::adopt_lock);
 
         if (current_task)
             return false;
@@ -90,17 +90,17 @@ namespace fast_task {
     bool task_mutex::try_lock_until(std::chrono::high_resolution_clock::time_point time_point) {
         if (!no_race.try_lock_until(time_point))
             return false;
-        std::unique_lock ul(no_race, std::adopt_lock);
+        fast_task::unique_lock ul(no_race, fast_task::adopt_lock);
 
         if (loc.is_task_thread && !loc.context_in_swap) {
             if (current_task == &*loc.curr_task)
                 return false;
             while (current_task) {
-                std::lock_guard guard(loc.curr_task->no_race);
+                fast_task::lock_guard guard(get_data(loc.curr_task).no_race);
                 makeTimeWait(time_point);
-                resume_task.emplace_back(loc.curr_task, loc.curr_task->awake_check);
-                swapCtxRelock(loc.curr_task->no_race, no_race);
-                if (!loc.curr_task->awaked)
+                resume_task.emplace_back(loc.curr_task, get_data(loc.curr_task).awake_check);
+                swapCtxRelock(get_data(loc.curr_task).no_race, no_race);
+                if (!get_data(loc.curr_task).awaked)
                     return false;
             }
             current_task = &*loc.curr_task;
@@ -109,14 +109,14 @@ namespace fast_task {
             if (current_task == reinterpret_cast<task*>((size_t)_thread_id() | native_thread_flag))
                 return false;
             bool has_res;
-            std::condition_variable_any cd;
+            fast_task::condition_variable_any cd;
             while (current_task) {
                 has_res = false;
                 std::shared_ptr<task> task = task::cxx_native_bridge(has_res, cd);
-                resume_task.emplace_back(task, task->awake_check);
+                resume_task.emplace_back(task, get_data(task).awake_check);
                 while (has_res)
                     cd.wait_until(ul, time_point);
-                if (!task->awaked)
+                if (!get_data(task).awaked)
                     return false;
             }
             if (!loc.context_in_swap)
@@ -133,7 +133,7 @@ namespace fast_task {
 #endif
 
     void task_mutex::unlock() {
-        std::lock_guard lg0(no_race);
+        fast_task::lock_guard lg0(no_race);
         if (loc.is_task_thread) {
             if (current_task != &*loc.curr_task)
                 throw std::logic_error("Tried unlock non owned mutex");
@@ -145,11 +145,11 @@ namespace fast_task {
             std::shared_ptr<task> it = resume_task.front().task;
             uint16_t awake_check = resume_task.front().awake_check;
             resume_task.pop_front();
-            std::lock_guard lg1(it->no_race);
-            if (it->awake_check != awake_check)
+            fast_task::lock_guard lg1(get_data(it).no_race);
+            if (get_data(it).awake_check != awake_check)
                 return;
-            if (!it->time_end_flag) {
-                it->awaked = true;
+            if (!get_data(it).time_end_flag) {
+                get_data(it).awaked = true;
                 transfer_task(it);
             }
         }
@@ -164,7 +164,7 @@ namespace fast_task {
     }
 
     bool task_mutex::is_own() {
-        std::lock_guard lg0(no_race);
+        fast_task::lock_guard lg0(no_race);
         if (loc.is_task_thread) {
             if (current_task != &*loc.curr_task)
                 return false;
@@ -174,16 +174,16 @@ namespace fast_task {
     }
 
     void task_mutex::lifecycle_lock(std::shared_ptr<task>& lock_task) {
-        if (lock_task->started)
+        if (get_data(lock_task).started)
             throw std::logic_error("Task already started");
-        if (lock_task->callbacks.is_extended_mode)
+        if (get_data(lock_task).callbacks.is_extended_mode)
             throw std::logic_error("Extended mode does not support lifecycle lock");
 
-        auto old_func = std::move(lock_task->callbacks.normal_mode.func);
-        lock_task->callbacks.normal_mode.func = [old_func = std::move(old_func), this]() {
-            std::lock_guard guard(*this);
+        auto old_func = std::move(get_data(lock_task).callbacks.normal_mode.func);
+        get_data(lock_task).callbacks.normal_mode.func = [old_func = std::move(old_func), this]() {
+            fast_task::lock_guard guard(*this);
             old_func();
         };
-        task::start(lock_task);
+        scheduler::start(lock_task);
     }
 }

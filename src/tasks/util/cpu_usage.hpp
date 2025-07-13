@@ -4,8 +4,8 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
-#ifndef SRC_RUN_TIME_TASKS_UTIL_CPU_USAGE
-#define SRC_RUN_TIME_TASKS_UTIL_CPU_USAGE
+#ifndef FAST_TASK_CPU_USAGE
+#define FAST_TASK_CPU_USAGE
 #include <cstdint>
 
 namespace fast_task::util::cpu {

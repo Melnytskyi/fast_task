@@ -7,7 +7,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(fast_task_src_INCLUDE_DIR "src")
 set(fast_task_INCLUDE_DIR ${fast_task_src_INCLUDE_DIR})
 
-if(MSVC)  
+if(MSVC)
   add_definitions(/MP)
   add_definitions(/Zc:preprocessor)
   enable_language(ASM_MASM)
@@ -26,6 +26,7 @@ endif(MSVC)
 set(ENABLE_BOOST_PREPROCESSOR ON)
 
 FILE(GLOB SRCFILES 
+        src/asm.asm 
         src/*.cpp
         src/*/*.cpp
         src/*/*/*.cpp
@@ -34,7 +35,7 @@ FILE(GLOB SRCFILES
 
 
 IF(MSVC)
-  SET(CMAKE_CXX_FLAGS "/EHsc")
+  SET(CMAKE_CXX_FLAGS "/EHa")
 ENDIF(MSVC)
 
 find_package(Boost REQUIRED COMPONENTS context)

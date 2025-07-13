@@ -6,12 +6,86 @@
 
 #include <tasks.hpp>
 #include <tasks/_internal.hpp>
+#include <tasks/util/interrupt.hpp>
 #include <tasks/util/light_stack.hpp>
+#include <threading.hpp>
 
 namespace fast_task {
 
     size_t task::max_running_tasks = 0;
-    size_t task::max_planned_tasks = 1'000'000'000;
+#if tasks_enable_preemptive_scheduler_preview && PLATFORM_WINDOWS && false
+    void timer_reinit() {
+        std::chrono::nanoseconds interval = next_quantum(get_data(loc.curr_task).priority, get_data(loc.curr_task).current_available_quantum);
+        interrupt::itimerval timer;
+        timer.it_interval.tv_sec = 0;
+        timer.it_interval.tv_usec = 0;
+        timer.it_value.tv_sec = interval.count() / 1000000000;
+        timer.it_value.tv_usec = (interval.count() % 1000000000) / 1000;
+        interrupt::setitimer(&timer, nullptr);
+    }
+
+    void swapCtx();
+
+    void interruptTask() {
+        if (get_data(loc.curr_task).bind_to_worker_id != (uint16_t)-1) {
+            fast_task::unique_lock guard(glob.binded_workers_safety);
+            auto& bind_context = glob.binded_workers[get_data(loc.curr_task).bind_to_worker_id];
+            guard.unlock();
+            if (bind_context.tasks.empty()) {
+                if (glob.cold_tasks.empty()) {
+                    timer_reinit();
+                    return;
+                } else {
+                    if (task::max_running_tasks && !can_be_scheduled_task_to_hot()) {
+                        timer_reinit();
+                        return;
+                    }
+                }
+            }
+        } else {
+            if (glob.tasks.empty()) {
+                if (glob.cold_tasks.empty()) {
+                    timer_reinit();
+                    return;
+                } else {
+                    if (task::max_running_tasks && !can_be_scheduled_task_to_hot()) {
+                        timer_reinit();
+                        return;
+                    }
+                }
+            }
+        }
+
+        ++glob.interrupts;
+        ++get_data(loc.curr_task).interrupt_count;
+        auto old_relock_0 = get_data(loc.curr_task).relock_0;
+        auto old_relock_1 = get_data(loc.curr_task).relock_1;
+        auto old_relock_2 = get_data(loc.curr_task).relock_2;
+        get_data(loc.curr_task).relock_0 = nullptr;
+        get_data(loc.curr_task).relock_1 = nullptr;
+        get_data(loc.curr_task).relock_2 = nullptr;
+        auto tmp_tsk = loc.curr_task;
+        transfer_task(tmp_tsk);
+        swapCtx();
+        get_data(loc.curr_task).relock_0 = old_relock_0;
+        get_data(loc.curr_task).relock_1 = old_relock_1;
+        get_data(loc.curr_task).relock_2 = old_relock_2;
+    }
+
+    #define set_interruptTask() interrupt::timer_callback(interruptTask);
+
+    #define stop_timer() interrupt::stop_timer()
+    #define preserve_interput_data get_data(loc.curr_task).interrupt_data = interrupt::interrupt_unsafe_region::lock_swap(0);
+    #define restore_interput_data interrupt::interrupt_unsafe_region::lock_swap(get_data(loc.curr_task).interrupt_data);
+    #define flush_interput_data interrupt::interrupt_unsafe_region::lock_swap(0);
+#else
+    #define timer_reinit()
+    #define set_interruptTask()
+    #define stop_timer()
+    #define preserve_interput_data
+    #define restore_interput_data
+    #define flush_interput_data
+#endif
 
 #pragma optimize("", off)
 #if defined(__GNUC__) && !defined(__clang__)
@@ -21,46 +95,57 @@ namespace fast_task {
 #pragma region TaskExecutor
 
     void swapCtx() {
+        stop_timer();
         if (loc.is_task_thread) {
             loc.context_in_swap = true;
             ++glob.tasks_in_swap;
-            *loc.stack_current_context = std::move(*loc.stack_current_context).resume();
+            ++get_data(loc.curr_task).context_switch_count;
+            preserve_interput_data;
+            //TODO add exception preservation
+            try {
+                *loc.stack_current_context = std::move(*loc.stack_current_context).resume();
+            } catch (const boost::context::detail::forced_unwind&) {
+                --glob.tasks_in_swap;
+                throw;
+            }
+            preserve_interput_data;
+            --glob.tasks_in_swap;
             loc.context_in_swap = true;
-            auto relock_state_0 = loc.curr_task->relock_0;
-            auto relock_state_1 = loc.curr_task->relock_1;
-            auto relock_state_2 = loc.curr_task->relock_2;
-            loc.curr_task->relock_0 = nullptr;
-            loc.curr_task->relock_1 = nullptr;
-            loc.curr_task->relock_2 = nullptr;
+            auto relock_state_0 = get_data(loc.curr_task).relock_0;
+            auto relock_state_1 = get_data(loc.curr_task).relock_1;
+            auto relock_state_2 = get_data(loc.curr_task).relock_2;
+            get_data(loc.curr_task).relock_0 = nullptr;
+            get_data(loc.curr_task).relock_1 = nullptr;
+            get_data(loc.curr_task).relock_2 = nullptr;
             relock_state_0.relock_end();
             relock_state_1.relock_end();
             relock_state_2.relock_end();
-            loc.curr_task->awake_check++;
-            --glob.tasks_in_swap;
+            get_data(loc.curr_task).awake_check++;
             loc.context_in_swap = false;
-            if (loc.curr_task->invalid_switch_caught) {
-                loc.curr_task->invalid_switch_caught = false;
+            if (get_data(loc.curr_task).invalid_switch_caught) {
+                get_data(loc.curr_task).invalid_switch_caught = false;
                 throw std::runtime_error("Caught task that switched context but not scheduled or finalized self");
             }
         } else
             throw std::runtime_error("swapCtx() not allowed to call in non-task thread or in dispatcher");
+        timer_reinit();
     }
 
     void swapCtxRelock(const mutex_unify& mut0) {
-        loc.curr_task->relock_0 = mut0;
+        get_data(loc.curr_task).relock_0 = mut0;
         swapCtx();
     }
 
     void swapCtxRelock(const mutex_unify& mut0, const mutex_unify& mut1, const mutex_unify& mut2) {
-        loc.curr_task->relock_0 = mut0;
-        loc.curr_task->relock_1 = mut1;
-        loc.curr_task->relock_2 = mut2;
+        get_data(loc.curr_task).relock_0 = mut0;
+        get_data(loc.curr_task).relock_1 = mut1;
+        get_data(loc.curr_task).relock_2 = mut2;
         swapCtx();
     }
 
     void swapCtxRelock(const mutex_unify& mut0, const mutex_unify& mut1) {
-        loc.curr_task->relock_0 = mut0;
-        loc.curr_task->relock_1 = mut1;
+        get_data(loc.curr_task).relock_0 = mut0;
+        get_data(loc.curr_task).relock_1 = mut1;
         swapCtx();
     }
 
@@ -84,22 +169,26 @@ namespace fast_task {
         *loc.stack_current_context = std::move(sink);
         try {
             checkCancellation();
-            if (loc.curr_task->callbacks.is_extended_mode) {
-                if (loc.curr_task->callbacks.extended_mode.on_start)
-                    loc.curr_task->callbacks.extended_mode.on_start(loc.curr_task->callbacks.extended_mode.data);
+            flush_interput_data;
+            timer_reinit();
+            if (get_data(loc.curr_task).callbacks.is_extended_mode) {
+                if (get_data(loc.curr_task).callbacks.extended_mode.on_start)
+                    get_data(loc.curr_task).callbacks.extended_mode.on_start(get_data(loc.curr_task).callbacks.extended_mode.data);
             } else
-                loc.curr_task->callbacks.normal_mode.func();
-        } catch (task_cancellation& cancel) {
+                get_data(loc.curr_task).callbacks.normal_mode.func();
+        } catch (const task_cancellation& cancel) {
             forceCancelCancellation(cancel);
         } catch (const boost::context::detail::forced_unwind&) {
+            --glob.in_run_tasks;
             throw;
         } catch (...) {
             loc.ex_ptr = std::current_exception();
         }
-        std::lock_guard l(loc.curr_task->no_race);
-        loc.curr_task->end_of_life = true;
-        loc.curr_task->fres.end_of_life = true;
-        loc.curr_task->fres.result_notify.notify_all();
+        stop_timer();
+        flush_interput_data;
+        fast_task::lock_guard l(get_data(loc.curr_task).no_race);
+        get_data(loc.curr_task).end_of_life = true;
+        get_data(loc.curr_task).result_notify.notify_all();
         --glob.in_run_tasks;
         if (task::max_running_tasks)
             glob.can_started_new_notifier.notify_one();
@@ -110,22 +199,25 @@ namespace fast_task {
         *loc.stack_current_context = std::move(sink);
         try {
             checkCancellation();
-            if (!loc.curr_task->callbacks.is_extended_mode)
-                loc.curr_task->callbacks.normal_mode.ex_handle(loc.ex_ptr);
+            flush_interput_data;
+            timer_reinit();
+            if (!get_data(loc.curr_task).callbacks.is_extended_mode)
+                get_data(loc.curr_task).callbacks.normal_mode.ex_handle(loc.ex_ptr);
             //TODO : implement extended mode
         } catch (task_cancellation& cancel) {
             forceCancelCancellation(cancel);
         } catch (const boost::context::detail::forced_unwind&) {
+            --glob.in_run_tasks;
             throw;
         } catch (...) {
             loc.ex_ptr = std::current_exception();
         }
-
-        mutex_unify uni(loc.curr_task->no_race);
-        std::unique_lock l(uni);
-        loc.curr_task->end_of_life = true;
-        loc.curr_task->fres.end_of_life = true;
-        loc.curr_task->fres.result_notify.notify_all();
+        stop_timer();
+        flush_interput_data;
+        mutex_unify uni(get_data(loc.curr_task).no_race);
+        fast_task::unique_lock l(uni);
+        get_data(loc.curr_task).end_of_life = true;
+        get_data(loc.curr_task).result_notify.notify_all();
         --glob.in_run_tasks;
         if (task::max_running_tasks)
             glob.can_started_new_notifier.notify_one();
@@ -133,40 +225,40 @@ namespace fast_task {
     }
 
     void transfer_task(std::shared_ptr<task>& task) {
-        if (task->bind_to_worker_id == (uint16_t)-1) {
-            std::lock_guard guard(glob.task_thread_safety);
+        if (get_data(task).bind_to_worker_id == (uint16_t)-1) {
+            fast_task::lock_guard guard(glob.task_thread_safety);
             glob.tasks.push(std::move(task));
             glob.tasks_notifier.notify_one();
         } else {
-            std::unique_lock initializer_guard(glob.binded_workers_safety);
-            if (!glob.binded_workers.contains(task->bind_to_worker_id)) {
+            fast_task::unique_lock initializer_guard(glob.binded_workers_safety);
+            if (!glob.binded_workers.contains(get_data(task).bind_to_worker_id)) {
                 initializer_guard.unlock();
                 assert("Binded worker context not found");
                 std::abort();
             }
-            binded_context& extern_context = glob.binded_workers[task->bind_to_worker_id];
+            binded_context& extern_context = glob.binded_workers[get_data(task).bind_to_worker_id];
             initializer_guard.unlock();
             if (extern_context.in_close) {
                 assert("Binded worker context is closed");
                 std::abort();
             }
-            std::lock_guard guard(extern_context.no_race);
+            fast_task::lock_guard guard(extern_context.no_race);
             extern_context.tasks.emplace_back(std::move(task));
             extern_context.new_task_notifier.notify_one();
         }
     }
 
     void awake_task(std::shared_ptr<task>& task) {
-        if (task->bind_to_worker_id == (uint16_t)-1) {
-            if (task->auto_bind_worker) {
-                std::unique_lock guard(glob.binded_workers_safety);
+        if (get_data(task).bind_to_worker_id == (uint16_t)-1) {
+            if (get_data(task).auto_bind_worker) {
+                fast_task::unique_lock guard(glob.binded_workers_safety);
                 for (auto& [id, context] : glob.binded_workers) {
                     if (context.allow_implicit_start) {
                         if (context.in_close)
                             continue;
                         guard.unlock();
-                        std::unique_lock context_guard(context.no_race);
-                        task->bind_to_worker_id = id;
+                        fast_task::unique_lock context_guard(context.no_race);
+                        get_data(task).bind_to_worker_id = id;
                         context.tasks.push_back(std::move(task));
                         context.new_task_notifier.notify_one();
                         return;
@@ -178,16 +270,7 @@ namespace fast_task {
         transfer_task(task);
     }
 
-    void taskNotifyIfEmpty(std::unique_lock<std::recursive_mutex>& re_lock) {
-        if (!loc.in_exec_decreased)
-            --glob.in_exec;
-        loc.in_exec_decreased = false;
-        if (!glob.in_exec && glob.tasks.empty() && glob.timed_tasks.empty())
-            glob.no_tasks_execute_notifier.notify_all();
-    }
-
     bool loadTask() {
-        ++glob.in_exec;
         size_t len = glob.tasks.size();
         if (!len)
             return true;
@@ -210,7 +293,7 @@ namespace fast_task {
                 glob.cold_tasks.pop();
             }
         }
-        loc.current_context = loc.curr_task->fres.context;
+        loc.current_context = get_data(loc.curr_task).context;
         loc.stack_current_context = &reinterpret_cast<boost::context::continuation&>(loc.current_context);
         return false;
     }
@@ -230,55 +313,54 @@ namespace fast_task {
         bool pseudo_handle_caught_ex = false;
         if (!loc.curr_task)
             return false;
-        if (!loc.curr_task->callbacks.is_extended_mode)
-            if (!loc.curr_task->callbacks.normal_mode.func)
+        if (!get_data(loc.curr_task).callbacks.is_extended_mode)
+            if (!get_data(loc.curr_task).callbacks.normal_mode.func)
                 return true;
-        if (loc.curr_task->end_of_life)
+        if (get_data(loc.curr_task).end_of_life)
             goto end_task;
 
-        worker_mode_desk(old_name, "process task - " + std::to_string(loc.curr_task->task_id()));
+        worker_mode_desk(old_name, "process task - " + std::to_string(this_task::get_id()));
         if (*loc.stack_current_context) {
             *loc.stack_current_context = std::move(*loc.stack_current_context).resume();
-            loc.curr_task->relock_0.relock_start();
-            loc.curr_task->relock_1.relock_start();
-            loc.curr_task->relock_2.relock_start();
+            get_data(loc.curr_task).relock_0.relock_start();
+            get_data(loc.curr_task).relock_1.relock_start();
+            get_data(loc.curr_task).relock_2.relock_start();
         } else {
             ++glob.in_run_tasks;
-            --glob.planned_tasks;
-            if (task::max_planned_tasks)
-                glob.can_planned_new_notifier.notify_one();
             *loc.stack_current_context = boost::context::callcc(std::allocator_arg, light_stack(1048576 /*1 mb*/), context_exec);
-            loc.curr_task->relock_0.relock_start();
-            loc.curr_task->relock_1.relock_start();
-            loc.curr_task->relock_2.relock_start();
+            get_data(loc.curr_task).relock_0.relock_start();
+            get_data(loc.curr_task).relock_1.relock_start();
+            get_data(loc.curr_task).relock_2.relock_start();
         }
     caught_ex:
         if (loc.ex_ptr) {
+            ++glob.in_run_tasks;
             *loc.stack_current_context = boost::context::callcc(std::allocator_arg, light_stack(1048576 /*1 mb*/), context_exec);
-            loc.curr_task->relock_0.relock_start();
-            loc.curr_task->relock_1.relock_start();
-            loc.curr_task->relock_2.relock_start();
+            get_data(loc.curr_task).relock_0.relock_start();
+            get_data(loc.curr_task).relock_1.relock_start();
+            get_data(loc.curr_task).relock_2.relock_start();
             loc.ex_ptr = nullptr;
         }
     end_task:
-        loc.curr_task->fres.context = loc.current_context;
+        get_data(loc.curr_task).context = loc.current_context;
         loc.current_context = nullptr;
         loc.is_task_thread = false;
-        if (!loc.curr_task->fres.end_of_life && loc.curr_task.use_count() == 1) {
-            loc.curr_task->invalid_switch_caught = true;
+        if (!get_data(loc.curr_task).end_of_life && loc.curr_task.use_count() == 1) {
+            get_data(loc.curr_task).invalid_switch_caught = true;
             glob.tasks.push(loc.curr_task);
         }
+
         loc.curr_task = nullptr;
         worker_mode_desk(old_name, "idle");
         return false;
     }
 
-    bool taskExecutor_check_next(std::unique_lock<std::recursive_mutex>& guard, bool end_in_task_out, bool still_wait) {
+    bool taskExecutor_check_next(fast_task::unique_lock<fast_task::recursive_mutex>& guard, bool end_in_task_out) {
         loc.context_in_swap = false;
         loc.current_context = nullptr;
         loc.stack_current_context = nullptr;
-        taskNotifyIfEmpty(guard);
         loc.is_task_thread = false;
+
         while (glob.tasks.empty()) {
             if (!glob.cold_tasks.empty()) {
                 if (can_be_scheduled_task_to_hot()) {
@@ -287,59 +369,54 @@ namespace fast_task {
                 }
             }
 
-            if (end_in_task_out) {
-                if (still_wait) {
-                    glob.tasks_notifier.wait(guard);
-                    if (glob.tasks.empty() && glob.cold_tasks.empty())
-                        return true;
-                } else
-                    return true;
-            } else
+            if (end_in_task_out)
+                return true;
+            else
                 glob.tasks_notifier.wait(guard);
         }
         loc.is_task_thread = true;
         return false;
     }
 
-    void taskExecutor(bool end_in_task_out, bool still_wait) {
-        std::string old_name = end_in_task_out ? _get_name_thread_dbg(_thread_id()) : "";
-        if (old_name.empty())
-            _set_name_thread_dbg("Worker " + std::to_string(_thread_id()));
-        else
-            _set_name_thread_dbg(old_name + " | (Temporal worker) " + std::to_string(_thread_id()));
+    void taskExecutor(bool end_in_task_out, bool prevent_naming) {
+        set_interruptTask();
+        std::string old_name = end_in_task_out && !prevent_naming ? _get_name_thread_dbg(_thread_id()) : "";
+        if (!prevent_naming)
+            if (old_name.empty())
+                _set_name_thread_dbg("Worker " + std::to_string(_thread_id()));
+            else
+                _set_name_thread_dbg(old_name + " | (Temporal worker) " + std::to_string(_thread_id()));
 
-        std::unique_lock<std::recursive_mutex> guard(glob.task_thread_safety);
-        ++glob.in_exec;
+        fast_task::unique_lock guard(glob.task_thread_safety);
         ++glob.executors;
-
         while (true) {
-            if (taskExecutor_check_next(guard, end_in_task_out, still_wait)) {
+            if (taskExecutor_check_next(guard, end_in_task_out))
                 break;
-            } else {
-                if (loadTask())
-                    continue;
-                guard.unlock();
-                if (loc.curr_task->bind_to_worker_id != (uint16_t)-1) {
-                    transfer_task(loc.curr_task);
-                    guard.lock();
-                    continue;
-                }
-            }
-            if (execute_task(old_name)) {
+            if (loadTask())
+                continue;
+
+            guard.unlock();
+            if (get_data(loc.curr_task).bind_to_worker_id != (uint16_t)-1) {
+                transfer_task(loc.curr_task);
                 guard.lock();
-                break;
+                continue;
             }
+            if (execute_task(old_name))
+                break;
             guard.lock();
         }
         --glob.executors;
-        taskNotifyIfEmpty(guard);
+        if (!glob.in_run_tasks && glob.tasks.empty() && glob.timed_tasks.empty())
+            glob.no_tasks_execute_notifier.notify_all();
         glob.executor_shutdown_notifier.notify_all();
-        _set_name_thread_dbg(old_name);
+        if (!prevent_naming)
+            _set_name_thread_dbg(old_name);
     }
 
     void bindedTaskExecutor(uint16_t id) {
+        set_interruptTask();
         std::string old_name = "Binded";
-        std::unique_lock initializer_guard(glob.binded_workers_safety);
+        fast_task::unique_lock initializer_guard(glob.binded_workers_safety);
         if (!glob.binded_workers.contains(id)) {
             assert("Binded worker context not found");
             std::abort();
@@ -351,27 +428,23 @@ namespace fast_task {
         initializer_guard.unlock();
 
         std::list<std::shared_ptr<task>>& queue = context.tasks;
-        std::recursive_mutex& safety = context.no_race;
-        std::condition_variable_any& notifier = context.new_task_notifier;
+        auto& safety = context.no_race;
+        auto& notifier = context.new_task_notifier;
         bool pseudo_handle_caught_ex = false;
         _set_name_thread_dbg("Binded worker " + std::to_string(_thread_id()) + ": " + std::to_string(id));
 
-        std::unique_lock guard(safety);
+        fast_task::unique_lock guard(safety);
         context.executors++;
         while (true) {
-            while (queue.empty())
-                notifier.wait(guard);
-            loc.curr_task = std::move(queue.front());
-            queue.pop_front();
             guard.unlock();
 
-            if (loc.curr_task->bind_to_worker_id != (uint16_t)id) {
+            if (get_data(loc.curr_task).bind_to_worker_id != (uint16_t)id) {
                 transfer_task(loc.curr_task);
                 guard.lock();
                 continue;
             }
             loc.is_task_thread = true;
-            loc.current_context = loc.curr_task->fres.context;
+            loc.current_context = get_data(loc.curr_task).context;
             loc.stack_current_context = &reinterpret_cast<boost::context::continuation&>(loc.current_context);
             if (execute_task(old_name))
                 break;
@@ -400,7 +473,7 @@ namespace fast_task {
         glob.time_control_enabled = true;
         _set_name_thread_dbg("task time controller");
 
-        std::unique_lock guard(glob.task_timer_safety);
+        fast_task::unique_lock guard(glob.task_timer_safety);
         std::list<std::shared_ptr<task>> cached_wake_ups;
         std::list<std::shared_ptr<task>> cached_cold;
         while (glob.time_control_enabled) {
@@ -408,18 +481,18 @@ namespace fast_task {
                 auto current_now = std::chrono::high_resolution_clock::now();
                 while (glob.timed_tasks.front().wait_timepoint <= current_now) {
                     timing& tmng = glob.timed_tasks.front();
-                    if (tmng.check_id != tmng.awake_task->awake_check) {
+                    if (tmng.check_id != get_data(tmng.awake_task).awake_check) {
                         glob.timed_tasks.pop_front();
                         if (glob.timed_tasks.empty())
                             break;
                         else
                             continue;
                     }
-                    std::lock_guard task_guard(tmng.awake_task->no_race);
-                    if (tmng.awake_task->awaked) {
+                    fast_task::lock_guard task_guard(get_data(tmng.awake_task).no_race);
+                    if (get_data(tmng.awake_task).awaked) {
                         glob.timed_tasks.pop_front();
                     } else {
-                        tmng.awake_task->time_end_flag = true;
+                        get_data(tmng.awake_task).time_end_flag = true;
                         cached_wake_ups.push_back(std::move(tmng.awake_task));
                         glob.timed_tasks.pop_front();
                     }
@@ -431,7 +504,7 @@ namespace fast_task {
                 auto current_now = std::chrono::high_resolution_clock::now();
                 while (glob.cold_timed_tasks.front().wait_timepoint <= current_now) {
                     timing& tmng = glob.cold_timed_tasks.front();
-                    if (tmng.check_id != tmng.awake_task->awake_check) {
+                    if (tmng.check_id != get_data(tmng.awake_task).awake_check) {
                         glob.cold_timed_tasks.pop_front();
                         if (glob.cold_timed_tasks.empty())
                             break;
@@ -446,7 +519,7 @@ namespace fast_task {
             }
             guard.unlock();
             if (!cached_wake_ups.empty() || !cached_cold.empty()) {
-                std::lock_guard guard(glob.task_thread_safety);
+                fast_task::lock_guard guard(glob.task_thread_safety);
                 if (!cached_wake_ups.empty())
                     while (!cached_wake_ups.empty()) {
                         glob.tasks.push(std::move(cached_wake_ups.back()));
@@ -480,10 +553,10 @@ namespace fast_task {
 #pragma optimize("", on)
 
     void startTimeController() {
-        std::lock_guard guard(glob.task_timer_safety);
+        fast_task::lock_guard guard(glob.task_timer_safety);
         if (glob.time_control_enabled)
             return;
-        std::thread(taskTimer).detach();
+        fast_task::thread(taskTimer).detach();
         glob.time_control_enabled = true;
     }
 
@@ -493,23 +566,23 @@ namespace fast_task {
         auto end = queue.end();
         while (it != end) {
             if (it->wait_timepoint >= t) {
-                queue.emplace(it, timing(t, task, task->awake_check));
+                queue.emplace(it, timing(t, task, get_data(task).awake_check));
                 i = -1;
                 break;
             }
             ++it;
         }
         if (i != -1)
-            queue.emplace_back(timing(t, task, task->awake_check));
+            queue.emplace_back(timing(t, task, get_data(task).awake_check));
     }
 
     void makeTimeWait(std::chrono::high_resolution_clock::time_point t) {
         if (!glob.time_control_enabled)
             startTimeController();
-        loc.curr_task->awaked = false;
-        loc.curr_task->time_end_flag = false;
+        get_data(loc.curr_task).awaked = false;
+        get_data(loc.curr_task).time_end_flag = false;
 
-        std::lock_guard guard(glob.task_timer_safety);
+        fast_task::lock_guard guard(glob.task_timer_safety);
         unsafe_put_task_to_timed_queue(glob.timed_tasks, t, loc.curr_task);
         glob.time_notifier.notify_one();
     }

@@ -6,28 +6,34 @@
 
 #include <tasks.hpp>
 #include <tasks/_internal.hpp>
+#include <tasks/util/interrupt.hpp>
 
 namespace fast_task {
-    task_cancellation::task_cancellation() {}
+    task_cancellation::task_cancellation() {
+        interrupt::interrupt_unsafe_region::lock();
+    }
 
     task_cancellation::~task_cancellation() {
-        if (!in_landing)
-            abort();
+        interrupt::interrupt_unsafe_region::unlock();
+        assert(in_landing);
     }
 
     bool task_cancellation::_in_landing() {
         return in_landing;
     }
 
-    void forceCancelCancellation(task_cancellation& cancel_token) {
-        cancel_token.in_landing = true;
+    void forceCancelCancellation(const task_cancellation& cancel_token) {
+        const_cast<task_cancellation&>(cancel_token).in_landing = true;
     }
 
-    void checkCancellation() {
-        if (loc.curr_task->make_cancel)
-            throw task_cancellation();
-        if (loc.curr_task->timeout != std::chrono::high_resolution_clock::time_point::min())
-            if (loc.curr_task->timeout <= std::chrono::high_resolution_clock::now())
-                throw task_cancellation();
+    bool checkCancellation() noexcept {
+        if (!loc.curr_task)
+            return false;
+        if (get_data(loc.curr_task).make_cancel)
+            return true;
+        if (get_data(loc.curr_task).timeout != std::chrono::high_resolution_clock::time_point::min())
+            if (get_data(loc.curr_task).timeout <= std::chrono::high_resolution_clock::now())
+                return true;
+        return false;
     }
 }

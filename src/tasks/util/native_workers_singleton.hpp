@@ -1,24 +1,26 @@
-// Copyright Danyil Melnytskyi 2022-Present
+
+// Copyright Danyil Melnytskyi 2024-Present
 //
 // Distributed under the Boost Software License, Version 1.0.
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
-#ifndef SRC_TASKS_UTIL_NATIVE_WORKERS_SINGLETON
-#define SRC_TASKS_UTIL_NATIVE_WORKERS_SINGLETON
+#pragma once
+#ifndef FAST_TASK_NATIVE_WORKERS_SINGLETON
+    #define FAST_TASK_NATIVE_WORKERS_SINGLETON
 
-#include <list>
-#include <mutex>
-#include <thread>
-#include <vector>
-#include <chrono>
+    #include <chrono>
+    #include <list>
+    #include <mutex>
+    #include <thread>
+    #include <vector>
 
-#include <tasks/util/hill_climbing.hpp>
+    #include <tasks/util/hill_climbing.hpp>
 
-#ifdef _WIN64
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
-#include <Windows.h>
+    #ifdef _WIN64
+        #define WIN32_LEAN_AND_MEAN
+        #define NOMINMAX
+        #include <Windows.h>
 
 namespace fast_task::util {
     class native_worker_manager {
@@ -72,27 +74,27 @@ namespace fast_task::util {
 
         static inline cancellation_manager cancellation_manager_instance;
         static inline native_workers_singleton* instance = nullptr;
-        static inline std::mutex instance_mutex;
+        static inline fast_task::mutex instance_mutex;
         std::shared_ptr<void> m_hCompletionPort;
         fast_task::util::hill_climb hill_climb;
-        std::mutex hill_climb_mutex;
+        fast_task::mutex hill_climb_mutex;
         std::list<uint32_t> hill_climb_processed;
 
         native_workers_singleton() {
             m_hCompletionPort.reset(CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 0), CloseHandle);
             if (!m_hCompletionPort)
                 throw std::runtime_error("CreateIoCompletionPort failed");
-            for (ptrdiff_t i = std::thread::hardware_concurrency() / 3 + 1; i > 0; i--)
-                std::thread(&native_workers_singleton::dispatch, this).detach();
+            for (ptrdiff_t i = fast_task::thread::hardware_concurrency() / 3 + 1; i > 0; i--)
+                fast_task::thread(&native_workers_singleton::dispatch, this).detach();
         }
 
         std::pair<uint32_t, uint32_t> proceed_hill_climb(double sample_seconds) {
-            const uint32_t max_threads = std::thread::hardware_concurrency();
-            std::lock_guard<std::mutex> lock(hill_climb_mutex);
+            const uint32_t max_threads = fast_task::thread::hardware_concurrency();
+            fast_task::lock_guard<fast_task::mutex> lock(hill_climb_mutex);
             uint32_t recommended_thread_count = 0;
             uint32_t recommended_sleep_count = 0;
             if (hill_climb_processed.empty()) {
-                std::thread(&native_workers_singleton::dispatch, this).detach();
+                fast_task::thread(&native_workers_singleton::dispatch, this).detach();
                 return {100, 1};
             }
             for (auto& item : hill_climb_processed) {
@@ -107,7 +109,7 @@ namespace fast_task::util {
             ptrdiff_t diff = recommended_thread_count - hill_climb_processed.size();
             if (diff > 0) {
                 for (ptrdiff_t i = diff; i > 0; i--)
-                    std::thread(&native_workers_singleton::dispatch, this).detach();
+                    fast_task::thread(&native_workers_singleton::dispatch, this).detach();
             } else if (diff < 0) {
                 for (ptrdiff_t i = diff; i < 0; i++)
                     post_work(new cancellation_handle(cancellation_manager_instance), 0);
@@ -116,7 +118,7 @@ namespace fast_task::util {
         }
 
         void dispatch() {
-            std::unique_lock<std::mutex> lock(hill_climb_mutex);
+            fast_task::unique_lock<fast_task::mutex> lock(hill_climb_mutex);
             uint32_t& item = hill_climb_processed.emplace_back();
             auto item_ptr = hill_climb_processed.begin();
             lock.unlock();
@@ -154,7 +156,7 @@ namespace fast_task::util {
             if (instance)
                 return *instance;
             else {
-                std::lock_guard<std::mutex> lock(instance_mutex);
+                fast_task::lock_guard<fast_task::mutex> lock(instance_mutex);
                 if (!instance)
                     instance = new native_workers_singleton();
                 return *instance;
@@ -173,7 +175,7 @@ namespace fast_task::util {
         }
 
         static std::pair<uint32_t, uint32_t> hill_climb_proceed(std::chrono::high_resolution_clock::duration sample_time) {
-            std::lock_guard<std::mutex> lock(instance_mutex);
+            fast_task::lock_guard<fast_task::mutex> lock(instance_mutex);
             if (!instance)
                 return {0, 0};
             else
@@ -182,9 +184,9 @@ namespace fast_task::util {
     };
 
 }
-#else
-    #include <bitset>
-    #include <liburing.h>
+    #else
+        #include <bitset>
+        #include <liburing.h>
 
 namespace fast_task::util {
     class native_worker_manager {
@@ -213,7 +215,7 @@ namespace fast_task::util {
     //not consume resources if not used
     class native_workers_singleton {
         static inline native_workers_singleton* instance = nullptr;
-        static inline std::mutex instance_mutex;
+        static inline fast_task::mutex instance_mutex;
         io_uring m_ring;
         unsigned cqe_count = 0;
         std::bitset<IORING_OP_LAST> probe_ops;
@@ -230,7 +232,7 @@ namespace fast_task::util {
                     probe_ops.set(i);
             }
             io_uring_free_probe(probe);
-            std::thread(&native_workers_singleton::dispatch, this).detach();
+            fast_task::thread(&native_workers_singleton::dispatch, this).detach();
         }
 
         std::pair<uint32_t, uint32_t> proceed_hill_climb(double sample_seconds) {
@@ -267,7 +269,7 @@ namespace fast_task::util {
             if (instance)
                 return *instance;
             else {
-                std::lock_guard<std::mutex> lock(instance_mutex);
+                fast_task::lock_guard<fast_task::mutex> lock(instance_mutex);
                 if (!instance)
                     instance = new native_workers_singleton();
                 return *instance;
@@ -307,14 +309,14 @@ namespace fast_task::util {
             ~await_cancel() noexcept(false) override = default;
 
             void handle(native_worker_handle* self, io_uring_cqe* cqe) override {
-                std::lock_guard<task_mutex> lock(mutex);
+                fast_task::lock_guard<task_mutex> lock(mutex);
                 success = cqe->res >= 0;
                 awaiter.notify_all();
             }
 
             bool await_fd(int handle) {
                 MutexUnify unify(mutex);
-                std::unique_lock lock(unify);
+                fast_task::unique_lock lock(unify);
                 post_cancel_fd(this, handle);
                 awaiter.wait(lock);
                 return success;
@@ -322,7 +324,7 @@ namespace fast_task::util {
 
             bool await_fd_all(int handle) {
                 MutexUnify unify(mutex);
-                std::unique_lock lock(unify);
+                fast_task::unique_lock lock(unify);
                 post_cancel_fd_all(this, handle);
                 awaiter.wait(lock);
                 return success;
@@ -702,7 +704,7 @@ namespace fast_task::util {
         }
 
         static std::pair<uint32_t, uint32_t> hill_climb_proceed(std::chrono::high_resolution_clock::duration sample_time) {
-            std::lock_guard<std::mutex> lock(instance_mutex);
+            fast_task::lock_guard<fast_task::mutex> lock(instance_mutex);
             if (!instance)
                 return {0, 0};
             else
@@ -710,5 +712,5 @@ namespace fast_task::util {
         }
     };
 }
+    #endif
 #endif
-#endif /* LIBRARY_FAST_TASK_SRC_TASKS_UTIL_NATIVE_WORKERS_SINGLETON */

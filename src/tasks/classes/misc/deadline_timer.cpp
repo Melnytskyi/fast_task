@@ -27,7 +27,7 @@ namespace fast_task {
 
     deadline_timer::~deadline_timer(){
         if (hh) {
-            std::unique_lock lock(hh->no_race);
+            fast_task::unique_lock lock(hh->no_race);
             hh->shutdown = true;
         }
         cancel();
@@ -36,7 +36,7 @@ namespace fast_task {
     size_t deadline_timer::cancel() {
         if (!hh)
             return 0;
-        std::unique_lock lock(hh->no_race);
+        fast_task::unique_lock lock(hh->no_race);
         if (hh->time_point < std::chrono::high_resolution_clock::now()) {
             hh->time_point = std::chrono::high_resolution_clock::time_point();
             size_t res = hh->scheduled_tasks.size();
@@ -50,7 +50,7 @@ namespace fast_task {
     bool deadline_timer::cancel_one() {
         if (!hh)
             return 0;
-        std::unique_lock lock(hh->no_race);
+        fast_task::unique_lock lock(hh->no_race);
         if (hh->time_point < std::chrono::high_resolution_clock::now() && !hh->scheduled_tasks.empty()) {
             hh->canceled_tasks.insert(hh->scheduled_tasks.front());
             hh->scheduled_tasks.pop_front();
@@ -62,17 +62,17 @@ namespace fast_task {
     void deadline_timer::async_wait(const std::shared_ptr<task>& t) {
         if (!hh)
             return;
-        std::unique_lock lock(hh->no_race);
+        fast_task::unique_lock lock(hh->no_race);
         if (hh->time_point <= std::chrono::high_resolution_clock::now())
-            task::start(t);
+            scheduler::start(t);
         else {
             hh->scheduled_tasks.push_back(t.get());
-            task::schedule_until(
+            scheduler::schedule_until(
                 std::make_shared<task>([hh = hh, t, timeout_time = hh->time_point]() mutable {
-                    std::unique_lock lock(hh->no_race);
+                    fast_task::unique_lock lock(hh->no_race);
                     if (hh->canceled_tasks.find(t.get()) == hh->canceled_tasks.end()) {
                         if (hh->time_point == timeout_time)
-                            task::start(t);
+                            scheduler::start(t);
                     } else
                         hh->canceled_tasks.erase(t.get());
                 }),
@@ -85,11 +85,11 @@ namespace fast_task {
     void deadline_timer::async_wait(std::function<void(status)>&& callback) {
         if (!hh)
             return;
-        std::unique_lock lock(hh->no_race);
+        fast_task::unique_lock lock(hh->no_race);
         if (hh->time_point <= std::chrono::high_resolution_clock::now())
             callback(status::timeouted);
         else {
-            task::schedule_until(
+            scheduler::schedule_until(
                 std::make_shared<task>([hh = hh, callback = std::move(callback), timeout_time = hh->time_point]() mutable {
                     if (hh->shutdown){
                         callback(status::shutdown);
@@ -97,7 +97,7 @@ namespace fast_task {
                     }
                     bool timed_out;
                     {
-                        std::unique_lock lock(hh->no_race);
+                        fast_task::unique_lock lock(hh->no_race);
                         timed_out = hh->canceled_tasks.find(loc.curr_task.get()) == hh->canceled_tasks.end();
                         if (timed_out)
                             timed_out = hh->time_point == timeout_time;
@@ -122,7 +122,7 @@ namespace fast_task {
     size_t deadline_timer::expires_from_now(std::chrono::high_resolution_clock::duration dur) {
         if (!hh)
             return 0;
-        std::unique_lock lock(hh->no_race);
+        fast_task::unique_lock lock(hh->no_race);
         hh->time_point = std::chrono::high_resolution_clock::now() + dur;
         hh->canceled_tasks.clear();
         return hh->scheduled_tasks.size();
@@ -131,7 +131,7 @@ namespace fast_task {
     size_t deadline_timer::expires_at(std::chrono::high_resolution_clock::time_point point) {
         if (!hh)
             return 0;
-        std::unique_lock lock(hh->no_race);
+        fast_task::unique_lock lock(hh->no_race);
         hh->time_point = point;
         hh->canceled_tasks.clear();
         return hh->scheduled_tasks.size();
@@ -143,11 +143,11 @@ namespace fast_task {
         if (hh->time_point <= std::chrono::high_resolution_clock::now())
             return status::timeouted;
         else {
-            std::unique_lock lock(hh->no_race);
+            fast_task::unique_lock lock(hh->no_race);
             hh->scheduled_tasks.push_back(loc.curr_task.get());
             auto timeout_time = hh->time_point;
             lock.unlock();
-            task::sleep_until(hh->time_point);
+            this_task::sleep_until(hh->time_point);
             lock.lock();
             if (hh->canceled_tasks.find(loc.curr_task.get()) == hh->canceled_tasks.end()) {
                 if (hh->time_point == timeout_time)
@@ -158,26 +158,21 @@ namespace fast_task {
         }
     }
 
-    deadline_timer::status deadline_timer::wait(std::unique_lock<mutex_unify>& lock) {
-        struct relock {
-            std::unique_lock<mutex_unify>& lock;
-
-            relock(std::unique_lock<mutex_unify>& lock) : lock(lock) {
-                lock.unlock();
-            };
-
-            ~relock() {
-                lock.lock();
-            }
-        } re_lock(lock);
-
+    deadline_timer::status deadline_timer::wait(fast_task::unique_lock<mutex_unify>& lock) {
+        fast_task::relock_guard relock(lock);
         return wait();
     }
+
+    deadline_timer::status deadline_timer::wait(std::unique_lock<mutex_unify>& lock) {
+        fast_task::relock_guard relock(lock);
+        return wait();
+    }
+
 
     bool deadline_timer::timed_out() {
         if (!hh)
             return false;
-        std::unique_lock lock(hh->no_race);
+        fast_task::unique_lock lock(hh->no_race);
         return hh->time_point <= std::chrono::high_resolution_clock::now();
     }
 }

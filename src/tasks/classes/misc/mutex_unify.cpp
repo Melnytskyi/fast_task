@@ -10,6 +10,15 @@ namespace fast_task {
 
     void mutex_unify::lock() {
         switch (type) {
+        case mutex_unify_type::std_nmut:
+            std_nmut->lock();
+            break;
+        case mutex_unify_type::std_ntimed:
+            std_ntimed->lock();
+            break;
+        case mutex_unify_type::std_nrec:
+            std_nrec->lock();
+            break;
         case mutex_unify_type::nmut:
             nmut->lock();
             break;
@@ -41,6 +50,12 @@ namespace fast_task {
 
     bool mutex_unify::try_lock() {
         switch (type) {
+        case mutex_unify_type::std_nmut:
+            return std_nmut->try_lock();
+        case mutex_unify_type::std_ntimed:
+            return std_ntimed->try_lock();
+        case mutex_unify_type::std_nrec:
+            return std_nrec->try_lock();
         case mutex_unify_type::nmut:
             return nmut->try_lock();
         case mutex_unify_type::ntimed:
@@ -62,8 +77,14 @@ namespace fast_task {
 
     bool mutex_unify::try_lock_for(size_t milliseconds) {
         switch (type) {
-        case mutex_unify_type::noting:
-            return false;
+        case mutex_unify_type::std_nmut:
+            return std_nmut->try_lock();
+        case mutex_unify_type::std_ntimed:
+            return std_ntimed->try_lock_for(std::chrono::milliseconds(milliseconds));
+        case mutex_unify_type::std_nrec:
+            return std_nrec->try_lock();
+        case mutex_unify_type::nmut:
+            return nmut->try_lock();
         case mutex_unify_type::ntimed:
             return ntimed->try_lock_for(std::chrono::milliseconds(milliseconds));
         case mutex_unify_type::nrec:
@@ -85,8 +106,14 @@ namespace fast_task {
 
     bool mutex_unify::try_lock_until(std::chrono::high_resolution_clock::time_point time_point) {
         switch (type) {
-        case mutex_unify_type::noting:
-            return false;
+        case mutex_unify_type::std_nmut:
+            return std_nmut->try_lock();
+        case mutex_unify_type::std_ntimed:
+            return std_ntimed->try_lock_until(time_point);
+        case mutex_unify_type::std_nrec:
+            return std_nrec->try_lock();
+        case mutex_unify_type::nmut:
+            return nmut->try_lock();
         case mutex_unify_type::ntimed:
             return ntimed->try_lock_until(time_point);
         case mutex_unify_type::nrec:
@@ -108,6 +135,15 @@ namespace fast_task {
 
     void mutex_unify::unlock() {
         switch (type) {
+        case mutex_unify_type::std_nmut:
+            std_nmut->unlock();
+            break;
+        case mutex_unify_type::std_ntimed:
+            std_ntimed->unlock();
+            break;
+        case mutex_unify_type::std_nrec:
+            std_nrec->unlock();
+            break;
         case mutex_unify_type::nmut:
             nmut->unlock();
             break;
@@ -147,16 +183,31 @@ namespace fast_task {
     }
 
     mutex_unify::mutex_unify(std::mutex& smut) {
+        type = mutex_unify_type::std_nmut;
+        std_nmut = std::addressof(smut);
+    }
+
+    mutex_unify::mutex_unify(std::timed_mutex& smut) {
+        type = mutex_unify_type::std_ntimed;
+        std_ntimed = std::addressof(smut);
+    }
+
+    mutex_unify::mutex_unify(std::recursive_mutex& smut) {
+        type = mutex_unify_type::std_nrec;
+        std_nrec = std::addressof(smut);
+    }
+
+    mutex_unify::mutex_unify(fast_task::mutex& smut) {
         type = mutex_unify_type::nmut;
         nmut = std::addressof(smut);
     }
 
-    mutex_unify::mutex_unify(std::timed_mutex& smut) {
+    mutex_unify::mutex_unify(fast_task::timed_mutex& smut) {
         type = mutex_unify_type::ntimed;
         ntimed = std::addressof(smut);
     }
 
-    mutex_unify::mutex_unify(std::recursive_mutex& smut) {
+    mutex_unify::mutex_unify(fast_task::recursive_mutex& smut) {
         type = mutex_unify_type::nrec;
         nrec = std::addressof(smut);
     }
@@ -196,18 +247,36 @@ namespace fast_task {
     }
 
     mutex_unify& mutex_unify::operator=(std::mutex& smut) {
+        type = mutex_unify_type::std_nmut;
+        std_nmut = std::addressof(smut);
+        return *this;
+    }
+
+    mutex_unify& mutex_unify::operator=(std::timed_mutex& smut) {
+        type = mutex_unify_type::std_ntimed;
+        std_ntimed = std::addressof(smut);
+        return *this;
+    }
+
+    mutex_unify& mutex_unify::operator=(std::recursive_mutex& smut) {
+        type = mutex_unify_type::std_nrec;
+        std_nrec = std::addressof(smut);
+        return *this;
+    }
+
+    mutex_unify& mutex_unify::operator=(fast_task::mutex& smut) {
         type = mutex_unify_type::nmut;
         nmut = std::addressof(smut);
         return *this;
     }
 
-    mutex_unify& mutex_unify::operator=(std::timed_mutex& smut) {
+    mutex_unify& mutex_unify::operator=(fast_task::timed_mutex& smut) {
         type = mutex_unify_type::ntimed;
         ntimed = std::addressof(smut);
         return *this;
     }
 
-    mutex_unify& mutex_unify::operator=(std::recursive_mutex& smut) {
+    mutex_unify& mutex_unify::operator=(fast_task::recursive_mutex& smut) {
         type = mutex_unify_type::nrec;
         nrec = std::addressof(smut);
         return *this;
@@ -234,6 +303,54 @@ namespace fast_task {
     mutex_unify& mutex_unify::operator=(nullptr_t) {
         type = mutex_unify_type::noting;
         return *this;
+    }
+
+    bool mutex_unify::operator==(const mutex_unify& mut) {
+        return nmut == mut.nmut && type == mut.type;
+    }
+
+    bool mutex_unify::operator==(std::mutex& smut) {
+        return (void*)nmut == (void*)std::addressof(smut);
+    }
+
+    bool mutex_unify::operator==(std::timed_mutex& smut) {
+        return (void*)nmut == (void*)std::addressof(smut);
+    }
+
+    bool mutex_unify::operator==(std::recursive_mutex& smut) {
+        return (void*)nmut == (void*)std::addressof(smut);
+    }
+
+    bool mutex_unify::operator==(fast_task::mutex& smut) {
+        return (void*)nmut == (void*)std::addressof(smut);
+    }
+
+    bool mutex_unify::operator==(fast_task::timed_mutex& smut) {
+        return (void*)nmut == (void*)std::addressof(smut);
+    }
+
+    bool mutex_unify::operator==(fast_task::recursive_mutex& smut) {
+        return (void*)nmut == (void*)std::addressof(smut);
+    }
+
+    bool mutex_unify::operator==(task_mutex& smut) {
+        return (void*)nmut == (void*)std::addressof(smut);
+    }
+
+    bool mutex_unify::operator==(task_rw_mutex& smut) {
+        return (void*)nmut == (void*)std::addressof(smut);
+    }
+
+    bool mutex_unify::operator==(task_recursive_mutex& smut) {
+        return (void*)nmut == (void*)std::addressof(smut);
+    }
+
+    bool mutex_unify::operator==(class multiply_mutex& mmut) {
+        return (void*)nmut == (void*)std::addressof(mmut);
+    }
+
+    bool mutex_unify::operator==(nullptr_t) {
+        return (void*)nmut == nullptr;
     }
 
     void mutex_unify::relock_start() {

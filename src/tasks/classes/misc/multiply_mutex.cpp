@@ -37,17 +37,10 @@ namespace fast_task {
     bool multiply_mutex::try_lock_for(size_t milliseconds) {
         std::vector<mutex_unify> locked;
         for (auto& mut : mu) {
-            if (mut.type != mutex_unify_type::nrec) {
-                if (mut.try_lock_for(milliseconds))
-                    locked.push_back(mut);
-                else
-                    goto fail;
-            } else {
-                if (mut.try_lock())
-                    locked.push_back(mut);
-                else
-                    goto fail;
-            }
+            if (mut.try_lock_for(milliseconds))
+                locked.push_back(mut);
+            else
+                goto fail;
         }
         return true;
     fail:
@@ -62,17 +55,10 @@ namespace fast_task {
     bool multiply_mutex::try_lock_until(std::chrono::high_resolution_clock::time_point time_point) {
         std::vector<mutex_unify> locked;
         for (auto& mut : mu) {
-            if (mut.type != mutex_unify_type::nrec) {
-                if (mut.try_lock_until(time_point))
-                    locked.push_back(mut);
-                else
-                    goto fail;
-            } else {
-                if (mut.try_lock())
-                    locked.push_back(mut);
-                else
-                    goto fail;
-            }
+            if (mut.try_lock_until(time_point))
+                locked.push_back(mut);
+            else
+                goto fail;
         }
         return true;
     fail:

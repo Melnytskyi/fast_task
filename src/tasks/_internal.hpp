@@ -4,42 +4,81 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
-#ifndef SRC_RUN_TIME_TASKS_INTERNAL
-#define SRC_RUN_TIME_TASKS_INTERNAL
+#pragma once
+#ifndef FAST_TASK_INTERNAL
+    #define FAST_TASK_INTERNAL
 
-//platforms: windows, linux, macos, ios, android, unknown
-#if defined(_WIN32) || defined(_WIN64)
-    #define PLATFORM_WINDOWS 1
-#elif defined(__linux__) || defined(__unix__) || defined(__posix__) || defined(__LINUX__) || defined(__linux) || defined(__gnu_linux__)
-    #define PLATFORM_LINUX 1
-#elif defined(__APPLE__) || defined(__MACH__)
-    #define PLATFORM_MACOS 1
-#elif defined(__ANDROID__) || defined(__ANDROID_API__) || defined(ANDROID)
-    #define PLATFORM_ANDROID 1
-#elif defined(__IPHONE_OS_VERSION_MIN_REQUIRED) || defined(__IPHONE_OS_VERSION_MAX_ALLOWED) || defined(__IPHONE_OS_VERSION_MAX_REQUIRED) || defined(__IPHONE_OS_VERSION_MAX_ALLOWED)
-    #define PLATFORM_IOS 1
-#else
-    #define PLATFORM_UNKNOWN
-#endif
+    //platforms: windows, linux, macos, ios, android, unknown
+    #if defined(_WIN32) || defined(_WIN64)
+        #define PLATFORM_WINDOWS 1
+    #elif defined(__linux__) || defined(__unix__) || defined(__posix__) || defined(__LINUX__) || defined(__linux) || defined(__gnu_linux__)
+        #define PLATFORM_LINUX 1
+    #elif defined(__APPLE__) || defined(__MACH__)
+        #define PLATFORM_MACOS 1
+    #elif defined(__ANDROID__) || defined(__ANDROID_API__) || defined(ANDROID)
+        #define PLATFORM_ANDROID 1
+    #elif defined(__IPHONE_OS_VERSION_MIN_REQUIRED) || defined(__IPHONE_OS_VERSION_MAX_ALLOWED) || defined(__IPHONE_OS_VERSION_MAX_REQUIRED) || defined(__IPHONE_OS_VERSION_MAX_ALLOWED)
+        #define PLATFORM_IOS 1
+    #else
+        #define PLATFORM_UNKNOWN
+    #endif
 
 
-#include <boost/context/continuation.hpp>
-#include <exception>
-#include <queue>
+    #include <boost/context/continuation.hpp>
+    #include <exception>
+    #include <queue>
 
-#include <tasks.hpp>
+    #include <tasks.hpp>
 
 namespace fast_task {
 
+    inline auto get_data(std::shared_ptr<task>& task) -> task::data& {
+        return task->data_;
+    }
+
+    inline auto get_data(const std::shared_ptr<task>& task) -> task::data& {
+        return task->data_;
+    }
+
+    inline static constexpr std::chrono::nanoseconds priority_quantum_basic[] = {
+        std::chrono::nanoseconds(scheduler::config::background_basic_quantum_ns),
+        std::chrono::nanoseconds(scheduler::config::low_basic_quantum_ns),
+        std::chrono::nanoseconds(scheduler::config::lower_basic_quantum_ns),
+        std::chrono::nanoseconds(scheduler::config::normal_basic_quantum_ns),
+        std::chrono::nanoseconds(scheduler::config::higher_basic_quantum_ns),
+        std::chrono::nanoseconds(scheduler::config::high_basic_quantum_ns),
+        std::chrono::nanoseconds::min()
+    };
+
+    inline static constexpr std::chrono::nanoseconds priority_quantum_max[] = {
+        std::chrono::nanoseconds(scheduler::config::background_max_quantum_ns),
+        std::chrono::nanoseconds(scheduler::config::low_max_quantum_ns),
+        std::chrono::nanoseconds(scheduler::config::lower_max_quantum_ns),
+        std::chrono::nanoseconds(scheduler::config::normal_max_quantum_ns),
+        std::chrono::nanoseconds(scheduler::config::higher_max_quantum_ns),
+        std::chrono::nanoseconds(scheduler::config::high_max_quantum_ns),
+        std::chrono::nanoseconds::min()
+    };
+
+    //per task has n quantum(ms) to execute depends on priority
+    //if task spend it all it will be suspended
+    //if task not spend it all, unused quantum will be added to next task quantum(ms limited by priority)
+    //after resume if quantum is not more basic quantum, limit will be set to basic quantum
+    //semi_realtime tasks has no limits
+    //std::chrono::nanoseconds::min(); means no limit
+    //std::chrono::nanoseconds(0); means no quantum, task last time spend more quantum than it has
+    std::chrono::nanoseconds next_quantum(task_priority priority, std::chrono::nanoseconds& current_available_quantum);
+    std::chrono::nanoseconds peek_quantum(task_priority priority, std::chrono::nanoseconds current_available_quantum);
+    void task_switch(task_priority priority, std::chrono::nanoseconds& current_available_quantum, std::chrono::nanoseconds elapsed);
+    std::chrono::nanoseconds init_quantum(task_priority priority);
+
     struct executors_local {
-        boost::context::continuation* stack_current_context = nullptr;
-        void* current_context = nullptr;
         std::exception_ptr ex_ptr;
         std::shared_ptr<task> curr_task = nullptr;
-        bool is_task_thread = false;
-        bool context_in_swap = false;
-
-        bool in_exec_decreased = false;
+        boost::context::continuation* stack_current_context = nullptr;
+        void* current_context = nullptr;
+        bool is_task_thread : 1 = false;
+        bool context_in_swap : 1 = false;
     };
 
     struct timing {
@@ -52,12 +91,12 @@ namespace fast_task {
         std::list<uint32_t> completions;
         std::list<std::shared_ptr<task>> tasks;
         task_condition_variable on_closed_notifier;
-        std::recursive_mutex no_race;
-        std::condition_variable_any new_task_notifier;
+        fast_task::recursive_mutex no_race;
+        fast_task::condition_variable_any new_task_notifier;
         uint16_t executors = 0;
-        bool in_close = false;
-        bool allow_implicit_start = false;
-        bool fixed_size = false;
+        bool in_close : 1 = false;
+        bool allow_implicit_start : 1 = false;
+        bool fixed_size : 1 = false;
     };
 
     struct executor_global {
@@ -69,41 +108,40 @@ namespace fast_task {
         std::deque<timing> timed_tasks;
         std::deque<timing> cold_timed_tasks;
 
-        std::recursive_mutex task_thread_safety;
-        std::mutex task_timer_safety;
+        fast_task::recursive_mutex task_thread_safety;
+        fast_task::mutex task_timer_safety;
 
-        std::condition_variable_any tasks_notifier;
-        std::condition_variable time_notifier;
-        std::condition_variable_any executor_shutdown_notifier;
+        fast_task::condition_variable_any tasks_notifier;
+        fast_task::condition_variable time_notifier;
+        fast_task::condition_variable_any executor_shutdown_notifier;
 
-        size_t executors = 0;
-        size_t in_exec = 0;
         bool time_control_enabled = false;
 
+        std::atomic_size_t interrupts = 0;
+        std::atomic_size_t executors = 0;
         std::atomic_size_t tasks_in_swap = 0;
         std::atomic_size_t in_run_tasks = 0;
-        std::atomic_size_t planned_tasks = 0;
 
         task_condition_variable can_started_new_notifier;
         task_condition_variable can_planned_new_notifier;
 
-        std::mutex binded_workers_safety;
+        fast_task::mutex binded_workers_safety;
         std::unordered_map<uint16_t, binded_context, std::hash<uint16_t>> binded_workers;
     };
 
     void startTimeController();
     void swapCtx();
-    void checkCancellation();
+    bool checkCancellation() noexcept;
     void swapCtxRelock(const mutex_unify& mut0);
     void swapCtxRelock(const mutex_unify& mut0, const mutex_unify& mut1, const mutex_unify& mut2);
     void swapCtxRelock(const mutex_unify& mut0, const mutex_unify& mut1);
     void transfer_task(std::shared_ptr<task>& task);
     void makeTimeWait(std::chrono::high_resolution_clock::time_point t);
-    void taskExecutor(bool end_in_task_out = false, bool still_wait = false);
+    void taskExecutor(bool end_in_task_out = false, bool prevent_naming = false);
     void bindedTaskExecutor(uint16_t id);
     void unsafe_put_task_to_timed_queue(std::deque<timing>& queue, std::chrono::high_resolution_clock::time_point t, std::shared_ptr<task>& task);
     bool can_be_scheduled_task_to_hot();
-    void forceCancelCancellation(task_cancellation& restart);
+    void forceCancelCancellation(const task_cancellation& restart);
 
 
     bool _set_name_thread_dbg(const std::string& name, unsigned long thread_id);
@@ -117,4 +155,4 @@ namespace fast_task {
     constexpr size_t native_thread_flag = size_t(1) << (sizeof(size_t) * 8 - 1);
 }
 
-#endif /* SRC_RUN_TIME_TASKS_INTERNAL */
+#endif

@@ -5,20 +5,24 @@
 // http://www.boost.org/LICENSE_1_0.txt)
 
 #pragma once
-#ifndef RUN_TIME_TASKS
+#ifndef FAST_TASK_TASKS
+    #define FAST_TASK_TASKS
+    #ifndef tasks_enable_preemptive_scheduler_preview
+        #define tasks_enable_preemptive_scheduler_preview true
+    #endif
+    #include "threading.hpp"
     #include <chrono>
     #include <condition_variable>
     #include <forward_list>
     #include <functional>
     #include <list>
     #include <mutex>
-    #include <thread>
 
     #pragma push_macro("min")
     #undef min
 
 namespace fast_task {
-    struct task;
+    class task;
 
     namespace __ {
         struct resume_task {
@@ -29,7 +33,7 @@ namespace fast_task {
 
     class task_cancellation {
         bool in_landing = false;
-        friend void forceCancelCancellation(task_cancellation& cancel_token);
+        friend void forceCancelCancellation(const task_cancellation& cancel_token);
 
     public:
         task_cancellation();
@@ -43,8 +47,8 @@ namespace fast_task {
     class task_mutex {
         friend class task_recursive_mutex;
         std::list<__::resume_task> resume_task;
-        std::timed_mutex no_race;
-        struct task* current_task = nullptr;
+        fast_task::timed_mutex no_race;
+        class task* current_task = nullptr;
 
     public:
         task_mutex() = default;
@@ -82,8 +86,8 @@ namespace fast_task {
         friend class task_recursive_mutex;
         std::list<__::resume_task> resume_task;
         std::list<task*> readers;
-        std::timed_mutex no_race;
-        struct task* current_writer_task = nullptr;
+        fast_task::timed_mutex no_race;
+        class task* current_writer_task = nullptr;
 
 
     public:
@@ -169,6 +173,9 @@ namespace fast_task {
         nmut,
         ntimed,
         nrec,
+        std_nmut,
+        std_ntimed,
+        std_nrec,
         umut,
         urmut,
         urwmut_r,
@@ -176,40 +183,64 @@ namespace fast_task {
         mmut
     };
 
-    struct mutex_unify {
+    class mutex_unify {
         union {
-            std::mutex* nmut = nullptr;
-            std::timed_mutex* ntimed;
-            std::recursive_mutex* nrec;
+            std::mutex* std_nmut = nullptr;
+            std::timed_mutex* std_ntimed;
+            std::recursive_mutex* std_nrec;
+            fast_task::mutex* nmut;
+            fast_task::timed_mutex* ntimed;
+            fast_task::recursive_mutex* nrec;
             task_mutex* umut;
             task_rw_mutex* urwmut;
             task_recursive_mutex* urmut;
             struct multiply_mutex* mmut;
         };
 
+        mutex_unify_type type;
+
+    public:
         mutex_unify();
         mutex_unify(const mutex_unify& mut);
         mutex_unify(std::mutex& smut);
         mutex_unify(std::timed_mutex& smut);
         mutex_unify(std::recursive_mutex& smut);
+        mutex_unify(fast_task::mutex& smut);
+        mutex_unify(fast_task::timed_mutex& smut);
+        mutex_unify(fast_task::recursive_mutex& smut);
         mutex_unify(task_mutex& smut);
         mutex_unify(task_rw_mutex& smut, bool read_write = true);
         mutex_unify(task_recursive_mutex& smut);
-        mutex_unify(struct multiply_mutex& mmut);
+        mutex_unify(class multiply_mutex& mmut);
         mutex_unify(nullptr_t);
 
         ~mutex_unify();
 
-        mutex_unify& operator=(const mutex_unify& mut);
-        mutex_unify& operator=(std::mutex& smut);
-        mutex_unify& operator=(std::timed_mutex& smut);
-        mutex_unify& operator=(std::recursive_mutex& smut);
-        mutex_unify& operator=(task_mutex& smut);
-        mutex_unify& operator=(task_recursive_mutex& smut);
-        mutex_unify& operator=(struct multiply_mutex& mmut);
+        mutex_unify& operator=(const mutex_unify&);
+        mutex_unify& operator=(std::mutex&);
+        mutex_unify& operator=(std::timed_mutex&);
+        mutex_unify& operator=(std::recursive_mutex&);
+        mutex_unify& operator=(fast_task::mutex&);
+        mutex_unify& operator=(fast_task::timed_mutex&);
+        mutex_unify& operator=(fast_task::recursive_mutex&);
+        mutex_unify& operator=(task_mutex&);
+        mutex_unify& operator=(task_recursive_mutex&);
+        mutex_unify& operator=(class multiply_mutex&);
         mutex_unify& operator=(nullptr_t);
 
-        mutex_unify_type type;
+        bool operator==(const mutex_unify&);
+        bool operator==(std::mutex&);
+        bool operator==(std::timed_mutex&);
+        bool operator==(std::recursive_mutex&);
+        bool operator==(fast_task::mutex&);
+        bool operator==(fast_task::timed_mutex&);
+        bool operator==(fast_task::recursive_mutex&);
+        bool operator==(task_mutex&);
+        bool operator==(task_rw_mutex&);
+        bool operator==(task_recursive_mutex&);
+        bool operator==(class multiply_mutex&);
+        bool operator==(nullptr_t);
+
         void lock();
         bool try_lock();
         bool try_lock_for(size_t milliseconds);
@@ -222,8 +253,10 @@ namespace fast_task {
         operator bool();
     };
 
-    struct multiply_mutex {
+    class multiply_mutex {
         std::vector<mutex_unify> mu;
+
+    public:
         multiply_mutex(const std::initializer_list<mutex_unify>& muts);
         void lock();
         bool try_lock();
@@ -234,156 +267,165 @@ namespace fast_task {
 
     class task_condition_variable {
         std::list<__::resume_task> resume_task;
-        std::mutex no_race;
+        fast_task::mutex no_race;
 
     public:
         task_condition_variable();
         ~task_condition_variable();
+        void wait(fast_task::unique_lock<mutex_unify>& lock);
+        bool wait_for(fast_task::unique_lock<mutex_unify>& lock, size_t milliseconds);
+        bool wait_until(fast_task::unique_lock<mutex_unify>& lock, std::chrono::high_resolution_clock::time_point time_point);
         void wait(std::unique_lock<mutex_unify>& lock);
         bool wait_for(std::unique_lock<mutex_unify>& lock, size_t milliseconds);
         bool wait_until(std::unique_lock<mutex_unify>& lock, std::chrono::high_resolution_clock::time_point time_point);
         void notify_one();
         void notify_all();
         bool has_waiters();
+        void callback(fast_task::unique_lock<mutex_unify>& mut, const std::shared_ptr<task>& task);
         void callback(std::unique_lock<mutex_unify>& mut, const std::shared_ptr<task>& task);
     };
 
-    struct task_result {
-        task_condition_variable result_notify;
-        void* context = nullptr;
-        bool end_of_life = false;
-        bool has_result = false;
-        void getResult(std::unique_lock<mutex_unify>& l);
-        void awaitEnd(std::unique_lock<mutex_unify>& l);
-        void yield_result_begin(std::unique_lock<mutex_unify>& l, bool release = true);
-        void yield_result_end(std::unique_lock<mutex_unify>& l, bool release = true);
-
-        void final_result_begin(std::unique_lock<mutex_unify>& l, bool release = true);
-        void final_result_end(std::unique_lock<mutex_unify>& l, bool release = true);
-
-        task_result();
-        task_result(task_result&& move) noexcept;
-        ~task_result();
+    enum class task_priority {
+        background,
+        low,
+        lower,
+        normal,
+        higher,
+        high,
+        semi_realtime,
     };
 
-    struct task {
-        static size_t max_running_tasks;
-        static size_t max_planned_tasks;
-        static bool enable_task_naming;
+    class task {
+        void awaitEnd(fast_task::unique_lock<mutex_unify>& l);
 
-        task_result fres;
+        struct data {
+            union callbacks_data {
+                bool is_extended_mode : 1 = false;
 
-        union callbacks_data {
-            bool is_extended_mode : 1 = false;
+                struct {
+                    bool is_extended_mode : 1;
+                    std::function<void(const std::exception_ptr&)> ex_handle;
+                    std::function<void()> func;
+                } normal_mode;
 
-            struct {
-                bool is_extended_mode : 1;
-                std::function<void(const std::exception_ptr&)> ex_handle;
-                std::function<void()> func;
-            } normal_mode;
+                struct {
+                    bool is_extended_mode : 1;
+                    void* data;
+                    void (*on_start)(void*);
+                    void (*on_await)(void*);
+                    void (*on_cancel)(void*);
+                    void (*on_destruct)(void*);
+                } extended_mode;
 
-            struct {
-                bool is_extended_mode : 1;
-                void* data;
-                void (*on_start)(void*);
-                void (*on_await)(void*);
-                void (*on_cancel)(void*);
-                void (*on_destruct)(void*);
-            } extended_mode;
+                callbacks_data() : normal_mode() {}
 
-            callbacks_data() : normal_mode() {}
-
-            callbacks_data(callbacks_data&& move) noexcept {
-                if (move.is_extended_mode) {
-                    is_extended_mode = true;
-                    extended_mode.data = move.extended_mode.data;
-                    extended_mode.on_start = move.extended_mode.on_start;
-                    extended_mode.on_await = move.extended_mode.on_await;
-                    extended_mode.on_cancel = move.extended_mode.on_cancel;
-                    extended_mode.on_destruct = move.extended_mode.on_destruct;
-                    move.extended_mode.on_destruct = nullptr;
-                } else {
-                    is_extended_mode = false;
-                    normal_mode.ex_handle = std::move(move.normal_mode.ex_handle);
-                    normal_mode.func = std::move(move.normal_mode.func);
+                callbacks_data(callbacks_data&& move) noexcept {
+                    if (move.is_extended_mode) {
+                        is_extended_mode = true;
+                        extended_mode.data = move.extended_mode.data;
+                        extended_mode.on_start = move.extended_mode.on_start;
+                        extended_mode.on_await = move.extended_mode.on_await;
+                        extended_mode.on_cancel = move.extended_mode.on_cancel;
+                        extended_mode.on_destruct = move.extended_mode.on_destruct;
+                        move.extended_mode.on_destruct = nullptr;
+                    } else {
+                        is_extended_mode = false;
+                        normal_mode.ex_handle = std::move(move.normal_mode.ex_handle);
+                        normal_mode.func = std::move(move.normal_mode.func);
+                    }
                 }
-            }
 
-            ~callbacks_data() {
-                if (is_extended_mode) {
-                    if (extended_mode.on_destruct)
-                        extended_mode.on_destruct(extended_mode.data);
-                    extended_mode.data = nullptr;
-                    extended_mode.on_start = nullptr;
-                    extended_mode.on_await = nullptr;
-                    extended_mode.on_cancel = nullptr;
-                    extended_mode.on_destruct = nullptr;
-                } else {
-                    normal_mode.ex_handle = nullptr;
-                    normal_mode.func = nullptr;
+                ~callbacks_data() {
+                    if (is_extended_mode) {
+                        if (extended_mode.on_destruct)
+                            extended_mode.on_destruct(extended_mode.data);
+                        extended_mode.data = nullptr;
+                        extended_mode.on_start = nullptr;
+                        extended_mode.on_await = nullptr;
+                        extended_mode.on_cancel = nullptr;
+                        extended_mode.on_destruct = nullptr;
+                    } else {
+                        normal_mode.ex_handle = nullptr;
+                        normal_mode.func = nullptr;
+                    }
                 }
-            }
-        } callbacks;
+            } callbacks;
 
-        std::mutex no_race;
-        mutex_unify relock_0;
-        mutex_unify relock_1;
-        mutex_unify relock_2;
-        std::chrono::high_resolution_clock::time_point timeout = std::chrono::high_resolution_clock::time_point::min();
-        uint16_t awake_check = 0;
-        uint16_t bind_to_worker_id = -1;
-        bool time_end_flag : 1 = false;
-        bool started : 1 = false;
-        bool awaked : 1 = false;
-        bool end_of_life : 1 = false;
-        bool make_cancel : 1 = false;
-        bool auto_bind_worker : 1 = false;
-        bool invalid_switch_caught : 1 = false;
+            task_condition_variable result_notify;
+            fast_task::mutex no_race;
+            mutex_unify relock_0;
+            mutex_unify relock_1;
+            mutex_unify relock_2;
+            std::chrono::high_resolution_clock::time_point timeout = std::chrono::high_resolution_clock::time_point::min();
+            uint16_t awake_check = 0;
+            uint16_t bind_to_worker_id = (uint16_t)-1;
+            bool time_end_flag : 1 = false;
+            bool started : 1 = false;
+            bool awaked : 1 = false;
+            bool end_of_life : 1 = false;
+            bool make_cancel : 1 = false;
+            bool auto_bind_worker : 1 = false;
+            bool invalid_switch_caught : 1 = false;
+            bool completed : 1 = false;
+            void* context = nullptr;
+            size_t context_switch_count = 0;
+    #if tasks_enable_preemptive_scheduler_preview
+            std::chrono::nanoseconds current_available_quantum = std::chrono::nanoseconds(0);
+            task_priority priority = task_priority::high;
+            size_t interrupt_count = 0;
+            size_t interrupt_data = 0; //used only when task requested switch but it has interrupt lock
+    #endif
+        } data_;
 
-        task(void* data, void (*on_start)(void*), void (*on_await)(void*), void (*on_cancel)(void*), void (*on_destruct)(void*));
+        friend task::data& get_data(std::shared_ptr<task>& task);
+        friend task::data& get_data(const std::shared_ptr<task>& task);
 
         void _extended_end();
 
     public:
-        task(std::function<void()> func, std::function<void(const std::exception_ptr&)> ex_handle = nullptr, std::chrono::high_resolution_clock::time_point timeout = std::chrono::high_resolution_clock::time_point::min()) : timeout(timeout) {
-            callbacks.is_extended_mode = false;
-            callbacks.normal_mode.func = func;
-            callbacks.normal_mode.ex_handle = ex_handle;
-        }
+        static size_t max_running_tasks;
+        static bool enable_task_naming;
+
+        task(void* data, void (*on_start)(void*), void (*on_await)(void*), void (*on_cancel)(void*), void (*on_destruct)(void*));
+        task(std::function<void()> func, std::function<void(const std::exception_ptr&)> ex_handle = nullptr, std::chrono::high_resolution_clock::time_point timeout = std::chrono::high_resolution_clock::time_point::min(), task_priority priority = task_priority::high);
 
         task(task&& mov) noexcept;
         ~task();
         void set_auto_bind_worker(bool enable = true);
         void set_worker_id(uint16_t id);
+        void set_priority(task_priority);
+        task_priority get_priority() const;
+        size_t get_counter_interrupt() const;
+        size_t get_counter_context_switch() const;
+        bool is_cancellation_requested() const;
+        bool is_ended() const;
+        void await_task();
+        void callback(const std::shared_ptr<task>& task);
+        void notify_cancel();
+        void await_notify_cancel();
 
-        static void schedule(std::shared_ptr<task>&& task, size_t milliseconds);
-        static void schedule(const std::shared_ptr<task>& task, size_t milliseconds);
-        static void schedule_until(std::shared_ptr<task>&& task, std::chrono::high_resolution_clock::time_point time_point);
-        static void schedule_until(const std::shared_ptr<task>& task, std::chrono::high_resolution_clock::time_point time_point);
-        static void start(std::shared_ptr<task>&& lgr_task);
-        static void start(std::list<std::shared_ptr<task>>& lgr_task);
-        static void start(const std::shared_ptr<task>& lgr_task);
+        template <class FN>
+        void access_dummy(FN&& fn) {
+            if (data_.callbacks.is_extended_mode)
+                fn(data_.callbacks.extended_mode.data);
+            else
+                throw std::runtime_error("This task is not in extended mode");
+        };
 
-        inline static void run(std::function<void()>&& func) {
-            start(std::shared_ptr<task>(new task(std::move(func))));
-        }
+        template <class FN>
+        void end_dummy(FN&& fn) {
+            if (data_.callbacks.is_extended_mode) {
+                fn(data_.callbacks.extended_mode.data);
+                fast_task::lock_guard l(data_.no_race);
+                data_.end_of_life = true;
+                data_.result_notify.notify_all();
+            } else
+                throw std::runtime_error("This task is not in extended mode");
+        };
 
-        static uint16_t create_bind_only_executor(uint16_t fixed_count, bool allow_implicit_start);
-        static void assign_bind_only_executor(uint16_t id, uint16_t fixed_count, bool allow_implicit_start);
-        static void close_bind_only_executor(uint16_t id);
+        static void run(std::function<void()>&& func);
 
-        static void create_executor(size_t count = 1);
-        static size_t total_executors();
-        static void reduce_executor(size_t count = 1);
-        static void become_task_executor();
 
-        static void await_no_tasks(bool be_executor = false);
-        static void await_end_tasks(bool be_executor = false);
-        static void sleep(size_t milliseconds);
-        static void sleep_until(std::chrono::high_resolution_clock::time_point time_point);
-        static void yield();
-
-        static bool has_result(std::shared_ptr<task>& lgr_task);
         static void await_task(const std::shared_ptr<task>& lgr_task, bool make_start = true);
         static void await_multiple(std::list<std::shared_ptr<task>>& tasks, bool pre_started = false, bool release = false);
         static void await_multiple(std::shared_ptr<task>* tasks, size_t len, bool pre_started = false, bool release = false);
@@ -391,53 +433,90 @@ namespace fast_task {
         static void notify_cancel(std::list<std::shared_ptr<task>>& tasks);
         static void await_notify_cancel(std::shared_ptr<task>& task);
         static void await_notify_cancel(std::list<std::shared_ptr<task>>& tasks);
-        static size_t task_id();
-        static void check_cancellation();
-        static void self_cancel();
-        static bool is_task();
 
         static std::shared_ptr<task> callback_dummy(void* dummy_data, void (*on_start)(void*), void (*on_await)(void*), void (*on_cancel)(void*), void (*on_destruct)(void*));
         static std::shared_ptr<task> callback_dummy(void* dummy_data, void (*on_await)(void*), void (*on_cancel)(void*), void (*on_destruct)(void*));
 
-        template <class FN>
-        static void access_dummy(std::shared_ptr<task>& task, FN&& fn) {
-            if (task->callbacks.is_extended_mode)
-                fn(task->callbacks.extended_mode.data);
-            else
-                throw std::runtime_error("This task is not in extended mode");
-        };
-
-        template <class FN>
-        static void end_dummy(std::shared_ptr<task>& task, FN&& fn) {
-            if (task->callbacks.is_extended_mode) {
-                fn(task->callbacks.extended_mode.data);
-                std::lock_guard l(task->no_race);
-                task->end_of_life = true;
-                task->fres.end_of_life = true;
-                task->fres.result_notify.notify_all();
-            } else
-                throw std::runtime_error("This task is not in extended mode");
-        };
 
         static std::shared_ptr<task> dummy_task();
-        static std::shared_ptr<task> cxx_native_bridge(bool& checker, std::condition_variable_any& cd);
-
-        static void explicitStartTimer();
-        static void shutDown();
-        static void callback(std::shared_ptr<task>& target, const std::shared_ptr<task>& task);
-
-
-        //DEBUG ONLY, not recommended use in production
-        static void clean_up();
-        //DEBUG ONLY, not recommended use in production
+        static std::shared_ptr<task> cxx_native_bridge(bool& checker, fast_task::condition_variable_any& cd);
     };
 
     #pragma pack(pop)
 
+    namespace scheduler {
+        namespace config {
+            inline constexpr long long background_basic_quantum_ns = 15 * 1000000;
+            inline constexpr long long low_basic_quantum_ns = 30 * 1000000;
+            inline constexpr long long lower_basic_quantum_ns = 40 * 1000000;
+            inline constexpr long long normal_basic_quantum_ns = 80 * 1000000;
+            inline constexpr long long higher_basic_quantum_ns = 90 * 1000000;
+            inline constexpr long long high_basic_quantum_ns = 120 * 1000000;
+
+            inline constexpr long long background_max_quantum_ns = 30 * 1000000;
+            inline constexpr long long low_max_quantum_ns = 60 * 1000000;
+            inline constexpr long long lower_max_quantum_ns = 80 * 1000000;
+            inline constexpr long long normal_max_quantum_ns = 160 * 1000000;
+            inline constexpr long long higher_max_quantum_ns = 180 * 1000000;
+            inline constexpr long long high_max_quantum_ns = 240 * 1000000;
+        };
+
+        template <class Dur_resolution, class Dur_type>
+        void schedule(std::shared_ptr<task>&& task, std::chrono::duration<Dur_resolution, Dur_type> duration) {
+            schedule_until(std::move(task), std::chrono::high_resolution_clock::now() + duration);
+        }
+
+        template <class Dur_resolution, class Dur_type>
+        void schedule(const std::shared_ptr<task>& task, std::chrono::duration<Dur_resolution, Dur_type> duration) {
+            schedule_until(task, std::chrono::high_resolution_clock::now() + duration);
+        }
+
+        void schedule_until(std::shared_ptr<task>&& task, std::chrono::high_resolution_clock::time_point time_point);
+        void schedule_until(const std::shared_ptr<task>& task, std::chrono::high_resolution_clock::time_point time_point);
+        void start(std::shared_ptr<task>&& lgr_task);
+        void start(std::list<std::shared_ptr<task>>& lgr_task);
+        void start(const std::shared_ptr<task>& lgr_task);
+
+        uint16_t create_bind_only_executor(uint16_t fixed_count, bool allow_implicit_start);
+        void assign_bind_only_executor(uint16_t id, uint16_t fixed_count, bool allow_implicit_start);
+        void close_bind_only_executor(uint16_t id);
+
+        void create_executor(size_t count = 1);
+        size_t total_executors();
+        void reduce_executor(size_t count = 1);
+
+        void become_task_executor();
+        void await_no_tasks(bool be_executor = false);
+        void await_end_tasks(bool be_executor = false);
+
+        void explicit_start_timer();
+        void shut_down();
+
+        //DEBUG ONLY, not recommended use in production
+        static void clean_up();
+        //DEBUG ONLY, not recommended use in production
+    }
+
+    namespace this_task {
+        size_t get_id() noexcept;
+        void yield();
+        void sleep_until(std::chrono::high_resolution_clock::time_point time_point);
+
+        template <class Dur_resolution, class Dur_type>
+        void sleep_for(std::chrono::duration<Dur_resolution, Dur_type> duration) {
+            sleep_until(std::chrono::high_resolution_clock::now() + duration);
+        }
+
+        void check_cancellation();
+        bool is_cancellation_requested() noexcept;
+        void self_cancel();
+        bool is_task() noexcept;
+    }
+
     class task_semaphore {
         std::list<__::resume_task> resume_task;
-        std::timed_mutex no_race;
-        std::condition_variable_any native_notify;
+        fast_task::timed_mutex no_race;
+        fast_task::condition_variable_any native_notify;
         size_t allow_threshold = 0;
         size_t max_threshold = 0;
 
@@ -457,8 +536,8 @@ namespace fast_task {
     class task_limiter {
         std::list<void*> lock_check;
         std::list<__::resume_task> resume_task;
-        std::timed_mutex no_race;
-        std::condition_variable_any native_notify;
+        fast_task::timed_mutex no_race;
+        fast_task::condition_variable_any native_notify;
         size_t allow_threshold = 0;
         size_t max_threshold = 1;
         bool locked = false;
@@ -527,11 +606,12 @@ namespace fast_task {
         size_t expires_at(std::chrono::high_resolution_clock::time_point dur);
 
         status wait();
+        status wait(fast_task::unique_lock<mutex_unify>& lock);
         status wait(std::unique_lock<mutex_unify>& lock);
 
         bool timed_out();
     };
+}
 
     #pragma pop_macro("min")
-}
 #endif

@@ -1,5 +1,5 @@
-#ifndef SRC_TASKS_UTIL_HILL_CLIMBING
-#define SRC_TASKS_UTIL_HILL_CLIMBING
+#ifndef FAST_TASK_HILL_CLIMBING
+#define FAST_TASK_HILL_CLIMBING
 //source https://github.com/dotnet/runtime/blob/main/src/libraries/System.Private.CoreLib/src/System/Threading/PortableThreadPool.HillClimbing.cs
 // used to balance the number of threads in thread pools, ported from the C# runtime sources
 // uses https://en.wikipedia.org/wiki/Hill_climbing to find the best number of threads to use
@@ -50,4 +50,4 @@ namespace fast_task::util {
         std::pair<uint32_t, uint32_t> climb(uint32_t curr_thread_count, double sample_seconds, uint32_t completed_count, uint32_t min_threads, uint32_t max_threads);
     };
 }
-#endif /* SRC_RUN_TIME_TASKS_UTIL_HILL_CLIMBING */
+#endif

@@ -7,6 +7,7 @@
 #include <tasks/_internal.hpp>
 
 #if PLATFORM_WINDOWS
+    #define NOMINMAX
     #include <Windows.h>
     #include <locale>
 #elif PLATFORM_LINUX
@@ -15,6 +16,36 @@
 namespace fast_task {
     thread_local executors_local loc;
     executor_global glob;
+
+    std::chrono::nanoseconds next_quantum(task_priority priority, std::chrono::nanoseconds& current_available_quantum) {
+        if (priority == task_priority::semi_realtime)
+            return std::chrono::nanoseconds::min();
+
+        current_available_quantum += priority_quantum_basic[(size_t)priority];
+        if (current_available_quantum > priority_quantum_max[(size_t)priority])
+            current_available_quantum = priority_quantum_max[(size_t)priority];
+        return current_available_quantum > std::chrono::nanoseconds(0) ? current_available_quantum : std::chrono::nanoseconds(0);
+    }
+
+    std::chrono::nanoseconds peek_quantum(task_priority priority, std::chrono::nanoseconds current_available_quantum) {
+        if (priority == task_priority::semi_realtime)
+            return std::chrono::nanoseconds::min();
+
+        current_available_quantum += priority_quantum_basic[(size_t)priority];
+        if (current_available_quantum > priority_quantum_max[(size_t)priority])
+            current_available_quantum = priority_quantum_max[(size_t)priority];
+        return current_available_quantum > std::chrono::nanoseconds(0) ? current_available_quantum : std::chrono::nanoseconds(0);
+    }
+
+    void task_switch(task_priority priority, std::chrono::nanoseconds& current_available_quantum, std::chrono::nanoseconds elapsed) {
+        if (priority == task_priority::semi_realtime)
+            return;
+        current_available_quantum -= elapsed;
+    }
+
+    std::chrono::nanoseconds init_quantum(task_priority priority) {
+        return priority_quantum_basic[(size_t)priority];
+    }
 
     bool can_be_scheduled_task_to_hot() {
         if (task::max_running_tasks)

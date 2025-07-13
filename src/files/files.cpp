@@ -114,17 +114,17 @@ namespace fast_task::files {
         }
 
         void cancel() {
-            if (buffer && !awaiter->fres.end_of_life) {
+            if (buffer && !get_data(awaiter).end_of_life) {
                 if (CancelIoEx(handle, &overlapped))
                     return;
                 mutex_unify unify(mutex);
-                std::unique_lock<mutex_unify> lock(unify);
+                fast_task::unique_lock<mutex_unify> lock(unify);
                 fullifed = true;
                 if (awaiter) {
                     if (is_read && !required_full)
-                        task::end_dummy(awaiter, [&](auto&) {});
+                        awaiter->end_dummy([&](auto&) {});
                     else
-                        task::end_dummy(awaiter, [&](auto& data) { ((completion_struct*)data)->error = io_errors::operation_canceled; });
+                        awaiter->end_dummy([&](auto& data) { ((completion_struct*)data)->error = io_errors::operation_canceled; });
                 }
                 awaiters.notify_all();
                 awaiter = nullptr;
@@ -133,20 +133,20 @@ namespace fast_task::files {
 
         void await() {
             mutex_unify unify(mutex);
-            std::unique_lock<mutex_unify> lock(unify);
+            fast_task::unique_lock<mutex_unify> lock(unify);
             while (!fullifed)
                 awaiters.wait(lock);
         }
 
         void now_fullifed() {
             mutex_unify unify(mutex);
-            std::unique_lock<mutex_unify> lock(unify);
+            fast_task::unique_lock<mutex_unify> lock(unify);
             fullifed = true;
             if (awaiter) {
                 if (is_read)
-                    task::end_dummy(awaiter, [&](auto& data) { auto tt = (completion_struct*)data; tt->completed_bytes = fullifed_bytes; tt->data = buffer; });
+                    awaiter->end_dummy([&](auto& data) { auto tt = (completion_struct*)data; tt->completed_bytes = fullifed_bytes; tt->data = buffer; });
                 else
-                    task::end_dummy(awaiter, [&](auto& data) { auto tt = (completion_struct*)data; tt->completed_bytes = fullifed_bytes; });
+                    awaiter->end_dummy([&](auto& data) { auto tt = (completion_struct*)data; tt->completed_bytes = fullifed_bytes; });
             }
             awaiters.notify_all();
             awaiter = nullptr;
@@ -154,16 +154,16 @@ namespace fast_task::files {
 
         void exception(io_errors e) {
             mutex_unify unify(mutex);
-            std::unique_lock<mutex_unify> lock(unify);
+            fast_task::unique_lock<mutex_unify> lock(unify);
             fullifed = true;
             if (awaiter) {
                 if (fullifed_bytes) {
                     if (is_read)
-                        task::end_dummy(awaiter, [&](auto& data) { auto tt = (completion_struct*)data; tt->completed_bytes = fullifed_bytes; tt->data = buffer; tt->error = e; });
+                        awaiter->end_dummy([&](auto& data) { auto tt = (completion_struct*)data; tt->completed_bytes = fullifed_bytes; tt->data = buffer; tt->error = e; });
                     else
-                        task::end_dummy(awaiter, [&](auto& data) { auto tt = (completion_struct*)data; tt->completed_bytes = fullifed_bytes; tt->error = e; });
+                        awaiter->end_dummy([&](auto& data) { auto tt = (completion_struct*)data; tt->completed_bytes = fullifed_bytes; tt->error = e; });
                 } else
-                    task::end_dummy(awaiter, [&](auto& data) { auto tt = (completion_struct*)data; tt->error = e; });
+                    awaiter->end_dummy([&](auto& data) { auto tt = (completion_struct*)data; tt->error = e; });
             }
             awaiters.notify_all();
             awaiter = nullptr;
@@ -798,16 +798,16 @@ namespace fast_task::files {
         }
 
         void cancel() {
-            if (buffer && awaiter ? !awaiter->fres.end_of_life : true) {
+            if (buffer && awaiter ? !get_data(awaiter).end_of_life : true) {
                 if (util::native_workers_singleton::await_cancel_fd_all(handle)) {
                     mutex_unify unify(mutex);
-                    std::unique_lock<mutex_unify> lock(unify);
+                    fast_task::unique_lock<mutex_unify> lock(unify);
                     fullifed = true;
                     if (awaiter) {
                         if (is_read && !required_full)
-                            task::end_dummy(awaiter, [&](auto&) {});
+                            awaiter->end_dummy([&](auto&) {});
                         else
-                            task::end_dummy(awaiter, [&](auto& data) { ((completion_struct*)data)->error = io_errors::operation_canceled; });
+                            awaiter->end_dummy([&](auto& data) { ((completion_struct*)data)->error = io_errors::operation_canceled; });
                     }
                     awaiters.notify_all();
                 }
@@ -816,20 +816,20 @@ namespace fast_task::files {
 
         void await() {
             mutex_unify unify(mutex);
-            std::unique_lock<mutex_unify> lock(unify);
+            fast_task::unique_lock<mutex_unify> lock(unify);
             while (!fullifed)
                 awaiters.wait(lock);
         }
 
         void now_fullifed() {
             mutex_unify unify(mutex);
-            std::unique_lock<mutex_unify> lock(unify);
+            fast_task::unique_lock<mutex_unify> lock(unify);
             fullifed = true;
             if (awaiter) {
                 if (is_read)
-                    task::end_dummy(awaiter, [&](auto& data) { auto tt = (completion_struct*)data; tt->completed_bytes = fullifed_bytes; tt->data = buffer; });
+                    awaiter->end_dummy([&](auto& data) { auto tt = (completion_struct*)data; tt->completed_bytes = fullifed_bytes; tt->data = buffer; });
                 else
-                    task::end_dummy(awaiter, [&](auto& data) { auto tt = (completion_struct*)data; tt->completed_bytes = fullifed_bytes; });
+                    awaiter->end_dummy([&](auto& data) { auto tt = (completion_struct*)data; tt->completed_bytes = fullifed_bytes; });
             }
             awaiters.notify_all();
             awaiter = nullptr;
@@ -837,16 +837,16 @@ namespace fast_task::files {
 
         void exception(io_errors e) {
             mutex_unify unify(mutex);
-            std::unique_lock<mutex_unify> lock(unify);
+            fast_task::unique_lock<mutex_unify> lock(unify);
             fullifed = true;
             if (awaiter) {
                 if (fullifed_bytes) {
                     if (is_read)
-                        task::end_dummy(awaiter, [&](auto& data) { auto tt = (completion_struct*)data; tt->completed_bytes = fullifed_bytes; tt->data = buffer; tt->error = e; });
+                        awaiter->end_dummy([&](auto& data) { auto tt = (completion_struct*)data; tt->completed_bytes = fullifed_bytes; tt->data = buffer; tt->error = e; });
                     else
-                        task::end_dummy(awaiter, [&](auto& data) { auto tt = (completion_struct*)data; tt->completed_bytes = fullifed_bytes; tt->error = e; });
+                        awaiter->end_dummy([&](auto& data) { auto tt = (completion_struct*)data; tt->completed_bytes = fullifed_bytes; tt->error = e; });
                 } else
-                    task::end_dummy(awaiter, [&](auto& data) { auto tt = (completion_struct*)data; tt->error = e; });
+                    awaiter->end_dummy([&](auto& data) { auto tt = (completion_struct*)data; tt->error = e; });
             }
             awaiters.notify_all();
             awaiter = nullptr;
@@ -1382,7 +1382,7 @@ namespace fast_task::files {
 
     future_ptr<std::vector<uint8_t>> FileHandle::read(uint32_t size) {
         if (mimic_non_async.has_value()) {
-            std::lock_guard<task_mutex> lock(*mimic_non_async);
+            fast_task::lock_guard<task_mutex> lock(*mimic_non_async);
             auto res = handle->read(size, true);
             res->wait();
             return res;
@@ -1392,7 +1392,7 @@ namespace fast_task::files {
 
     uint32_t FileHandle::read(uint8_t* data, uint32_t size) {
         if (mimic_non_async.has_value()) {
-            std::lock_guard<task_mutex> lock(*mimic_non_async);
+            fast_task::lock_guard<task_mutex> lock(*mimic_non_async);
             return handle->read(data, size);
         } else
             return handle->read(data, size);
@@ -1400,7 +1400,7 @@ namespace fast_task::files {
 
     future_ptr<std::vector<uint8_t>> FileHandle::read_fixed(uint32_t size) {
         if (mimic_non_async.has_value()) {
-            std::lock_guard<task_mutex> lock(*mimic_non_async);
+            fast_task::lock_guard<task_mutex> lock(*mimic_non_async);
             auto res = handle->read(size, true);
             res->wait();
             return res;
@@ -1410,7 +1410,7 @@ namespace fast_task::files {
 
     uint32_t FileHandle::read_fixed(uint8_t* data, uint32_t size) {
         if (mimic_non_async.has_value()) {
-            std::lock_guard<task_mutex> lock(*mimic_non_async);
+            fast_task::lock_guard<task_mutex> lock(*mimic_non_async);
             return handle->read(data, size, true);
         } else
             return handle->read(data, size, true);
@@ -1418,7 +1418,7 @@ namespace fast_task::files {
 
     future_ptr<void> FileHandle::write(const uint8_t* data, uint32_t size) {
         if (mimic_non_async.has_value()) {
-            std::lock_guard<task_mutex> lock(*mimic_non_async);
+            fast_task::lock_guard<task_mutex> lock(*mimic_non_async);
             auto res = handle->write(data, size);
             res->wait();
             return res;
@@ -1428,7 +1428,7 @@ namespace fast_task::files {
 
     future_ptr<void> FileHandle::append(const uint8_t* data, uint32_t size) {
         if (mimic_non_async.has_value()) {
-            std::lock_guard<task_mutex> lock(*mimic_non_async);
+            fast_task::lock_guard<task_mutex> lock(*mimic_non_async);
             auto res = handle->append(data, size);
             res->wait();
             return res;
@@ -1438,7 +1438,7 @@ namespace fast_task::files {
 
     void FileHandle::write_inline(const uint8_t* data, uint32_t size) {
         if (mimic_non_async.has_value()) {
-            std::lock_guard<task_mutex> lock(*mimic_non_async);
+            fast_task::lock_guard<task_mutex> lock(*mimic_non_async);
             handle->write_inline(data, size);
         } else
             handle->write_inline(data, size);
@@ -1446,7 +1446,7 @@ namespace fast_task::files {
 
     void FileHandle::append_inline(const uint8_t* data, uint32_t size) {
         if (mimic_non_async.has_value()) {
-            std::lock_guard<task_mutex> lock(*mimic_non_async);
+            fast_task::lock_guard<task_mutex> lock(*mimic_non_async);
             handle->append_inline(data, size);
         } else
             handle->append_inline(data, size);
@@ -1454,7 +1454,7 @@ namespace fast_task::files {
 
     bool FileHandle::seek_pos(uint64_t offset, pointer_offset pointer_offset, pointer pointer) {
         if (mimic_non_async.has_value()) {
-            std::lock_guard<task_mutex> lock(*mimic_non_async);
+            fast_task::lock_guard<task_mutex> lock(*mimic_non_async);
             return handle->seek_pos(offset, pointer_offset, pointer);
         } else
             return handle->seek_pos(offset, pointer_offset, pointer);
@@ -1462,7 +1462,7 @@ namespace fast_task::files {
 
     bool FileHandle::seek_pos(uint64_t offset, pointer_offset pointer_offset) {
         if (mimic_non_async.has_value()) {
-            std::lock_guard<task_mutex> lock(*mimic_non_async);
+            fast_task::lock_guard<task_mutex> lock(*mimic_non_async);
             return handle->seek_pos(offset, pointer_offset);
         } else
             return handle->seek_pos(offset, pointer_offset);
@@ -1470,7 +1470,7 @@ namespace fast_task::files {
 
     uint64_t FileHandle::tell_pos(pointer pointer) {
         if (mimic_non_async.has_value()) {
-            std::lock_guard<task_mutex> lock(*mimic_non_async);
+            fast_task::lock_guard<task_mutex> lock(*mimic_non_async);
             return handle->tell_pos(pointer);
         } else
             return handle->tell_pos(pointer);
@@ -1478,7 +1478,7 @@ namespace fast_task::files {
 
     bool FileHandle::flush() {
         if (mimic_non_async.has_value()) {
-            std::lock_guard<task_mutex> lock(*mimic_non_async);
+            fast_task::lock_guard<task_mutex> lock(*mimic_non_async);
             return handle->flush();
         } else
             return handle->flush();
@@ -1486,7 +1486,7 @@ namespace fast_task::files {
 
     uint64_t FileHandle::size() {
         if (mimic_non_async.has_value()) {
-            std::lock_guard<task_mutex> lock(*mimic_non_async);
+            fast_task::lock_guard<task_mutex> lock(*mimic_non_async);
             return handle->file_size();
         } else
             return handle->file_size();

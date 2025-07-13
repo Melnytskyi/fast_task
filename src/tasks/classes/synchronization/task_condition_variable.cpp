@@ -14,38 +14,118 @@ namespace fast_task {
         notify_all();
     }
 
-    void task_condition_variable::wait(std::unique_lock<mutex_unify>& mut) {
+    void task_condition_variable::wait(fast_task::unique_lock<mutex_unify>& mut) {
         if (loc.is_task_thread) {
-            if (mut.mutex()->nmut == &no_race) {
-                resume_task.emplace_back(loc.curr_task, loc.curr_task->awake_check);
+            if (*mut.mutex() == no_race) {
+                resume_task.emplace_back(loc.curr_task, get_data(loc.curr_task).awake_check);
                 swapCtxRelock(no_race);
             } else {
-                std::lock_guard guard(no_race);
-                resume_task.emplace_back(loc.curr_task, loc.curr_task->awake_check);
+                fast_task::lock_guard guard(no_race);
+                resume_task.emplace_back(loc.curr_task, get_data(loc.curr_task).awake_check);
                 swapCtxRelock(*mut.mutex(), no_race);
             }
         } else {
-            std::condition_variable_any cd;
+            fast_task::condition_variable_any cd;
             bool has_res = false;
             std::shared_ptr<task> task = task::cxx_native_bridge(has_res, cd);
-            if (mut.mutex()->nmut == &no_race) {
-                resume_task.emplace_back(task, task->awake_check);
+            if (*mut.mutex() == no_race) {
+                resume_task.emplace_back(task, get_data(task).awake_check);
                 while (!has_res)
                     cd.wait(mut);
             } else {
-                std::unique_lock no_race_guard(no_race);
-                resume_task.emplace_back(task, task->awake_check);
+                fast_task::unique_lock no_race_guard(no_race);
+                resume_task.emplace_back(task, get_data(task).awake_check);
                 no_race_guard.unlock();
                 while (!has_res)
                     cd.wait(mut);
             }
         task_not_ended:
-            task->no_race.lock();
-            if (!task->end_of_life) {
-                task->no_race.unlock();
+            get_data(task).no_race.lock();
+            if (!get_data(task).end_of_life) {
+                get_data(task).no_race.unlock();
                 goto task_not_ended;
             }
-            task->no_race.unlock();
+            get_data(task).no_race.unlock();
+        }
+    }
+
+    bool task_condition_variable::wait_for(fast_task::unique_lock<mutex_unify>& mut, size_t milliseconds) {
+        return wait_until(mut, std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(milliseconds));
+    }
+
+    bool task_condition_variable::wait_until(fast_task::unique_lock<mutex_unify>& mut, std::chrono::high_resolution_clock::time_point time_point) {
+        if (loc.is_task_thread) {
+            fast_task::lock_guard guard(get_data(loc.curr_task).no_race);
+            makeTimeWait(time_point);
+            {
+                fast_task::lock_guard guard(no_race);
+                resume_task.emplace_back(loc.curr_task, get_data(loc.curr_task).awake_check);
+            }
+            swapCtxRelock(get_data(loc.curr_task).no_race);
+            if (get_data(loc.curr_task).time_end_flag)
+                return false;
+        } else {
+            fast_task::condition_variable_any cd;
+            bool has_res = false;
+            std::shared_ptr<task> task = task::cxx_native_bridge(has_res, cd);
+
+            if (*mut.mutex() == no_race) {
+                resume_task.emplace_back(task, get_data(task).awake_check);
+                while (!has_res)
+                    cd.wait(mut);
+            } else {
+                fast_task::unique_lock no_race_guard(no_race);
+                resume_task.emplace_back(task, get_data(task).awake_check);
+                no_race_guard.unlock();
+                while (!has_res)
+                    cd.wait(mut);
+            }
+
+        task_not_ended:
+            get_data(task).no_race.lock();
+            if (!get_data(task).end_of_life) {
+                get_data(task).no_race.unlock();
+                goto task_not_ended;
+            }
+            get_data(task).no_race.unlock();
+
+            return !get_data(task).time_end_flag;
+        }
+        return true;
+    }
+
+    void task_condition_variable::wait(std::unique_lock<mutex_unify>& mut) {
+        if (loc.is_task_thread) {
+            if (*mut.mutex() == no_race) {
+                resume_task.emplace_back(loc.curr_task, get_data(loc.curr_task).awake_check);
+                swapCtxRelock(no_race);
+            } else {
+                fast_task::lock_guard guard(no_race);
+                resume_task.emplace_back(loc.curr_task, get_data(loc.curr_task).awake_check);
+                swapCtxRelock(*mut.mutex(), no_race);
+            }
+        } else {
+            fast_task::condition_variable_any cd;
+            bool has_res = false;
+            std::shared_ptr<task> task = task::cxx_native_bridge(has_res, cd);
+            if (*mut.mutex() == no_race) {
+                resume_task.emplace_back(task, get_data(task).awake_check);
+                while (!has_res)
+                    cd.wait(mut);
+            } else {
+                fast_task::unique_lock no_race_guard(no_race);
+                resume_task.emplace_back(task, get_data(task).awake_check);
+                no_race_guard.unlock();
+                while (!has_res)
+                    cd.wait(mut);
+            }
+        task_not_ended:
+            get_data(task).no_race.lock();
+            if (!get_data(task).end_of_life) {
+                get_data(task).no_race.unlock();
+                goto task_not_ended;
+            }
+            get_data(task).no_race.unlock();
         }
     }
 
@@ -55,83 +135,82 @@ namespace fast_task {
 
     bool task_condition_variable::wait_until(std::unique_lock<mutex_unify>& mut, std::chrono::high_resolution_clock::time_point time_point) {
         if (loc.is_task_thread) {
-            std::lock_guard guard(loc.curr_task->no_race);
+            fast_task::lock_guard guard(get_data(loc.curr_task).no_race);
             makeTimeWait(time_point);
             {
-                std::lock_guard guard(no_race);
-                resume_task.emplace_back(loc.curr_task, loc.curr_task->awake_check);
+                fast_task::lock_guard guard(no_race);
+                resume_task.emplace_back(loc.curr_task, get_data(loc.curr_task).awake_check);
             }
-            swapCtxRelock(loc.curr_task->no_race);
-            if (loc.curr_task->time_end_flag)
+            swapCtxRelock(get_data(loc.curr_task).no_race);
+            if (get_data(loc.curr_task).time_end_flag)
                 return false;
         } else {
-            std::condition_variable_any cd;
+            fast_task::condition_variable_any cd;
             bool has_res = false;
             std::shared_ptr<task> task = task::cxx_native_bridge(has_res, cd);
 
-            if (mut.mutex()->nmut == &no_race) {
-                resume_task.emplace_back(task, task->awake_check);
+            if (*mut.mutex() == no_race) {
+                resume_task.emplace_back(task, get_data(task).awake_check);
                 while (!has_res)
                     cd.wait(mut);
             } else {
-                std::unique_lock no_race_guard(no_race);
-                resume_task.emplace_back(task, task->awake_check);
+                fast_task::unique_lock no_race_guard(no_race);
+                resume_task.emplace_back(task, get_data(task).awake_check);
                 no_race_guard.unlock();
                 while (!has_res)
                     cd.wait(mut);
             }
 
         task_not_ended:
-            task->no_race.lock();
-            if (!task->end_of_life) {
-                task->no_race.unlock();
+            get_data(task).no_race.lock();
+            if (!get_data(task).end_of_life) {
+                get_data(task).no_race.unlock();
                 goto task_not_ended;
             }
-            task->no_race.unlock();
+            get_data(task).no_race.unlock();
 
-            return !task->time_end_flag;
+            return !get_data(task).time_end_flag;
         }
         return true;
     }
-
     void task_condition_variable::notify_all() {
-        std::unique_lock no_race_guard(no_race);
+        fast_task::unique_lock no_race_guard(no_race);
         std::list<__::resume_task> revive_tasks(std::move(resume_task));
         no_race_guard.unlock();
         if (revive_tasks.empty())
             return;
         bool to_yield = false;
         {
-            std::lock_guard guard(glob.task_thread_safety);
+            fast_task::lock_guard guard(glob.task_thread_safety);
             for (auto& resumer : revive_tasks) {
                 auto& it = resumer.task;
-                std::lock_guard guard_loc(it->no_race);
-                if (resumer.task->awake_check != resumer.awake_check)
+                fast_task::lock_guard guard_loc(get_data(it).no_race);
+                if (get_data(resumer.task).awake_check != resumer.awake_check)
                     continue;
-                if (!it->time_end_flag) {
-                    it->awaked = true;
+                if (!get_data(it).time_end_flag) {
+                    get_data(it).awaked = true;
                     transfer_task(it);
                 }
             }
             glob.tasks_notifier.notify_one();
             if (task::max_running_tasks && loc.is_task_thread) {
-                if (can_be_scheduled_task_to_hot() && loc.curr_task && !loc.curr_task->end_of_life)
+                if (can_be_scheduled_task_to_hot() && loc.curr_task && !get_data(loc.curr_task).end_of_life)
                     to_yield = true;
             }
         }
         if (to_yield)
-            task::yield();
+            this_task::yield();
     }
 
     void task_condition_variable::notify_one() {
         std::shared_ptr<task> tsk;
         {
-            std::lock_guard guard(no_race);
+            fast_task::lock_guard guard(no_race);
             while (resume_task.size()) {
                 auto& [cur, awake_check] = resume_task.back();
-                cur->no_race.lock();
-                if (cur->time_end_flag || cur->awake_check != awake_check) {
-                    cur->no_race.unlock();
+                get_data(cur).no_race.lock();
+                if (get_data(cur).time_end_flag || get_data(cur).awake_check != awake_check) {
+                    get_data(cur).no_race.unlock();
                     resume_task.pop_back();
                 } else {
                     tsk = cur;
@@ -143,34 +222,46 @@ namespace fast_task {
                 return;
         }
         bool to_yield = false;
-        std::lock_guard guard_loc(tsk->no_race, std::adopt_lock);
+        fast_task::lock_guard guard_loc(get_data(tsk).no_race, fast_task::adopt_lock);
         {
-            tsk->awaked = true;
-            std::lock_guard guard(glob.task_thread_safety);
+            get_data(tsk).awaked = true;
+            fast_task::lock_guard guard(glob.task_thread_safety);
             if (task::max_running_tasks && loc.is_task_thread) {
-                if (can_be_scheduled_task_to_hot() && loc.curr_task && !loc.curr_task->end_of_life)
+                if (can_be_scheduled_task_to_hot() && loc.curr_task && !get_data(loc.curr_task).end_of_life)
                     to_yield = true;
             }
             transfer_task(tsk);
         }
         if (to_yield)
-            task::yield();
+            this_task::yield();
     }
 
     bool task_condition_variable::has_waiters() {
-        std::lock_guard guard(no_race);
+        fast_task::lock_guard guard(no_race);
         return !resume_task.empty();
     }
 
-    void task_condition_variable::callback(std::unique_lock<mutex_unify>& mut, const std::shared_ptr<task>& task) {
-        if (task->started)
+    void task_condition_variable::callback(fast_task::unique_lock<mutex_unify>& mut, const std::shared_ptr<task>& task) {
+        if (get_data(task).started)
             throw std::logic_error("Task already started");
-        if (mut.mutex()->nmut == &no_race) {
-            resume_task.emplace_back(task, task->awake_check);
+        if (*mut.mutex() == no_race) {
+            resume_task.emplace_back(task, get_data(task).awake_check);
         } else {
-            std::lock_guard guard(no_race);
-            resume_task.emplace_back(task, task->awake_check);
+            fast_task::lock_guard guard(no_race);
+            resume_task.emplace_back(task, get_data(task).awake_check);
         }
-        task->started = true;
+        get_data(task).started = true;
+    }
+
+    void task_condition_variable::callback(std::unique_lock<mutex_unify>& mut, const std::shared_ptr<task>& task) {
+        if (get_data(task).started)
+            throw std::logic_error("Task already started");
+        if (*mut.mutex() == no_race) {
+            resume_task.emplace_back(task, get_data(task).awake_check);
+        } else {
+            fast_task::lock_guard guard(no_race);
+            resume_task.emplace_back(task, get_data(task).awake_check);
+        }
+        get_data(task).started = true;
     }
 }

@@ -366,7 +366,7 @@ namespace fast_task::networking {
             operation(tcp_handle_2* self, const std::shared_ptr<task_mutex>& lock, util::native_worker_manager* manager) : self(self), cv_mutex(lock), util::native_worker_handle(manager) {}
 
             void handle(void* _, unsigned long dwBytesTransferred, util::native_worker_handle* overlapped) {
-                std::unique_lock lock(*cv_mutex);
+                fast_task::unique_lock lock(*cv_mutex);
                 auto res = static_cast<operation*>(overlapped);
                 res->transferred = dwBytesTransferred;
                 res->cv.notify_all();
@@ -393,7 +393,7 @@ namespace fast_task::networking {
         }
 
         uint32_t bytes_available_count() {
-            std::unique_lock lock(*cv_mutex);
+            fast_task::unique_lock lock(*cv_mutex);
             if (temp_read_buffer)
                 return std::min<size_t>(temp_read_buffer->size(), UINT32_MAX);
             DWORD value = 0;
@@ -417,7 +417,7 @@ namespace fast_task::networking {
             op->buffer.len = len;
             DWORD sent = 0;
             mutex_unify mutex(*cv_mutex);
-            std::unique_lock lock(mutex);
+            fast_task::unique_lock lock(mutex);
             auto res = WSASend(socket, &op->buffer, 1, &sent, 0, &op->overlapped, NULL);
             if (res) {
                 if (!handle_error(lock, invalid_reason))
@@ -438,7 +438,7 @@ namespace fast_task::networking {
             readed = 0;
             DWORD flags = 0, recvd = 0;
             mutex_unify mutex(*cv_mutex);
-            std::unique_lock lock(mutex);
+            fast_task::unique_lock lock(mutex);
             if (temp_read_buffer) {
                 if (!delayed_buffer_clean) {
                     auto to_read = std::min<size_t>(temp_read_buffer->size(), buffer_len);
@@ -479,7 +479,7 @@ namespace fast_task::networking {
                 return nullptr;
             }
             bool reuse_buf = false;
-            std::unique_lock lock(*cv_mutex);
+            fast_task::unique_lock lock(*cv_mutex);
             if (temp_read_buffer) {
                 if (!delayed_buffer_clean) {
                     readed = temp_read_buffer->size();
@@ -514,7 +514,7 @@ namespace fast_task::networking {
             }
         }
 
-        void close(std::unique_lock<mutex_unify>& lock, TcpError err = TcpError::local_close) {
+        void close(fast_task::unique_lock<mutex_unify>& lock, TcpError err = TcpError::local_close) {
             if (!valid())
                 return;
             invalid_reason = err;
@@ -523,7 +523,7 @@ namespace fast_task::networking {
 
         void close(TcpError err = TcpError::local_close) {
             mutex_unify mutex(*cv_mutex);
-            std::unique_lock lock(mutex);
+            fast_task::unique_lock lock(mutex);
             close(lock, err);
         }
 
@@ -594,7 +594,7 @@ namespace fast_task::networking {
 
         void reset() {
             mutex_unify mutex(*cv_mutex);
-            std::unique_lock lock(mutex);
+            fast_task::unique_lock lock(mutex);
             if (!valid())
                 return;
             invalid_reason = TcpError::local_reset;
@@ -603,7 +603,7 @@ namespace fast_task::networking {
 
         void connection_reset() {
             mutex_unify mutex(*cv_mutex);
-            std::unique_lock lock(mutex);
+            fast_task::unique_lock lock(mutex);
             invalid_reason = TcpError::remote_close;
             internal_close(lock);
         }
@@ -615,14 +615,14 @@ namespace fast_task::networking {
                 buffer_len = 0x1000;
             if (buffer_len == buffer_size)
                 return;
-            std::unique_lock lock(*cv_mutex);
+            fast_task::unique_lock lock(*cv_mutex);
             if (!valid())
                 return;
             buffer_size = buffer_len;
         }
 
     private:
-        void internal_close(std::unique_lock<mutex_unify>& lock) {
+        void internal_close(fast_task::unique_lock<mutex_unify>& lock) {
             auto op = std::make_unique<operation>(this, cv_mutex, manager);
             op->close_flag = true;
             shutdown(socket, SD_BOTH);
@@ -635,7 +635,7 @@ namespace fast_task::networking {
             socket = INVALID_SOCKET;
         }
 
-        bool handle_error(std::unique_lock<mutex_unify>& lock, TcpError& invalid_reason) {
+        bool handle_error(fast_task::unique_lock<mutex_unify>& lock, TcpError& invalid_reason) {
             auto error = WSAGetLastError();
             if (WSA_IO_PENDING == error)
                 return true;
@@ -665,7 +665,7 @@ namespace fast_task::networking {
             op->overlapped.Offset = offset & 0xFFFFFFFF;
             op->overlapped.OffsetHigh = offset >> 32;
             mutex_unify mutex(*cv_mutex);
-            std::unique_lock lock(mutex);
+            fast_task::unique_lock lock(mutex);
             if (!valid())
                 return false;
             bool res = _TransmitFile(sock, FILE, block, chunks_size, &op->overlapped, NULL, TF_USE_KERNEL_APC | TF_WRITE_BEHIND);
@@ -857,14 +857,14 @@ namespace fast_task::networking {
             : handle(handle), last_error(TcpError::none) {}
 
         ~TcpNetworkBlockingImpl() override {
-            std::lock_guard lg(mutex);
+            fast_task::lock_guard lg(mutex);
             if (handle)
                 delete handle;
             handle = nullptr;
         }
 
         std::vector<char> read(uint32_t len) override {
-            std::lock_guard lg(mutex);
+            fast_task::lock_guard lg(mutex);
             if (handle) {
                 if (!checkup())
                     return {};
@@ -881,14 +881,14 @@ namespace fast_task::networking {
         }
 
         uint32_t available_bytes() override {
-            std::lock_guard lg(mutex);
+            fast_task::lock_guard lg(mutex);
             if (handle)
                 return handle->bytes_available_count();
             return 0ui32;
         }
 
         int64_t write(const char* data, uint32_t len) override {
-            std::lock_guard lg(mutex);
+            fast_task::lock_guard lg(mutex);
             if (handle) {
                 if (!checkup())
                     return 0;
@@ -898,7 +898,7 @@ namespace fast_task::networking {
         }
 
         bool write_file(char* path, size_t len, uint64_t data_len, uint64_t offset, uint32_t block_size) override {
-            std::lock_guard lg(mutex);
+            fast_task::lock_guard lg(mutex);
             if (handle) {
                 if (!checkup())
                     return false;
@@ -908,7 +908,7 @@ namespace fast_task::networking {
         }
 
         bool write_file(void* fhandle, uint64_t data_len, uint64_t offset, uint32_t block_size) override {
-            std::lock_guard lg(mutex);
+            fast_task::lock_guard lg(mutex);
             if (handle) {
                 if (!checkup())
                     return false;
@@ -918,7 +918,7 @@ namespace fast_task::networking {
         }
 
         void close() override {
-            std::lock_guard lg(mutex);
+            fast_task::lock_guard lg(mutex);
             if (handle) {
                 handle->close();
                 last_error = handle->invalid_reason;
@@ -928,7 +928,7 @@ namespace fast_task::networking {
         }
 
         void reset() override {
-            std::lock_guard lg(mutex);
+            fast_task::lock_guard lg(mutex);
             if (handle) {
                 handle->reset();
                 last_error = handle->invalid_reason;
@@ -938,13 +938,13 @@ namespace fast_task::networking {
         }
 
         void rebuffer(size_t new_size) override {
-            std::lock_guard lg(mutex);
+            fast_task::lock_guard lg(mutex);
             if (handle)
                 handle->rebuffer(new_size);
         }
 
         bool is_closed() override {
-            std::lock_guard lg(mutex);
+            fast_task::lock_guard lg(mutex);
             if (handle) {
                 bool res = handle->valid();
                 if (!res) {
@@ -958,14 +958,14 @@ namespace fast_task::networking {
         }
 
         TcpError error() override {
-            std::lock_guard lg(mutex);
+            fast_task::lock_guard lg(mutex);
             if (handle)
                 return handle->invalid_reason;
             return last_error;
         }
 
         address local_address() override {
-            std::lock_guard lg(mutex);
+            fast_task::lock_guard lg(mutex);
             if (!handle)
                 return {};
             universal_address addr;
@@ -976,7 +976,7 @@ namespace fast_task::networking {
         }
 
         address remote_address() override {
-            std::lock_guard lg(mutex);
+            fast_task::lock_guard lg(mutex);
             if (!handle)
                 return {};
             universal_address addr;
@@ -1063,12 +1063,13 @@ namespace fast_task::networking {
         }
 
         void accepted(tcp_handle_2* self, address&& clientAddr, address&& localAddr) {
-            if (!allow_new_connections) {
-                delete self;
-                return;
-            }
-            std::lock_guard guard(safety);
-            task::run([handler_fn = this->handler_fn, self, clientAddr = std::move(clientAddr), localAddr = std::move(localAddr)]() {
+
+            fast_task::lock_guard guard(safety);
+            task::run([handler_fn = this->handler_fn, self, clientAddr = std::move(clientAddr), localAddr = std::move(localAddr), allow_new_connections = this->allow_new_connections]() {
+                if (!allow_new_connections) {
+                    delete self;
+                    return;
+                }
                 std::visit(
                     [&](auto&& f) {
                         using T = std::decay_t<decltype(f)>;
@@ -1086,6 +1087,20 @@ namespace fast_task::networking {
         }
 
         void new_connection(tcp_handle_2::operation* op, tcp_handle_2& data, bool good) {
+            if (!good) {
+                closesocket(data.socket);
+                data.socket = INVALID_SOCKET;
+                if (!data.bound)
+                    delete &data;
+                else{
+                    fast_task::lock_guard guard(*data.cv_mutex);
+                    op->cv.notify_all();
+                }
+
+                if (!disabled)
+                    make_acceptEx();
+                return;
+            }
             if (!data.bound)
                 make_acceptEx();
 
@@ -1099,8 +1114,13 @@ namespace fast_task::networking {
             if (accept_filter) {
                 if (accept_filter(clientAddress, localAddress)) {
                     closesocket(data.socket);
+                    data.socket = INVALID_SOCKET;
                     if (!data.bound)
                         delete &data;
+                    else {
+                        fast_task::lock_guard guard(*data.cv_mutex);
+                        op->cv.notify_all();
+                    }
                     return;
                 }
             }
@@ -1113,7 +1133,7 @@ namespace fast_task::networking {
             }
 
             if (data.bound) {
-                std::lock_guard guard(*data.cv_mutex);
+                fast_task::lock_guard guard(*data.cv_mutex);
                 op->cv.notify_all();
             } else {
                 accepted(&data, std::move(clientAddress), std::move(localAddress));
@@ -1237,7 +1257,7 @@ namespace fast_task::networking {
             else {
                 if (!data.close_flag)
                     data.self->connection_reset();
-                std::lock_guard lock(*data.cv_mutex);
+                fast_task::lock_guard lock(*data.cv_mutex);
                 data.cv.notify_all();
             }
         }
@@ -1245,28 +1265,28 @@ namespace fast_task::networking {
         void set_configuration(const TcpConfiguration& tcp) {
             if (corrupted)
                 throw std::runtime_error("TcpNetworkManager is corrupted");
-            std::lock_guard lock(safety);
+            fast_task::lock_guard lock(safety);
             config = tcp;
         }
 
         void set_on_connect(std::function<void(TcpNetworkStream&)> handler_fn) {
             if (corrupted)
                 throw std::runtime_error("TcpNetworkManager is corrupted");
-            std::lock_guard lock(safety);
+            fast_task::lock_guard lock(safety);
             this->handler_fn = handler_fn;
         }
 
         void set_on_connect(std::function<void(TcpNetworkBlocking&)> handler_fn) {
             if (corrupted)
                 throw std::runtime_error("TcpNetworkManager is corrupted");
-            std::lock_guard lock(safety);
+            fast_task::lock_guard lock(safety);
             this->handler_fn = handler_fn;
         }
 
         void shutdown() {
             if (corrupted)
                 throw std::runtime_error("TcpNetworkManager is corrupted");
-            std::lock_guard lock(safety);
+            fast_task::lock_guard lock(safety);
             if (disabled)
                 return;
             if (closesocket(main_socket) == SOCKET_ERROR)
@@ -1291,7 +1311,7 @@ namespace fast_task::networking {
         void start() {
             if (corrupted)
                 throw std::runtime_error("TcpNetworkManager is corrupted");
-            std::lock_guard lock(safety);
+            fast_task::lock_guard lock(safety);
             allow_new_connections = true;
             if (!disabled)
                 return;
@@ -1315,7 +1335,7 @@ namespace fast_task::networking {
                 throw std::runtime_error("TcpNetworkManager is paused");
             tcp_handle_2* data = new tcp_handle_2(0, config.buffer_size, this);
             mutex_unify um(*data->cv_mutex);
-            std::unique_lock lock(um);
+            fast_task::unique_lock lock(um);
             data->bound = true;
             auto res = make_acceptEx(data);
             res->cv.wait(lock);
@@ -1332,7 +1352,7 @@ namespace fast_task::networking {
 
         void _await() {
             mutex_unify um(safety);
-            std::unique_lock lock(um);
+            fast_task::unique_lock lock(um);
             if (corrupted)
                 throw std::runtime_error("TcpNetworkManager is corrupted");
             while (!disabled)
@@ -1342,7 +1362,7 @@ namespace fast_task::networking {
         void set_accept_filter(std::function<bool(address&, address&)>&& filter) {
             if (corrupted)
                 throw std::runtime_error("TcpNetworkManager is corrupted");
-            std::lock_guard lock(safety);
+            fast_task::lock_guard lock(safety);
             this->accept_filter = std::move(filter);
         }
 
@@ -1455,7 +1475,7 @@ namespace fast_task::networking {
         void handle(void* _data, util::native_worker_handle* overlapped, unsigned long dwBytesTransferred, bool status) override {
             auto& data = *(tcp_handle_2::operation*)overlapped;
             if (data.accept_flag) {
-                std::lock_guard lock(*data.cv_mutex);
+                fast_task::lock_guard lock(*data.cv_mutex);
                 data.transferred = dwBytesTransferred;
                 data.cv.notify_all();
             } else if (!((FALSE == status) || ((true == status) && (0 == dwBytesTransferred))))
@@ -1481,7 +1501,7 @@ namespace fast_task::networking {
             auto op = std::make_unique<tcp_handle_2::operation>(_handle, std::make_shared<task_mutex>(), this);
             op->accept_flag = true;
             mutex_unify umutex(*_handle->cv_mutex);
-            std::unique_lock<mutex_unify> lock(umutex);
+            fast_task::unique_lock<mutex_unify> lock(umutex);
             if (!_ConnectEx(clientSocket, (sockaddr*)&connectionAddress, sizeof(connectionAddress), NULL, 0, nullptr, (OVERLAPPED*)&op->overlapped)) {
                 auto err = WSAGetLastError();
                 if (err != ERROR_IO_PENDING) {
@@ -1526,7 +1546,7 @@ namespace fast_task::networking {
             op->buffer.buf = data;
             op->buffer.len = len;
             mutex_unify umutex(*_handle->cv_mutex);
-            std::unique_lock<mutex_unify> lock(umutex);
+            fast_task::unique_lock<mutex_unify> lock(umutex);
             if (!_ConnectEx(clientSocket, (sockaddr*)&connectionAddress, sizeof(connectionAddress), data, len, nullptr, (OVERLAPPED*)&op->overlapped)) {
                 auto err = WSAGetLastError();
                 if (err != ERROR_IO_PENDING) {
@@ -1564,7 +1584,7 @@ namespace fast_task::networking {
         int32_t read(char* data, int32_t len) {
             if (corrupted)
                 throw std::runtime_error("TcpClientManager::read, corrupted");
-            std::lock_guard<task_mutex> lock(mutex);
+            fast_task::lock_guard<task_mutex> lock(mutex);
             int32_t readed = 0;
             _handle->read(data, len, readed);
             return readed;
@@ -1573,7 +1593,7 @@ namespace fast_task::networking {
         bool write(const char* data, int32_t len) {
             if (corrupted)
                 throw std::runtime_error("TcpClientManager::write, corrupted");
-            std::lock_guard<task_mutex> lock(mutex);
+            fast_task::lock_guard<task_mutex> lock(mutex);
             _handle->send(data, len);
             return _handle->valid();
         }
@@ -1581,28 +1601,28 @@ namespace fast_task::networking {
         bool write_file(const char* path, size_t len, uint64_t data_len, uint64_t offset, uint32_t chunks_size) {
             if (corrupted)
                 throw std::runtime_error("TcpClientManager::write_file, corrupted");
-            std::lock_guard<task_mutex> lock(mutex);
+            fast_task::lock_guard<task_mutex> lock(mutex);
             return _handle->send_file(path, len, data_len, offset, chunks_size);
         }
 
         bool write_file(void* handle, uint64_t data_len, uint64_t offset, uint32_t chunks_size) {
             if (corrupted)
                 throw std::runtime_error("TcpClientManager::write_file, corrupted");
-            std::lock_guard<task_mutex> lock(mutex);
+            fast_task::lock_guard<task_mutex> lock(mutex);
             return _handle->send_file(handle, data_len, offset, chunks_size);
         }
 
         void close() {
             if (corrupted)
                 throw std::runtime_error("TcpClientManager::close, corrupted");
-            std::lock_guard<task_mutex> lock(mutex);
+            fast_task::lock_guard<task_mutex> lock(mutex);
             _handle->close();
         }
 
         void reset() {
             if (corrupted)
                 throw std::runtime_error("TcpClientManager::close, corrupted");
-            std::lock_guard<task_mutex> lock(mutex);
+            fast_task::lock_guard<task_mutex> lock(mutex);
             _handle->reset();
         }
 
@@ -1613,7 +1633,7 @@ namespace fast_task::networking {
         void rebuffer(uint32_t size) {
             if (corrupted)
                 throw std::runtime_error("TcpClientManager::rebuffer, corrupted");
-            std::lock_guard<task_mutex> lock(mutex);
+            fast_task::lock_guard<task_mutex> lock(mutex);
             _handle->rebuffer(size);
         }
     };
@@ -1648,7 +1668,7 @@ namespace fast_task::networking {
             this->fullifed_bytes = fullifed_bytes;
             this->status = status;
             last_error = GetLastError();
-            task::start(notify_task);
+            scheduler::start(notify_task);
         }
 
         void recv(uint8_t* data, uint32_t size, sockaddr_storage& sender, int& sender_len) {
@@ -1928,7 +1948,7 @@ namespace fast_task::networking {
 
             if (read_queue.empty()) {
                 mutex_unify mutex(cv_mutex);
-                std::unique_lock<mutex_unify> lock(mutex);
+                fast_task::unique_lock<mutex_unify> lock(mutex);
                 opcode = Opcode::READ;
                 read();
                 cv.wait(lock);
@@ -2017,7 +2037,7 @@ namespace fast_task::networking {
                 }
             }
             mutex_unify mutex(cv_mutex);
-            std::unique_lock<mutex_unify> lock(mutex);
+            fast_task::unique_lock<mutex_unify> lock(mutex);
             switch (opcode) {
             case Opcode::READ: {
                 readed_bytes = dwBytesTransferred;
@@ -2161,7 +2181,7 @@ namespace fast_task::networking {
 
         void connection_reset() {
             mutex_unify mutex(cv_mutex);
-            std::unique_lock<mutex_unify> lock(mutex);
+            fast_task::unique_lock<mutex_unify> lock(mutex);
             char* old_data = data;
             data = nullptr;
             invalid_reason = TcpError::remote_close;
@@ -2192,7 +2212,7 @@ namespace fast_task::networking {
             if (stop_write)
                 method = SHUT_WR;
             mutex_unify mutex(cv_mutex);
-            std::unique_lock<mutex_unify> lock(mutex);
+            fast_task::unique_lock<mutex_unify> lock(mutex);
             opcode = Opcode::INTERNAL_CLOSE;
             util::native_workers_singleton::post_shutdown(this, socket, method);
             cv.wait(lock);
@@ -2201,7 +2221,7 @@ namespace fast_task::networking {
     private:
         void pre_close(TcpError err, bool handle_error = false) {
             mutex_unify mutex(cv_mutex);
-            std::unique_lock<mutex_unify> lock(mutex);
+            fast_task::unique_lock<mutex_unify> lock(mutex);
             opcode = Opcode::INTERNAL_CLOSE;
             if (handle_error) {
                 util::native_workers_singleton::post_shutdown(this, socket, SHUT_RDWR);
@@ -2227,7 +2247,7 @@ namespace fast_task::networking {
 
         void internal_close() {
             mutex_unify mutex(cv_mutex);
-            std::unique_lock<mutex_unify> lock(mutex);
+            fast_task::unique_lock<mutex_unify> lock(mutex);
             opcode = Opcode::INTERNAL_CLOSE;
             util::native_workers_singleton::post_close(this, socket);
             cv.wait(lock);
@@ -2247,7 +2267,7 @@ namespace fast_task::networking {
 
         bool send_await() {
             mutex_unify mutex(cv_mutex);
-            std::unique_lock<mutex_unify> lock(mutex);
+            fast_task::unique_lock<mutex_unify> lock(mutex);
             send();
             cv.wait(lock);
             return data; //if data is null, then socket is closed
@@ -2319,7 +2339,7 @@ namespace fast_task::networking {
 
         ~TcpNetworkStreamImpl() {
             if (handle) {
-                std::lock_guard lg(mutex);
+                fast_task::lock_guard lg(mutex);
                 handle->close();
                 delete handle;
             }
@@ -2327,7 +2347,7 @@ namespace fast_task::networking {
         }
 
         std::span<char> read_available_ref() override {
-            std::lock_guard lg(mutex);
+            fast_task::lock_guard lg(mutex);
             if (!handle)
                 return {};
             while (!handle->data_available()) {
@@ -2342,7 +2362,7 @@ namespace fast_task::networking {
         }
 
         int read_available(char* buffer, int buffer_len) override {
-            std::lock_guard lg(mutex);
+            fast_task::lock_guard lg(mutex);
             if (!handle)
                 return 0;
             while (!handle->data_available()) {
@@ -2358,14 +2378,14 @@ namespace fast_task::networking {
         }
 
         bool data_available() override {
-            std::lock_guard lg(mutex);
+            fast_task::lock_guard lg(mutex);
             if (handle)
                 return handle->data_available();
             return false;
         }
 
         void write(const char* data, size_t size) override {
-            std::lock_guard lg(mutex);
+            fast_task::lock_guard lg(mutex);
             if (handle) {
                 handle->send_data(data, size);
                 while (!handle->data_available()) {
@@ -2377,7 +2397,7 @@ namespace fast_task::networking {
         }
 
         bool write_file(char* path, size_t path_len, uint64_t data_len, uint64_t offset, uint32_t chunks_size) override {
-            std::lock_guard lg(mutex);
+            fast_task::lock_guard lg(mutex);
             if (handle) {
                 while (handle->valid())
                     if (!handle->send_queue_item())
@@ -2392,7 +2412,7 @@ namespace fast_task::networking {
         }
 
         bool write_file(int fhandle, uint64_t data_len, uint64_t offset, uint32_t chunks_size) override {
-            std::lock_guard lg(mutex);
+            fast_task::lock_guard lg(mutex);
             if (handle) {
                 while (handle->valid())
                     if (!handle->send_queue_item())
@@ -2406,7 +2426,7 @@ namespace fast_task::networking {
 
         //write all data from write_queue
         void force_write() override {
-            std::lock_guard lg(mutex);
+            fast_task::lock_guard lg(mutex);
             if (handle) {
                 while (handle->valid())
                     if (!handle->send_queue_item())
@@ -2416,7 +2436,7 @@ namespace fast_task::networking {
         }
 
         void force_write_and_close(const char* data, size_t size) override {
-            std::lock_guard lg(mutex);
+            fast_task::lock_guard lg(mutex);
             if (handle) {
                 handle->send_and_close(data, size);
                 last_error = handle->invalid_reason;
@@ -2426,7 +2446,7 @@ namespace fast_task::networking {
         }
 
         void close() override {
-            std::lock_guard lg(mutex);
+            fast_task::lock_guard lg(mutex);
             if (handle) {
                 handle->close();
                 last_error = handle->invalid_reason;
@@ -2436,7 +2456,7 @@ namespace fast_task::networking {
         }
 
         void reset() override {
-            std::lock_guard lg(mutex);
+            fast_task::lock_guard lg(mutex);
             if (handle) {
                 handle->reset();
                 last_error = handle->invalid_reason;
@@ -2446,13 +2466,13 @@ namespace fast_task::networking {
         }
 
         void rebuffer(int32_t new_size) override {
-            std::lock_guard lg(mutex);
+            fast_task::lock_guard lg(mutex);
             if (handle)
                 handle->rebuffer(new_size);
         }
 
         bool is_closed() override {
-            std::lock_guard lg(mutex);
+            fast_task::lock_guard lg(mutex);
             if (handle) {
                 bool res = handle->valid();
                 if (!res) {
@@ -2465,14 +2485,14 @@ namespace fast_task::networking {
         }
 
         TcpError error() override {
-            std::lock_guard lg(mutex);
+            fast_task::lock_guard lg(mutex);
             if (handle)
                 return handle->invalid_reason;
             return last_error;
         }
 
         address local_address() override {
-            std::lock_guard lg(mutex);
+            fast_task::lock_guard lg(mutex);
             if (!handle)
                 return {};
             universal_address addr;
@@ -2483,7 +2503,7 @@ namespace fast_task::networking {
         }
 
         address remote_address() override {
-            std::lock_guard lg(mutex);
+            fast_task::lock_guard lg(mutex);
             if (!handle)
                 return {};
             universal_address addr;
@@ -2521,14 +2541,14 @@ namespace fast_task::networking {
             : handle(handle), last_error(TcpError::none) {}
 
         ~TcpNetworkBlockingImpl() {
-            std::lock_guard lg(mutex);
+            fast_task::lock_guard lg(mutex);
             if (handle)
                 delete handle;
             handle = nullptr;
         }
 
         std::vector<char> read(uint32_t len) override {
-            std::lock_guard lg(mutex);
+            fast_task::lock_guard lg(mutex);
             if (handle) {
                 if (!checkup())
                     return {};
@@ -2545,14 +2565,14 @@ namespace fast_task::networking {
         }
 
         uint32_t available_bytes() override {
-            std::lock_guard lg(mutex);
+            fast_task::lock_guard lg(mutex);
             if (handle)
                 return handle->available_bytes();
             return (uint32_t)0;
         }
 
         int64_t write(const char* data, uint32_t len) override {
-            std::lock_guard lg(mutex);
+            fast_task::lock_guard lg(mutex);
             if (handle) {
                 if (!checkup())
                     return nullptr;
@@ -2562,7 +2582,7 @@ namespace fast_task::networking {
         }
 
         bool write_file(char* path, size_t len, uint64_t data_len, uint64_t offset, uint32_t block_size) override {
-            std::lock_guard lg(mutex);
+            fast_task::lock_guard lg(mutex);
             if (handle) {
                 if (!checkup())
                     return false;
@@ -2572,7 +2592,7 @@ namespace fast_task::networking {
         }
 
         bool write_file(int fhandle, uint64_t data_len, uint64_t offset, uint32_t block_size) override {
-            std::lock_guard lg(mutex);
+            fast_task::lock_guard lg(mutex);
             if (handle) {
                 if (!checkup())
                     return false;
@@ -2582,7 +2602,7 @@ namespace fast_task::networking {
         }
 
         void close() override {
-            std::lock_guard lg(mutex);
+            fast_task::lock_guard lg(mutex);
             if (handle) {
                 handle->close();
                 last_error = handle->invalid_reason;
@@ -2592,7 +2612,7 @@ namespace fast_task::networking {
         }
 
         void reset() override {
-            std::lock_guard lg(mutex);
+            fast_task::lock_guard lg(mutex);
             if (handle) {
                 handle->reset();
                 last_error = handle->invalid_reason;
@@ -2602,13 +2622,13 @@ namespace fast_task::networking {
         }
 
         void rebuffer(size_t new_size) override {
-            std::lock_guard lg(mutex);
+            fast_task::lock_guard lg(mutex);
             if (handle)
                 handle->rebuffer(new_size);
         }
 
         bool is_closed() override {
-            std::lock_guard lg(mutex);
+            fast_task::lock_guard lg(mutex);
             if (handle) {
                 bool res = handle->valid();
                 if (!res) {
@@ -2622,14 +2642,14 @@ namespace fast_task::networking {
         }
 
         TcpError error() override {
-            std::lock_guard lg(mutex);
+            fast_task::lock_guard lg(mutex);
             if (handle)
                 return handle->invalid_reason;
             return last_error;
         }
 
         address local_address() override {
-            std::lock_guard lg(mutex);
+            fast_task::lock_guard lg(mutex);
             if (!handle)
                 return {};
             universal_address addr;
@@ -2640,7 +2660,7 @@ namespace fast_task::networking {
         }
 
         address remote_address() override {
-            std::lock_guard lg(mutex);
+            fast_task::lock_guard lg(mutex);
             if (!handle)
                 return {};
             universal_address addr;
@@ -2685,7 +2705,7 @@ namespace fast_task::networking {
                 delete self;
                 return;
             }
-            std::lock_guard guard(safety);
+            fast_task::lock_guard guard(safety);
             task::run([handler_fn = this->handler_fn, self, clientAddr = std::move(clientAddr), localAddr = std::move(localAddr)]() {
                 std::visit(
                     [&](auto&& f) {
@@ -2704,12 +2724,15 @@ namespace fast_task::networking {
         }
 
         void accept_bounded(tcp_handle& data, SOCKET client_socket) {
-            std::lock_guard guard(data.cv_mutex);
+            fast_task::lock_guard guard(data.cv_mutex);
             data.socket = client_socket;
             data.cv.notify_all();
         }
 
-        void new_connection(tcp_handle& data, SOCKET client_socket) {
+        void new_connection(tcp_handle& data, SOCKET client_socket, int socket_error) {
+            if (socket_error){
+
+            }
             if (!allow_new_connections) {
                 util::native_workers_singleton::post_accept(&data, main_socket, nullptr, nullptr, 0);
                 close(client_socket);
@@ -2848,7 +2871,7 @@ namespace fast_task::networking {
             if (cqe->res < 0)
                 data.aerrno = -cqe->res;
             if (data.opcode == tcp_handle::Opcode::ACCEPT)
-                new_connection(data, cqe->res);
+                new_connection(data, cqe->res, cqe->res < 0 ? -cqe->res : 0);
             else
                 data.handle(cqe->res < 0 ? 0 : cqe->res, cqe->res < 0 ? -cqe->res : 0);
         }
@@ -2856,26 +2879,26 @@ namespace fast_task::networking {
         void set_on_connect(std::function<void(TcpNetworkStream&)> handler_fn) {
             if (corrupted)
                 throw std::runtime_error("TcpNetworkManager is corrupted");
-            std::lock_guard lock(safety);
+            fast_task::lock_guard lock(safety);
             this->handler_fn = handler_fn;
         }
 
         void set_on_connect(std::function<void(TcpNetworkBlocking&)> handler_fn) {
             if (corrupted)
                 throw std::runtime_error("TcpNetworkManager is corrupted");
-            std::lock_guard lock(safety);
+            fast_task::lock_guard lock(safety);
             this->handler_fn = handler_fn;
         }
 
         void shutdown() {
             if (corrupted)
                 throw std::runtime_error("TcpNetworkManager is corrupted");
-            std::lock_guard lock(safety);
+            fast_task::lock_guard lock(safety);
             if (disabled)
                 return;
             tcp_handle* data = new tcp_handle(main_socket, 0, this, 0);
             mutex_unify mutex(data->cv_mutex);
-            std::unique_lock lock2(mutex);
+            fast_task::unique_lock lock2(mutex);
             util::native_workers_singleton::post_shutdown(data, main_socket, SHUT_RDWR);
             data->cv.wait(lock2);
             allow_new_connections = false;
@@ -2898,7 +2921,7 @@ namespace fast_task::networking {
         void start() {
             if (corrupted)
                 throw std::runtime_error("TcpNetworkManager is corrupted");
-            std::lock_guard lock(safety);
+            fast_task::lock_guard lock(safety);
             allow_new_connections = true;
             if (!disabled)
                 return;
@@ -2923,7 +2946,7 @@ namespace fast_task::networking {
 
             tcp_handle* data = new tcp_handle(0, config.buffer_size, this, 0);
             mutex_unify mutex(data->cv_mutex);
-            std::unique_lock lock(mutex);
+            fast_task::unique_lock lock(mutex);
             data->is_bound = true;
             data->opcode = tcp_handle::Opcode::ACCEPT;
             util::native_workers_singleton::post_accept(data, main_socket, nullptr, nullptr, 0);
@@ -2941,7 +2964,7 @@ namespace fast_task::networking {
 
         void _await() {
             mutex_unify um(safety);
-            std::unique_lock lock(um);
+            fast_task::unique_lock lock(um);
             if (corrupted)
                 throw std::runtime_error("TcpNetworkManager is corrupted");
             while (!disabled)
@@ -2957,7 +2980,7 @@ namespace fast_task::networking {
         void set_accept_filter(std::function<bool(address&, address&)>&& filter) {
             if (corrupted)
                 throw std::runtime_error("TcpNetworkManager is corrupted");
-            std::lock_guard lock(safety);
+            fast_task::lock_guard lock(safety);
             this->accept_filter = std::move(filter);
         }
 
@@ -3063,7 +3086,7 @@ namespace fast_task::networking {
             }
             _handle = new tcp_handle(clientSocket, config.buffer_size, this);
             mutex_unify umutex(_handle->cv_mutex);
-            std::unique_lock<mutex_unify> lock(umutex);
+            fast_task::unique_lock<mutex_unify> lock(umutex);
             util::native_workers_singleton::post_connect(_handle, clientSocket, (sockaddr*)&connectionAddress, sizeof(connectionAddress));
             if (config.connection_timeout_ms > 0) {
                 if (!_handle->cv.wait_for(lock, config.connection_timeout_ms)) {
@@ -3137,7 +3160,7 @@ namespace fast_task::networking {
             _handle->total_bytes = len;
             _handle->opcode = tcp_handle::Opcode::WRITE;
             mutex_unify umutex(_handle->cv_mutex);
-            std::unique_lock<mutex_unify> lock(umutex);
+            fast_task::unique_lock<mutex_unify> lock(umutex);
             util::native_workers_singleton::post_sendto(_handle, clientSocket, _handle->buffer.buf, _handle->buffer.len, MSG_FASTOPEN, (sockaddr*)&connectionAddress, sizeof(connectionAddress));
             if (config.connection_timeout_ms > 0) {
                 if (!_handle->cv.wait_for(lock, config.connection_timeout_ms)) {
@@ -3212,7 +3235,7 @@ namespace fast_task::networking {
         int32_t read(char* data, int32_t len) {
             if (corrupted)
                 throw std::runtime_error("TcpClientManager::read, corrupted");
-            std::lock_guard<task_mutex> lock(mutex);
+            fast_task::lock_guard<task_mutex> lock(mutex);
             int32_t readed = 0;
             while (!_handle->available_bytes())
                 if (!_handle->send_queue_item())
@@ -3224,7 +3247,7 @@ namespace fast_task::networking {
         bool write(const char* data, int32_t len) {
             if (corrupted)
                 throw std::runtime_error("TcpClientManager::write, corrupted");
-            std::lock_guard<task_mutex> lock(mutex);
+            fast_task::lock_guard<task_mutex> lock(mutex);
             _handle->send_data(data, len);
             while (!_handle->available_bytes())
                 if (!_handle->send_queue_item())
@@ -3235,7 +3258,7 @@ namespace fast_task::networking {
         bool write_file(const char* path, size_t len, uint64_t data_len, uint64_t offset, uint32_t chunks_size) {
             if (corrupted)
                 throw std::runtime_error("TcpClientManager::write_file, corrupted");
-            std::lock_guard<task_mutex> lock(mutex);
+            fast_task::lock_guard<task_mutex> lock(mutex);
             while (!_handle->available_bytes())
                 if (!_handle->send_queue_item())
                     break;
@@ -3245,7 +3268,7 @@ namespace fast_task::networking {
         bool write_file(int handle, uint64_t data_len, uint64_t offset, uint32_t chunks_size) {
             if (corrupted)
                 throw std::runtime_error("TcpClientManager::write_file, corrupted");
-            std::lock_guard<task_mutex> lock(mutex);
+            fast_task::lock_guard<task_mutex> lock(mutex);
             while (!_handle->available_bytes())
                 if (!_handle->send_queue_item())
                     break;
@@ -3255,14 +3278,14 @@ namespace fast_task::networking {
         void close() {
             if (corrupted)
                 throw std::runtime_error("TcpClientManager::close, corrupted");
-            std::lock_guard<task_mutex> lock(mutex);
+            fast_task::lock_guard<task_mutex> lock(mutex);
             _handle->close();
         }
 
         void reset() {
             if (corrupted)
                 throw std::runtime_error("TcpClientManager::close, corrupted");
-            std::lock_guard<task_mutex> lock(mutex);
+            fast_task::lock_guard<task_mutex> lock(mutex);
             _handle->reset();
         }
 
@@ -3273,7 +3296,7 @@ namespace fast_task::networking {
         void rebuffer(uint32_t size) {
             if (corrupted)
                 throw std::runtime_error("TcpClientManager::rebuffer, corrupted");
-            std::lock_guard<task_mutex> lock(mutex);
+            fast_task::lock_guard<task_mutex> lock(mutex);
             _handle->rebuffer(size);
         }
     };
@@ -3303,7 +3326,7 @@ namespace fast_task::networking {
         void handle(util::native_worker_handle* overlapped, io_uring_cqe* cqe) override {
             this->fullifed_bytes = cqe->res > -1 ? cqe->res : 0;
             this->last_error = cqe->res > -1 ? 0 : errno;
-            task::start(notify_task);
+            scheduler::start(notify_task);
         }
 
         void recv(uint8_t* data, uint32_t size, sockaddr_storage& sender, int& sender_len) {

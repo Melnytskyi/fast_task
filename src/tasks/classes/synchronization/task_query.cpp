@@ -25,7 +25,7 @@ namespace fast_task {
     }
 
     void __TaskQuery_add_task_leave(task_query_handle* tqh) {
-        std::lock_guard lock(tqh->no_race);
+        fast_task::lock_guard lock(tqh->no_race);
         if (tqh->destructed) {
             if (tqh->at_execution_max == 0)
                 delete tqh;
@@ -37,7 +37,7 @@ namespace fast_task {
                 tqh->now_at_execution++;
                 auto awake_task = tqh->tasks.front();
                 tqh->tasks.pop_front();
-                task::start(awake_task);
+                scheduler::start(awake_task);
             }
         } else {
             tqh->now_at_execution--;
@@ -48,10 +48,10 @@ namespace fast_task {
     }
 
     void redefine_start_function(std::shared_ptr<task>& task, task_query_handle* tqh) {
-        if (task->callbacks.is_extended_mode)
+        if (get_data(task).callbacks.is_extended_mode)
             throw std::runtime_error("Extended mode does not support task queries");
-        auto old_func = std::move(task->callbacks.normal_mode.func);
-        task->callbacks.normal_mode.func = [old_func = std::move(old_func), tqh]() {
+        auto old_func = std::move(get_data(task).callbacks.normal_mode.func);
+        get_data(task).callbacks.normal_mode.func = [old_func = std::move(old_func), tqh]() {
             try {
                 old_func();
             } catch (...) {
@@ -63,65 +63,65 @@ namespace fast_task {
     }
 
     void task_query::add(std::shared_ptr<task>&& querying_task) {
-        if (querying_task->started)
+        if (get_data(querying_task).started)
             throw std::runtime_error("Task already started");
         redefine_start_function(querying_task, handle);
-        std::lock_guard lock(handle->no_race);
+        fast_task::lock_guard lock(handle->no_race);
         if (handle->is_running && handle->now_at_execution <= handle->at_execution_max) {
-            task::start(std::move(querying_task));
+            scheduler::start(std::move(querying_task));
             handle->now_at_execution++;
         } else
             handle->tasks.push_back(std::move(querying_task));
     }
 
     void task_query::add(std::shared_ptr<task>& querying_task) {
-        if (querying_task->started)
+        if (get_data(querying_task).started)
             throw std::runtime_error("Task already started");
         redefine_start_function(querying_task, handle);
-        std::lock_guard lock(handle->no_race);
+        fast_task::lock_guard lock(handle->no_race);
         if (handle->is_running && handle->now_at_execution <= handle->at_execution_max) {
-            task::start(querying_task);
+            scheduler::start(querying_task);
             handle->now_at_execution++;
         } else
             handle->tasks.push_back(querying_task);
     }
 
     void task_query::enable() {
-        std::lock_guard lock(handle->no_race);
+        fast_task::lock_guard lock(handle->no_race);
         handle->is_running = true;
         while (handle->now_at_execution < handle->at_execution_max && !handle->tasks.empty()) {
             auto awake_task = handle->tasks.front();
             handle->tasks.pop_front();
-            task::start(awake_task);
+            scheduler::start(awake_task);
             handle->now_at_execution++;
         }
     }
 
     void task_query::disable() {
-        std::lock_guard lock(handle->no_race);
+        fast_task::lock_guard lock(handle->no_race);
         handle->is_running = false;
     }
 
     bool task_query::in_query(const std::shared_ptr<task>& task) {
-        if (task->started)
+        if (get_data(task).started)
             return false;
-        std::lock_guard lock(handle->no_race);
+        fast_task::lock_guard lock(handle->no_race);
         return std::find(handle->tasks.begin(), handle->tasks.end(), task) != handle->tasks.end();
     }
 
     void task_query::set_max_at_execution(size_t val) {
-        std::lock_guard lock(handle->no_race);
+        fast_task::lock_guard lock(handle->no_race);
         handle->at_execution_max = val;
     }
 
     size_t task_query::get_max_at_execution() {
-        std::lock_guard lock(handle->no_race);
+        fast_task::lock_guard lock(handle->no_race);
         return handle->at_execution_max;
     }
 
     void task_query::wait() {
         mutex_unify unify(handle->no_race);
-        std::unique_lock lock(unify);
+        fast_task::unique_lock lock(unify);
         while (handle->now_at_execution != 0 && !handle->tasks.empty())
             handle->end_of_query.wait(lock);
     }
@@ -132,7 +132,7 @@ namespace fast_task {
 
     bool task_query::wait_until(std::chrono::high_resolution_clock::time_point time_point) {
         mutex_unify unify(handle->no_race);
-        std::unique_lock lock(unify);
+        fast_task::unique_lock lock(unify);
         while (handle->now_at_execution != 0 && !handle->tasks.empty()) {
             if (!handle->end_of_query.wait_until(lock, time_point))
                 return false;

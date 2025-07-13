@@ -4,8 +4,8 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
-#ifndef SRC_NETWORKING
-#define SRC_NETWORKING
+#ifndef FAST_TASK_NETWORKING
+#define FAST_TASK_NETWORKING
 #include "../tasks.hpp"
 #include <span>
 #include <functional>
@@ -212,4 +212,4 @@ namespace std {
         }
     };
 }
-#endif /* SRC_NETWORKING */
+#endif

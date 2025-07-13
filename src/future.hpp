@@ -1,7 +1,16 @@
-#ifndef SRC_FUTURE
-#define SRC_FUTURE
-#include "tasks.hpp"
-#include <functional>
+
+// Copyright Danyil Melnytskyi 2024-Present
+//
+// Distributed under the Boost Software License, Version 1.0.
+// (See accompanying file LICENSE or copy at
+// http://www.boost.org/LICENSE_1_0.txt)
+
+#pragma once
+#ifndef FAST_TASK_FUTURE
+    #define FAST_TASK_FUTURE
+
+    #include "tasks.hpp"
+    #include <functional>
 
 namespace fast_task {
     template <class T>
@@ -18,20 +27,20 @@ namespace fast_task {
                 try {
                     future_->result = fn();
                 } catch (const task_cancellation&) {
-                    std::lock_guard guard(future_->task_mt);
+                    fast_task::lock_guard guard(future_->task_mt);
                     future_->_is_ready = true;
                     future_->task_cv.notify_all();
                     throw;
                 } catch (...) {
                     future_->ex_ptr = std::current_exception();
                 }
-                std::lock_guard guard(future_->task_mt);
+                fast_task::lock_guard guard(future_->task_mt);
                 future_->_is_ready = true;
                 future_->task_cv.notify_all();
             });
             if (bind_id != (uint16_t)-1)
                 task_->set_worker_id(bind_id);
-            task::start(task_);
+            scheduler::start(task_);
             return future_;
         }
 
@@ -51,7 +60,7 @@ namespace fast_task {
 
         T get() {
             mutex_unify um(task_mt);
-            std::unique_lock lock(um);
+            fast_task::unique_lock lock(um);
             while (!_is_ready)
                 task_cv.wait(lock);
             if (ex_ptr)
@@ -61,7 +70,7 @@ namespace fast_task {
 
         T take() {
             mutex_unify um(task_mt);
-            std::unique_lock lock(um);
+            fast_task::unique_lock lock(um);
             while (!_is_ready)
                 task_cv.wait(lock);
             if (ex_ptr)
@@ -71,7 +80,7 @@ namespace fast_task {
 
         void when_ready(const std::function<void(T)>& fn) {
             mutex_unify um(task_mt);
-            std::unique_lock lock(um);
+            fast_task::unique_lock lock(um);
             if (_is_ready) {
                 fn(result);
             } else {
@@ -87,13 +96,13 @@ namespace fast_task {
         }
 
         bool is_ready() {
-            std::unique_lock lock(task_mt);
+            fast_task::unique_lock lock(task_mt);
             return _is_ready;
         }
 
         void wait() {
             mutex_unify um(task_mt);
-            std::unique_lock lock(um);
+            fast_task::unique_lock lock(um);
             while (!_is_ready)
                 task_cv.wait(lock);
             if (ex_ptr)
@@ -101,9 +110,9 @@ namespace fast_task {
         }
 
         template <class T>
-        void wait_with(std::unique_lock<T>& lock) {
+        void wait_with(fast_task::unique_lock<T>& lock) {
             mutex_unify um(task_mt);
-            std::unique_lock l(um);
+            fast_task::unique_lock l(um);
             lock.unlock();
             while (!_is_ready)
                 task_cv.wait(l);
@@ -112,13 +121,26 @@ namespace fast_task {
                 std::rethrow_exception(ex_ptr);
         }
 
+        template <class T>
+        void wait_with(std::unique_lock<T>& lock) {
+            mutex_unify um(task_mt);
+            fast_task::unique_lock l(um);
+            lock.unlock();
+            while (!_is_ready)
+                task_cv.wait(l);
+            lock.lock();
+            if (ex_ptr)
+                std::rethrow_exception(ex_ptr);
+        }
+
+
         bool wait_for(std::chrono::milliseconds ms) {
             return wait_until(std::chrono::high_resolution_clock::now() + ms);
         }
 
         bool wait_until(std::chrono::time_point<std::chrono::high_resolution_clock> time) {
             mutex_unify um(task_mt);
-            std::unique_lock lock(um);
+            fast_task::unique_lock lock(um);
             while (!_is_ready)
                 if (!task_cv.wait_until(lock, time))
                     return false;
@@ -129,7 +151,7 @@ namespace fast_task {
 
         void wait_no_except() {
             mutex_unify um(task_mt);
-            std::unique_lock lock(um);
+            fast_task::unique_lock lock(um);
             while (!_is_ready)
                 task_cv.wait(lock);
         }
@@ -140,7 +162,7 @@ namespace fast_task {
 
         bool wait_until_no_except(std::chrono::time_point<std::chrono::high_resolution_clock> time) {
             mutex_unify um(task_mt);
-            std::unique_lock lock(um);
+            fast_task::unique_lock lock(um);
             while (!_is_ready)
                 if (!task_cv.wait_until(lock, time))
                     return false;
@@ -165,20 +187,20 @@ namespace fast_task {
                 try {
                     fn();
                 } catch (const task_cancellation&) {
-                    std::lock_guard guard(future_->task_mt);
+                    fast_task::lock_guard guard(future_->task_mt);
                     future_->_is_ready = true;
                     future_->task_cv.notify_all();
                     throw;
                 } catch (...) {
                     future_->ex_ptr = std::current_exception();
                 }
-                std::lock_guard guard(future_->task_mt);
+                fast_task::lock_guard guard(future_->task_mt);
                 future_->_is_ready = true;
                 future_->task_cv.notify_all();
             });
             if (bind_id != (uint16_t)-1)
                 task_->set_worker_id(bind_id);
-            task::start(task_);
+            scheduler::start(task_);
             return future_;
         }
 
@@ -190,7 +212,7 @@ namespace fast_task {
 
         void get() {
             mutex_unify um(task_mt);
-            std::unique_lock lock(um);
+            fast_task::unique_lock lock(um);
             while (!_is_ready)
                 task_cv.wait(lock);
             if (ex_ptr)
@@ -203,7 +225,7 @@ namespace fast_task {
 
         void when_ready(const std::function<void()>& fn) {
             mutex_unify um(task_mt);
-            std::unique_lock lock(um);
+            fast_task::unique_lock lock(um);
             if (_is_ready) {
                 fn();
             } else {
@@ -220,7 +242,7 @@ namespace fast_task {
 
         void wait() {
             mutex_unify um(task_mt);
-            std::unique_lock lock(um);
+            fast_task::unique_lock lock(um);
             while (!_is_ready)
                 task_cv.wait(lock);
             if (ex_ptr)
@@ -228,9 +250,19 @@ namespace fast_task {
         }
 
         template <class T>
+        void wait_with(fast_task::unique_lock<T>& lock) {
+            mutex_unify um(task_mt);
+            fast_task::unique_lock l(um);
+            while (!_is_ready)
+                task_cv.wait(l);
+            if (ex_ptr)
+                std::rethrow_exception(ex_ptr);
+        }
+
+        template <class T>
         void wait_with(std::unique_lock<T>& lock) {
             mutex_unify um(task_mt);
-            std::unique_lock l(um);
+            fast_task::unique_lock l(um);
             while (!_is_ready)
                 task_cv.wait(l);
             if (ex_ptr)
@@ -243,7 +275,7 @@ namespace fast_task {
 
         bool wait_until(std::chrono::time_point<std::chrono::high_resolution_clock> time) {
             mutex_unify um(task_mt);
-            std::unique_lock lock(um);
+            fast_task::unique_lock lock(um);
             while (!_is_ready)
                 if (!task_cv.wait_until(lock, time))
                     return false;
@@ -254,7 +286,7 @@ namespace fast_task {
 
         void wait_no_except() {
             mutex_unify um(task_mt);
-            std::unique_lock lock(um);
+            fast_task::unique_lock lock(um);
             while (!_is_ready)
                 task_cv.wait(lock);
         }
@@ -265,7 +297,7 @@ namespace fast_task {
 
         bool wait_until_no_except(std::chrono::time_point<std::chrono::high_resolution_clock> time) {
             mutex_unify um(task_mt);
-            std::unique_lock lock(um);
+            fast_task::unique_lock lock(um);
             while (!_is_ready)
                 if (!task_cv.wait_until(lock, time))
                     return false;
@@ -287,20 +319,20 @@ namespace fast_task {
                 try {
                     future_->result = fn();
                 } catch (const task_cancellation&) {
-                    std::lock_guard guard(future_->task_mt);
+                    fast_task::lock_guard guard(future_->task_mt);
                     future_->_is_ready = true;
                     future_->task_cv.notify_all();
                     throw;
                 } catch (...) {
                     future_->ex_ptr = std::current_exception();
                 }
-                std::lock_guard guard(future_->task_mt);
+                fast_task::lock_guard guard(future_->task_mt);
                 future_->_is_ready = true;
                 future_->task_cv.notify_all();
             });
             if (bind_id != (uint16_t)-1)
                 future_->task_->set_worker_id(bind_id);
-            task::start(future_->task_);
+            scheduler::start(future_->task_);
             return future_;
         }
 
@@ -320,32 +352,32 @@ namespace fast_task {
 
         T get() {
             mutex_unify um(future<T>::task_mt);
-            std::unique_lock lock(um);
+            fast_task::unique_lock lock(um);
             while (!future<T>::_is_ready)
                 future<T>::task_cv.wait(lock);
             if (future<T>::ex_ptr)
                 std::rethrow_exception(future<T>::ex_ptr);
             if (task_)
-                if (task_->make_cancel)
+                if (task_->is_cancellation_requested())
                     throw std::runtime_error("Task has been canceled. Can not receive result.");
             return future<T>::result;
         }
 
         T take() {
             mutex_unify um(future<T>::task_mt);
-            std::unique_lock lock(um);
+            fast_task::unique_lock lock(um);
             while (!future<T>::_is_ready)
                 future<T>::task_cv.wait(lock);
             if (future<T>::ex_ptr)
                 std::rethrow_exception(future<T>::ex_ptr);
             if (task_)
-                if (task_->make_cancel)
+                if (task_->is_cancellation_requested())
                     throw std::runtime_error("Task has been canceled. Can not receive result.");
             return std::move(future<T>::result);
         }
 
         void cancel() {
-            task::await_notify_cancel(task_);
+            task_->await_notify_cancel();
         }
     };
 
@@ -359,20 +391,20 @@ namespace fast_task {
                 try {
                     fn();
                 } catch (const task_cancellation&) {
-                    std::lock_guard guard(future_->task_mt);
+                    fast_task::lock_guard guard(future_->task_mt);
                     future_->_is_ready = true;
                     future_->task_cv.notify_all();
                     throw;
                 } catch (...) {
                     future_->ex_ptr = std::current_exception();
                 }
-                std::lock_guard guard(future_->task_mt);
+                fast_task::lock_guard guard(future_->task_mt);
                 future_->_is_ready = true;
                 future_->task_cv.notify_all();
             });
             if (bind_id != (uint16_t)-1)
                 future_->task_->set_worker_id(bind_id);
-            task::start(future_->task_);
+            scheduler::start(future_->task_);
             return future_;
         }
 
@@ -384,13 +416,13 @@ namespace fast_task {
 
         void get() {
             mutex_unify um(future<void>::task_mt);
-            std::unique_lock lock(um);
+            fast_task::unique_lock lock(um);
             while (!future<void>::_is_ready)
                 future<void>::task_cv.wait(lock);
             if (future<void>::ex_ptr)
                 std::rethrow_exception(future<void>::ex_ptr);
             if (task_)
-                if (task_->make_cancel)
+                if (task_->is_cancellation_requested())
                     throw std::runtime_error("Task has been canceled. Can not receive result.");
         }
 
@@ -399,7 +431,7 @@ namespace fast_task {
         }
 
         void cancel() {
-            task::await_notify_cancel(task_);
+            task_->await_notify_cancel();
         }
     };
 
@@ -488,7 +520,7 @@ namespace fast_task {
                         new_future->result = fn(std::move(a));
                 } catch (...) {
                 };
-                std::lock_guard guard(new_future->task_mt);
+                fast_task::lock_guard guard(new_future->task_mt);
                 new_future->_is_ready = true;
                 new_future->task_cv.notify_all();
             });
@@ -506,7 +538,7 @@ namespace fast_task {
                         new_future->result = fn();
                 } catch (...) {
                 };
-                std::lock_guard guard(new_future->task_mt);
+                fast_task::lock_guard guard(new_future->task_mt);
                 new_future->_is_ready = true;
                 new_future->task_cv.notify_all();
             });
@@ -580,4 +612,4 @@ namespace fast_task {
         return future<std::remove_reference_t<std::remove_cv_t<T>>>::make_ready(std::forward<T>(value));
     }
 }
-#endif /* SRC_FUTURE */
+#endif

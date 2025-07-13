@@ -4,8 +4,8 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
-#ifndef SRC_FILES
-#define SRC_FILES
+#ifndef FAST_TASK_FILES
+#define FAST_TASK_FILES
 #include "../future.hpp"
 #include "../tasks.hpp"
 #include <filesystem>
@@ -143,6 +143,15 @@ namespace fast_task {
             FileHandle& file_handle;
             std::vector<char> buffer;
 
+            std::streamsize make_sputn(const char* s, std::streamsize n) {
+                size_t bytes_to_write = std::min(static_cast<size_t>(n), size_t(epptr() - pptr()));
+                traits_type::copy(pptr(), s, bytes_to_write);
+                pbump(static_cast<int>(bytes_to_write));
+                if (flush_buffer() == traits_type::eof())
+                    return traits_type::eof();
+                return static_cast<std::streamsize>(bytes_to_write);
+            }
+
         protected:
             std::streamsize xsgetn(char* s, std::streamsize n) override {
                 if (gptr() == egptr()) {
@@ -158,12 +167,22 @@ namespace fast_task {
             }
 
             std::streamsize xsputn(const char* s, std::streamsize n) override {
-                size_t bytes_to_write = std::min(static_cast<size_t>(n), size_t(epptr() - pptr()));
-                traits_type::copy(pptr(), s, bytes_to_write);
-                pbump(static_cast<int>(bytes_to_write));
-                if (flush_buffer() == traits_type::eof())
-                    return traits_type::eof();
-                return static_cast<std::streamsize>(bytes_to_write);
+                auto res = n;
+                while (n > 0) {
+                    size_t available_space = pptr() < epptr() ? epptr() - pptr() : 0;
+                    if (available_space == 0) {
+                        if (flush_buffer() == traits_type::eof())
+                            return traits_type::eof();
+                        available_space = epptr() - pptr();
+                    }
+                    size_t bytes_to_write = std::min(static_cast<size_t>(n), available_space);
+                    auto sput_res = make_sputn(s, static_cast<std::streamsize>(bytes_to_write));
+                    if (sput_res == traits_type::eof())
+                        return traits_type::eof();
+                    s += bytes_to_write;
+                    n -= static_cast<std::streamsize>(bytes_to_write);
+                }
+                return res;
             }
 
             int_type underflow() override {
@@ -235,7 +254,7 @@ namespace fast_task {
             }
 
             ~async_filebuf() {
-                sync();
+                flush_buffer();
             }
         };
 
@@ -345,6 +364,7 @@ namespace fast_task {
             }
 
             ~async_iofstream() {
+                flush();
                 delete rdbuf();
             }
 
@@ -356,4 +376,4 @@ namespace fast_task {
 }
 
 #undef FILE_HANDLE
-#endif /* SRC_FILES */
+#endif

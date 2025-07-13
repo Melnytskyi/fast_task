@@ -4,12 +4,13 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
-#ifndef SRC_RUN_TIME_TASKS_UTIL_LIGHT_STACK
-#define SRC_RUN_TIME_TASKS_UTIL_LIGHT_STACK
+#pragma once
+#ifndef FAST_TASK_LIGHT_STACK
+    #define FAST_TASK_LIGHT_STACK
 
-#include <boost/context/fiber.hpp>
-#include <boost/context/stack_context.hpp>
-#include <boost/context/stack_traits.hpp>
+    #include <boost/context/fiber.hpp>
+    #include <boost/context/stack_context.hpp>
+    #include <boost/context/stack_traits.hpp>
 
 namespace fast_task {
     struct light_stack {
@@ -29,4 +30,4 @@ namespace fast_task {
 }
 
 
-#endif /* SRC_RUN_TIME_TASKS_UTIL_LIGHT_STACK */
+#endif
