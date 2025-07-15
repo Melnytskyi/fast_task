@@ -13,7 +13,9 @@
 namespace fast_task {
 
     size_t task::max_running_tasks = 0;
-#if tasks_enable_preemptive_scheduler_preview && PLATFORM_WINDOWS && false
+    //In debug builds there locks in std library, so it could deadlock
+    //  you could remove the '!_DEBUG ' check and add hooks to winapi like EnterCriticalSection or WaitForSingleObject and use interrupt::interrupt_unsafe_region::lock() or ::unlock() to support this scheduler
+#if tasks_enable_preemptive_scheduler_preview && PLATFORM_WINDOWS && !_DEBUG
     void timer_reinit() {
         std::chrono::nanoseconds interval = next_quantum(get_data(loc.curr_task).priority, get_data(loc.curr_task).current_available_quantum);
         interrupt::itimerval timer;

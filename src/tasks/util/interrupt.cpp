@@ -10,10 +10,10 @@
 #include <threading.hpp>
 #include <unordered_map>
 
-
-void uninstall_timer_handle_local();
-
 namespace fast_task::interrupt {
+    void uninstall_timer_handle_local();
+    struct handle;
+
     struct timer_handle {
         void (*interrupt)() = nullptr;
         itimerval timer_value = {0};
@@ -21,6 +21,9 @@ namespace fast_task::interrupt {
         thread::id thread_id;
         std::atomic_size_t guard_zones = 0;
         bool enabled_timers = true;
+        std::shared_ptr<handle> handle;
+
+        timer_handle();
 
         ~timer_handle() {
             uninstall_timer_handle_local();
@@ -37,7 +40,7 @@ namespace fast_task::interrupt {
         unlock();
     }
 
-    size_t interrupt_unsafe_region::lock_swap(size_t other){
+    size_t interrupt_unsafe_region::lock_swap(size_t other) {
         return timer.guard_zones.exchange(other);
     }
 
@@ -55,19 +58,25 @@ namespace fast_task::interrupt {
     #include <windows.h>
 
 namespace fast_task::interrupt {
-    std::list<timer_handle*> await_timers;
-    fast_task::condition_variable timer_signal;
-    fast_task::mutex timer_signal_mutex;
+    struct handle {
+        std::list<timer_handle*> await_timers;
+        fast_task::condition_variable timer_signal;
+        fast_task::mutex timer_signal_mutex;
+    };
+
+    std::shared_ptr<handle> global = std::make_shared<handle>();
+
+    timer_handle::timer_handle() : handle(global) {}
 
     bool auto_ini = []() {
         fast_task::thread([]() {
-            fast_task::unique_lock<fast_task::mutex> lock(timer_signal_mutex, fast_task::defer_lock);
+            fast_task::unique_lock<fast_task::mutex> lock(timer.handle->timer_signal_mutex, fast_task::defer_lock);
             while (true) {
                 lock.lock();
-                while (await_timers.empty())
-                    timer_signal.wait(lock);
-                timer_handle* data = await_timers.front();
-                await_timers.pop_front();
+                while (timer.handle->await_timers.empty())
+                    timer.handle->timer_signal.wait(lock);
+                timer_handle* data = timer.handle->await_timers.front();
+                timer.handle->await_timers.pop_front();
                 lock.unlock();
                 if (data != nullptr) {
                     //get thread handle
@@ -82,7 +91,7 @@ namespace fast_task::interrupt {
                     if (data->guard_zones != 0) {
                         fast_task::thread::resume(id);
                         lock.lock();
-                        await_timers.push_back(data);
+                        timer.handle->await_timers.push_back(data);
                         lock.unlock();
                         continue;
                     }
@@ -94,58 +103,71 @@ namespace fast_task::interrupt {
         return true;
     }();
 
-
     VOID NTAPI timer_callback_fun(void* callback, BOOLEAN) {
         timer_handle* timer = (timer_handle*)callback;
         if (timer->thread_id == this_thread::get_id())
             return;
-        fast_task::lock_guard<fast_task::mutex> lock(timer_signal_mutex);
-        await_timers.push_back(timer);
-        timer_signal.notify_all();
+        fast_task::lock_guard<fast_task::mutex> lock(timer->handle->timer_signal_mutex);
+        timer->handle->await_timers.push_back(timer);
+        timer->handle->timer_signal.notify_all();
     }
 
-        bool timer_callback(void (*interrupter)()) {
-            timer.interrupt = interrupter;
-            return true;
-        }
-
-        bool setitimer(const struct itimerval* new_value, struct itimerval* old_value) {
-            interrupt_unsafe_region guard;
-            if (old_value)
-                *old_value = timer.timer_value;
-            if (new_value == nullptr)
-                return false;
-
-            timer.timer_value = *new_value;
-            timer.thread_id = this_thread::get_id();
-            if (timer.timer_handle_ != nullptr) {
-                DeleteTimerQueueTimer(NULL, timer.timer_handle_, INVALID_HANDLE_VALUE);
-                timer.timer_handle_ = nullptr;
-            }
-            if (CreateTimerQueueTimer(
-                    &timer.timer_handle_,
-                    NULL,
-                    timer_callback_fun,
-                    &timer,
-                    new_value->it_value.tv_sec * 1000 + new_value->it_value.tv_usec / 1000,
-                    new_value->it_interval.tv_sec * 1000 + new_value->it_interval.tv_usec / 1000,
-                    WT_EXECUTEINTIMERTHREAD
-                ) == 0) {
-                return false;
-            }
-            timer.enabled_timers = true;
-            return true;
-        }
-
-        void stop_timer() {
-            interrupt_unsafe_region region;
-            if (timer.timer_handle_ != nullptr) {
-                DeleteTimerQueueTimer(NULL, timer.timer_handle_, INVALID_HANDLE_VALUE);
-                timer.timer_handle_ = nullptr;
-            }
-            timer.enabled_timers = false;
-        }
+    bool timer_callback(void (*interrupter)()) {
+        timer.interrupt = interrupter;
+        return true;
     }
+
+    bool setitimer(const struct itimerval* new_value, struct itimerval* old_value) {
+        interrupt_unsafe_region guard;
+        if (old_value)
+            *old_value = timer.timer_value;
+        if (new_value == nullptr)
+            return false;
+
+        timer.timer_value = *new_value;
+        timer.thread_id = this_thread::get_id();
+        if (timer.timer_handle_ != nullptr) {
+            DeleteTimerQueueTimer(NULL, timer.timer_handle_, INVALID_HANDLE_VALUE);
+            timer.timer_handle_ = nullptr;
+        }
+        if (CreateTimerQueueTimer(
+                &timer.timer_handle_,
+                NULL,
+                timer_callback_fun,
+                &timer,
+                new_value->it_value.tv_sec * 1000 + new_value->it_value.tv_usec / 1000,
+                new_value->it_interval.tv_sec * 1000 + new_value->it_interval.tv_usec / 1000,
+                WT_EXECUTEINTIMERTHREAD
+            ) == 0) {
+            return false;
+        }
+        timer.enabled_timers = true;
+        return true;
+    }
+
+    void stop_timer() {
+        interrupt_unsafe_region region;
+        if (timer.timer_handle_ != nullptr) {
+            DeleteTimerQueueTimer(NULL, timer.timer_handle_, INVALID_HANDLE_VALUE);
+            timer.timer_handle_ = nullptr;
+        }
+        timer.enabled_timers = false;
+    }
+
+    void uninstall_timer_handle_local() {
+        fast_task::interrupt::stop_timer();
+        if (!fast_task::interrupt::timer.handle)
+            return;
+        fast_task::lock_guard<fast_task::mutex> lock(fast_task::interrupt::timer.handle->timer_signal_mutex);
+        auto cur_id = fast_task::this_thread::get_id();
+        std::erase_if(
+            fast_task::interrupt::timer.handle->await_timers,
+            [cur_id](fast_task::interrupt::timer_handle* timer) {
+                return timer->thread_id == cur_id;
+            }
+        );
+    }
+}
 
 #else
     #include <signal.h>
@@ -169,19 +191,6 @@ namespace fast_task::interrupt {
 }
 
 #endif
-
-    void
-    uninstall_timer_handle_local() {
-    fast_task::interrupt::stop_timer();
-    fast_task::lock_guard<fast_task::mutex> lock(fast_task::interrupt::timer_signal_mutex);
-    auto cur_id = fast_task::this_thread::get_id();
-    std::erase_if(
-        fast_task::interrupt::await_timers,
-        [cur_id](fast_task::interrupt::timer_handle* timer) {
-            return timer->thread_id == cur_id;
-        }
-    );
-    }
 
 void* operator new(std::size_t n) noexcept(false) {
     fast_task::interrupt::interrupt_unsafe_region region;
