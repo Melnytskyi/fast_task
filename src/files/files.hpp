@@ -27,18 +27,31 @@ namespace fast_task {
             append
         };
 
-        union share_mode { //used in windows
-
-            struct {
-                bool read : 1;
-                bool write : 1;
-                bool _delete : 1;
-            };
-
-            uint8_t value = 0;
+        struct share_mode { //used in windows
+            bool read : 1;
+            bool write : 1;
+            bool _delete : 1;
 
             share_mode(bool read = true, bool write = true, bool _delete = false)
                 : read(read), write(write), _delete(_delete) {}
+
+            uint8_t get() const {
+                union union_t {
+                    share_mode self;
+                    uint8_t value = 0;
+                } unified{.self = *this};
+
+                return unified.value;
+            }
+
+            void set(uint8_t value) {
+                union union_t {
+                    share_mode self;
+                    uint8_t v = 0;
+                } unified{.v = value};
+
+                *this = unified.self;
+            }
         };
         enum class pointer : uint8_t {
             read,
@@ -61,28 +74,56 @@ namespace fast_task {
             truncate_exists
         };
 
-        union _async_flags {
-            struct {
-                bool delete_on_close : 1;
-                bool posix_semantics : 1; //used in windows
-                bool random_access : 1;   //hint to cache manager
-                bool sequential_scan : 1; //hint to cache manager
-            };
+        struct _async_flags {
+            bool delete_on_close : 1;
+            bool posix_semantics : 1; //used in windows
+            bool random_access : 1;   //hint to cache manager
+            bool sequential_scan : 1; //hint to cache manager
 
-            uint8_t value = 0;
+            uint8_t get() const {
+                union union_t {
+                    _async_flags self;
+                    uint8_t value = 0;
+                } unified{.self = *this};
+
+                return unified.value;
+            }
+
+            void set(uint8_t value) {
+                union union_t {
+                    _async_flags self;
+                    uint8_t v = 0;
+                } unified{.v = value};
+
+                *this = unified.self;
+            }
         };
 
-        union _sync_flags {
-            struct {
-                bool delete_on_close : 1;
-                bool posix_semantics : 1; //used in windows
-                bool random_access : 1;   //hint to cache manager
-                bool sequential_scan : 1; //hint to cache manager
-                bool no_buffering : 1;    //hint to cache manager, affect seek and read write operations, like disc page size aligned operations
-                bool write_through : 1;   //hint to cache manager
-            };
+        struct _sync_flags {
+            bool delete_on_close : 1;
+            bool posix_semantics : 1; //used in windows
+            bool random_access : 1;   //hint to cache manager
+            bool sequential_scan : 1; //hint to cache manager
+            bool no_buffering : 1;    //hint to cache manager, affect seek and read write operations, like disc page size aligned operations
+            bool write_through : 1;   //hint to cache manager
 
-            uint8_t value = 0;
+            uint8_t get() const {
+                union union_t {
+                    _sync_flags self;
+                    uint8_t value = 0;
+                } unified{.self = *this};
+
+                return unified.value;
+            }
+
+            void set(uint8_t value) {
+                union union_t {
+                    _sync_flags self;
+                    uint8_t v = 0;
+                } unified{.v = value};
+
+                *this = unified.self;
+            }
         };
 
         enum class io_errors : uint8_t {
@@ -360,7 +401,7 @@ namespace fast_task {
                 pointer_mode pointer_mode = pointer_mode::combined
             )
                 : std::iostream(new async_filebuf(handle)),
-                  handle(path.string(), open, action, flags, share) {
+                  handle(path.string(), open, action, flags, share, pointer_mode) {
             }
 
             ~async_iofstream() {

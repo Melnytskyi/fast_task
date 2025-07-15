@@ -41,9 +41,6 @@ namespace fast_task {
         bool _in_landing();
     };
 
-    #pragma pack(push)
-    #pragma pack(1)
-
     class task_mutex {
         friend class task_recursive_mutex;
         std::list<__::resume_task> resume_task;
@@ -194,7 +191,7 @@ namespace fast_task {
             task_mutex* umut;
             task_rw_mutex* urwmut;
             task_recursive_mutex* urmut;
-            struct multiply_mutex* mmut;
+            class multiply_mutex* mmut;
         };
 
         mutex_unify_type type;
@@ -441,8 +438,6 @@ namespace fast_task {
         static std::shared_ptr<task> dummy_task();
         static std::shared_ptr<task> cxx_native_bridge(bool& checker, fast_task::condition_variable_any& cd);
     };
-
-    #pragma pack(pop)
 
     namespace scheduler {
         namespace config {
