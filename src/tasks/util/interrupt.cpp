@@ -68,48 +68,49 @@ namespace fast_task::interrupt {
 
     timer_handle::timer_handle() : handle(global) {}
 
-    bool auto_ini = []() {
-        fast_task::thread([]() {
-            fast_task::unique_lock<fast_task::mutex> lock(timer.handle->timer_signal_mutex, fast_task::defer_lock);
-            while (true) {
-                lock.lock();
-                while (timer.handle->await_timers.empty())
-                    timer.handle->timer_signal.wait(lock);
-                timer_handle* data = timer.handle->await_timers.front();
-                timer.handle->await_timers.pop_front();
-                lock.unlock();
-                if (data != nullptr) {
-                    //get thread handle
-                    auto id = data->thread_id;
-                    if (fast_task::thread::suspend(id) == false)
-                        continue;
-
-                    if (!data->enabled_timers) {
-                        fast_task::thread::resume(id);
-                        continue;
-                    }
-                    if (data->guard_zones != 0) {
-                        fast_task::thread::resume(id);
-                        lock.lock();
-                        timer.handle->await_timers.push_back(data);
-                        lock.unlock();
-                        continue;
-                    }
-                    fast_task::thread::insert_context(id, (void (*)(void*))data->interrupt, nullptr);
-                    fast_task::thread::resume(id);
-                }
-            }
-        });
-        return true;
-    }();
-
     VOID NTAPI timer_callback_fun(void* callback, BOOLEAN) {
-        timer_handle* timer = (timer_handle*)callback;
-        if (timer->thread_id == this_thread::get_id())
+        timer_handle* result = (timer_handle*)callback;
+        if (result->thread_id == this_thread::get_id())
             return;
-        fast_task::lock_guard<fast_task::mutex> lock(timer->handle->timer_signal_mutex);
-        timer->handle->await_timers.push_back(timer);
-        timer->handle->timer_signal.notify_all();
+        fast_task::lock_guard<fast_task::mutex> lock(result->handle->timer_signal_mutex);
+        static bool inited = false;
+        if (!inited) {
+            inited = true;
+            fast_task::thread([]() {
+                _set_name_thread_dbg("interrupt_processor");
+                fast_task::unique_lock<fast_task::mutex> lock(timer.handle->timer_signal_mutex, fast_task::defer_lock);
+                while (true) {
+                    lock.lock();
+                    while (timer.handle->await_timers.empty())
+                        timer.handle->timer_signal.wait(lock);
+                    timer_handle* data = timer.handle->await_timers.front();
+                    timer.handle->await_timers.pop_front();
+                    lock.unlock();
+                    if (data != nullptr) {
+                        //get thread handle
+                        auto id = data->thread_id;
+                        if (fast_task::thread::suspend(id) == false)
+                            continue;
+
+                        if (!data->enabled_timers) {
+                            fast_task::thread::resume(id);
+                            continue;
+                        }
+                        if (data->guard_zones != 0) {
+                            fast_task::thread::resume(id);
+                            lock.lock();
+                            timer.handle->await_timers.push_back(data);
+                            lock.unlock();
+                            continue;
+                        }
+                        fast_task::thread::insert_context(id, (void (*)(void*))data->interrupt, nullptr);
+                        fast_task::thread::resume(id);
+                    }
+                }
+            });
+        }
+        result->handle->await_timers.push_back(result);
+        result->handle->timer_signal.notify_all();
     }
 
     bool timer_callback(void (*interrupter)()) {

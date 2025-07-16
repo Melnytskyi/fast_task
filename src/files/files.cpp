@@ -42,6 +42,7 @@ namespace fast_task::files {
 }
 #if _WIN64
     #define NOMINMAX
+    #include <Ntstatus.h>
     #include <Windows.h>
     #include <filesystem>
     #include <io.h>
@@ -177,7 +178,7 @@ namespace fast_task::files {
                     overlapped.Offset = new_offset & 0xFFFFFFFF;
                     overlapped.OffsetHigh = (new_offset >> 32) & 0xFFFFFFFF;
                     if (!ReadFile(handle, buffer + fullifed_bytes, buffer_size - fullifed_bytes, nullptr, &overlapped))
-                        error_filter(0);
+                        error_filter(GetLastError(), 0);
                 } else
                     now_fullifed();
             }
@@ -191,7 +192,7 @@ namespace fast_task::files {
                     overlapped.Offset = new_offset & 0xFFFFFFFF;
                     overlapped.OffsetHigh = (new_offset >> 32) & 0xFFFFFFFF;
                     if (!WriteFile(handle, buffer + fullifed_bytes, buffer_size - fullifed_bytes, nullptr, &overlapped))
-                        error_filter(0);
+                        error_filter(GetLastError(), 0);
                 }
             } else
                 now_fullifed();
@@ -259,8 +260,8 @@ namespace fast_task::files {
             }
         }
 
-        bool error_filter(uint32_t len) {
-            switch (GetLastError()) {
+        bool error_filter(DWORD last_error, uint32_t len) {
+            switch (last_error) {
             case ERROR_IO_PENDING:
                 return false;
             case ERROR_HANDLE_EOF: {
@@ -280,6 +281,35 @@ namespace fast_task::files {
                 exception(io_errors::invalid_user_buffer);
                 return true;
             case ERROR_NOT_ENOUGH_QUOTA:
+                exception(io_errors::no_enough_quota);
+                return true;
+            default:
+                exception(io_errors::unknown_error);
+                return true;
+            }
+        }
+
+        bool status_filter(DWORD last_error, uint32_t len) {
+            switch (last_error) {
+            case STATUS_PENDING:
+                return false;
+            case STATUS_END_OF_FILE: {
+                if (is_read && !required_full) {
+                    now_fullifed();
+                    return false;
+                } else {
+                    fullifed_bytes += len;
+                    exception(io_errors::eof);
+                    return true;
+                }
+            }
+            case STATUS_VID_INSUFFICIENT_RESOURCES_RESERVE:
+                exception(io_errors::no_enough_memory);
+                return true;
+            case STATUS_BUFFER_OVERFLOW:
+                exception(io_errors::invalid_user_buffer);
+                return true;
+            case STATUS_NO_MEMORY: //yea strange name
                 exception(io_errors::no_enough_quota);
                 return true;
             default:
@@ -690,10 +720,10 @@ namespace fast_task::files {
                 return res;
         }
 
-        void handle(void* data, util::native_worker_handle* overlapped, unsigned long dwBytesTransferred, bool status) override {
+        void handle(void* data, util::native_worker_handle* overlapped, unsigned long dwBytesTransferred) override {
             auto file = (File_*)overlapped;
-            if (!status)
-                file->error_filter(dwBytesTransferred);
+            if (file->overlapped.Internal)
+                file->status_filter((DWORD)file->overlapped.Internal, dwBytesTransferred);
             else
                 file->operation_fullifed(dwBytesTransferred);
         }

@@ -15,8 +15,6 @@
     #include <thread>
     #include <vector>
 
-    #include <tasks/util/hill_climbing.hpp>
-
     #ifdef _WIN64
         #define WIN32_LEAN_AND_MEAN
         #define NOMINMAX
@@ -25,7 +23,7 @@
 namespace fast_task::util {
     class native_worker_manager {
     public:
-        virtual void handle(void* data, class native_worker_handle* overlapped, unsigned long dwBytesTransferred, bool status) = 0;
+        virtual void handle(void* data, class native_worker_handle* overlapped, unsigned long dwBytesTransferred) = 0;
         virtual ~native_worker_manager() noexcept(false) = default;
     };
 
@@ -51,97 +49,39 @@ namespace fast_task::util {
         native_worker_handle& operator=(native_worker_handle&&) = delete;
     };
 
-    //do not consume resources if not used
     class native_workers_singleton {
-        class CancellationNotify {};
-
-        class cancellation_manager : public native_worker_manager {
-        public:
-            virtual void handle(void* data, class native_worker_handle* overlapped, unsigned long dwBytesTransferred, bool status) override {
-                delete overlapped;
-                throw CancellationNotify();
-            }
-
-            cancellation_manager() = default;
-            ~cancellation_manager() = default;
-        };
-
-        class cancellation_handle : public native_worker_handle {
-        public:
-            cancellation_handle(cancellation_manager& ref)
-                : native_worker_handle(&ref) {}
-        };
-
-        static inline cancellation_manager cancellation_manager_instance;
         static inline native_workers_singleton* instance = nullptr;
         static inline fast_task::mutex instance_mutex;
         std::shared_ptr<void> m_hCompletionPort;
-        fast_task::util::hill_climb hill_climb;
-        fast_task::mutex hill_climb_mutex;
-        std::list<uint32_t> hill_climb_processed;
 
         native_workers_singleton() {
             m_hCompletionPort.reset(CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 0), CloseHandle);
             if (!m_hCompletionPort)
                 throw std::runtime_error("CreateIoCompletionPort failed");
-            for (ptrdiff_t i = fast_task::thread::hardware_concurrency() / 3 + 1; i > 0; i--)
-                fast_task::thread(&native_workers_singleton::dispatch, this).detach();
-        }
-
-        std::pair<uint32_t, uint32_t> proceed_hill_climb(double sample_seconds) {
-            const uint32_t max_threads = fast_task::thread::hardware_concurrency();
-            fast_task::lock_guard<fast_task::mutex> lock(hill_climb_mutex);
-            uint32_t recommended_thread_count = 0;
-            uint32_t recommended_sleep_count = 0;
-            if (hill_climb_processed.empty()) {
-                fast_task::thread(&native_workers_singleton::dispatch, this).detach();
-                return {100, 1};
-            }
-            for (auto& item : hill_climb_processed) {
-                auto [thread_count, sleep_count] = hill_climb.climb(hill_climb_processed.size(), sample_seconds, item, 1, max_threads);
-                recommended_thread_count += thread_count;
-                recommended_sleep_count += sleep_count;
-                item = 0;
-            }
-            recommended_thread_count /= hill_climb_processed.size();
-            recommended_sleep_count /= hill_climb_processed.size();
-
-            ptrdiff_t diff = recommended_thread_count - hill_climb_processed.size();
-            if (diff > 0) {
-                for (ptrdiff_t i = diff; i > 0; i--)
-                    fast_task::thread(&native_workers_singleton::dispatch, this).detach();
-            } else if (diff < 0) {
-                for (ptrdiff_t i = diff; i < 0; i++)
-                    post_work(new cancellation_handle(cancellation_manager_instance), 0);
-            }
-            return {recommended_thread_count, recommended_sleep_count};
+            fast_task::thread(&native_workers_singleton::dispatch, this).detach();
         }
 
         void dispatch() {
-            fast_task::unique_lock<fast_task::mutex> lock(hill_climb_mutex);
-            uint32_t& item = hill_climb_processed.emplace_back();
-            auto item_ptr = hill_climb_processed.begin();
-            lock.unlock();
+            SetThreadDescription(GetCurrentThread(), L"native_dispatcher");
+            std::vector<OVERLAPPED_ENTRY> entries;
+            entries.resize(fast_task::thread::hardware_concurrency());
             while (true) {
-                DWORD dwBytesTransferred = 0;
-                ULONG_PTR data = 0;
-                native_worker_handle* lpOverlapped = nullptr;
+                ULONG entries_count = 0;
+                auto status = GetQueuedCompletionStatusEx(m_hCompletionPort.get(), entries.data(), entries.size(), &entries_count, INFINITE, false);
+                if (!status)
+                    return;
 
-                auto status = GetQueuedCompletionStatus(m_hCompletionPort.get(), &dwBytesTransferred, &data, (OVERLAPPED**)&lpOverlapped, INFINITE);
-
-                if (!lpOverlapped) {
-                    //"GetQueuedCompletionStatus overlapped result is null"
-                    continue;
+                for (ULONG i = 0; i < entries_count; i++) {
+                    task::run([entry = std::move(entries[i])]() {
+                        auto overlap = ((native_worker_handle*)entry.lpOverlapped);
+                        overlap->manager->handle(
+                            (void*)entry.lpCompletionKey,
+                            overlap,
+                            entry.dwNumberOfBytesTransferred
+                        );
+                    });
                 }
-                try {
-                    lpOverlapped->manager->handle((void*)data, lpOverlapped, dwBytesTransferred, status);
-                } catch (const CancellationNotify&) {
-                    break;
-                }
-                item++;
             }
-            lock.lock();
-            hill_climb_processed.erase(item_ptr);
         }
 
         bool _register_handle(HANDLE hFile, void* data) {
@@ -173,16 +113,7 @@ namespace fast_task::util {
         static bool post_work(native_worker_handle* overlapped, size_t completion_key, DWORD dwBytesTransferred = 0) {
             return PostQueuedCompletionStatus(get_instance().m_hCompletionPort.get(), dwBytesTransferred, completion_key, (OVERLAPPED*)overlapped);
         }
-
-        static std::pair<uint32_t, uint32_t> hill_climb_proceed(std::chrono::high_resolution_clock::duration sample_time) {
-            fast_task::lock_guard<fast_task::mutex> lock(instance_mutex);
-            if (!instance)
-                return {0, 0};
-            else
-                return instance->proceed_hill_climb(std::chrono::duration<double>(sample_time).count());
-        }
     };
-
 }
     #else
         #include <bitset>
@@ -240,6 +171,7 @@ namespace fast_task::util {
         }
 
         void dispatch() {
+            pthread_setname_np(pthread_self(), "native_dispatcher");
             while (true) {
                 io_uring_submit_and_wait(&m_ring, 1);
 

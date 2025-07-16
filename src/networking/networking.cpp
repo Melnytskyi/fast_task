@@ -1063,7 +1063,6 @@ namespace fast_task::networking {
         }
 
         void accepted(tcp_handle_2* self, address&& clientAddr, address&& localAddr) {
-
             fast_task::lock_guard guard(safety);
             task::run([handler_fn = this->handler_fn, self, clientAddr = std::move(clientAddr), localAddr = std::move(localAddr), allow_new_connections = this->allow_new_connections]() {
                 if (!allow_new_connections) {
@@ -1247,12 +1246,13 @@ namespace fast_task::networking {
                 shutdown();
         }
 
-        void handle(void* _data, util::native_worker_handle* overlapped, unsigned long dwBytesTransferred, bool status) override {
+        void handle(void* _data, util::native_worker_handle* overlapped, unsigned long dwBytesTransferred) override {
             auto& data = *(tcp_handle_2::operation*)overlapped;
+            auto error = (DWORD)overlapped->overlapped.Internal;
             if (data.accept_flag) {
                 data.transferred = dwBytesTransferred;
-                new_connection(&data, *data.self, !((FALSE == status) || ((true == status) && (0 == dwBytesTransferred))));
-            } else if (!((FALSE == status) || ((true == status) && (0 == dwBytesTransferred))))
+                new_connection(&data, *data.self, 0 == dwBytesTransferred && !error);
+            } else if (0 != dwBytesTransferred && !error)
                 data.handle(_data, dwBytesTransferred, &data);
             else {
                 if (!data.close_flag)
@@ -1472,13 +1472,14 @@ namespace fast_task::networking {
         }
 
     public:
-        void handle(void* _data, util::native_worker_handle* overlapped, unsigned long dwBytesTransferred, bool status) override {
+        void handle(void* _data, util::native_worker_handle* overlapped, unsigned long dwBytesTransferred) override {
             auto& data = *(tcp_handle_2::operation*)overlapped;
+            DWORD error = overlapped->overlapped.Internal;
             if (data.accept_flag) {
                 fast_task::lock_guard lock(*data.cv_mutex);
                 data.transferred = dwBytesTransferred;
                 data.cv.notify_all();
-            } else if (!((FALSE == status) || ((true == status) && (0 == dwBytesTransferred))))
+            } else if (0 != dwBytesTransferred && !error)
                 data.handle(_data, dwBytesTransferred, &data);
             else
                 data.self->connection_reset();
@@ -1647,11 +1648,10 @@ namespace fast_task::networking {
 
     public:
         DWORD fullifed_bytes;
-        bool status;
         DWORD last_error;
 
         udp_handle(sockaddr_in6& address, uint32_t timeout_ms)
-            : util::native_worker_handle(this), last_error(0), fullifed_bytes(0), status(false), server_address{0} {
+            : util::native_worker_handle(this), last_error(0), fullifed_bytes(0), server_address{0} {
             socket = WSASocketW(AF_INET6, SOCK_DGRAM, IPPROTO_UDP, NULL, 0, WSA_FLAG_OVERLAPPED);
 
             if (socket == INVALID_SOCKET)
@@ -1664,10 +1664,9 @@ namespace fast_task::networking {
             server_address = address;
         }
 
-        void handle(void* data, util::native_worker_handle* overlapped, unsigned long fullifed_bytes, bool status) override {
+        void handle(void* data, util::native_worker_handle* overlapped, unsigned long fullifed_bytes) override {
             this->fullifed_bytes = fullifed_bytes;
-            this->status = status;
-            last_error = GetLastError();
+            last_error = (DWORD)overlapped->overlapped.Internal;
             scheduler::start(notify_task);
         }
 
@@ -1682,7 +1681,6 @@ namespace fast_task::networking {
             if (WSARecvFrom(socket, &buf, 1, nullptr, &flags, (sockaddr*)&sender, &sender_len, (OVERLAPPED*)this, nullptr)) {
                 if (WSAGetLastError() != WSA_IO_PENDING) {
                     last_error = WSAGetLastError();
-                    status = false;
                     fullifed_bytes = 0;
                     notify_task = nullptr;
                     return;
@@ -1701,7 +1699,6 @@ namespace fast_task::networking {
             if (WSASendTo(socket, &buf, 1, nullptr, 0, (sockaddr*)&to, sizeof(to), (OVERLAPPED*)this, nullptr)) {
                 if (WSAGetLastError() != WSA_IO_PENDING) {
                     last_error = WSAGetLastError();
-                    status = false;
                     fullifed_bytes = 0;
                     notify_task = nullptr;
                     return;
@@ -3558,7 +3555,7 @@ namespace fast_task::networking {
         int sender_len = sizeof(sender_address);
         handle->recv(data, size, sender_address, sender_len);
         if (handle->fullifed_bytes == 0 && handle->last_error != 0)
-            throw std::runtime_error("Error while receiving data from udp socket with error code: " + std::to_string(handle->last_error));
+            throw std::runtime_error("Error while receiving data from udp socket with error or status code: " + std::to_string(handle->last_error));
         return handle->fullifed_bytes;
     }
 
@@ -3566,7 +3563,7 @@ namespace fast_task::networking {
         sockaddr_storage& to_ip_port = from_address(to);
         handle->send(data, size, to_ip_port);
         if (handle->fullifed_bytes == 0 && handle->last_error != 0)
-            throw std::runtime_error("Error while receiving data from udp socket with error code: " + std::to_string(handle->last_error));
+            throw std::runtime_error("Error while receiving data from udp socket with error or status code: " + std::to_string(handle->last_error));
         return handle->fullifed_bytes;
     }
 
