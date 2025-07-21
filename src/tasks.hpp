@@ -24,13 +24,6 @@
 namespace fast_task {
     class task;
 
-    namespace __ {
-        struct resume_task {
-            std::shared_ptr<task> task;
-            uint16_t awake_check;
-        };
-    }
-
     class task_cancellation {
         bool in_landing = false;
         friend void forceCancelCancellation(const task_cancellation& cancel_token);
@@ -42,15 +35,16 @@ namespace fast_task {
     };
 
     class task_mutex {
+        struct resume_task;
         friend class task_recursive_mutex;
-        std::list<__::resume_task> resume_task;
+        std::list<resume_task> resume_task;
         fast_task::timed_mutex no_race;
         class task* current_task = nullptr;
 
     public:
-        task_mutex() = default;
-
+        task_mutex();
         ~task_mutex();
+
         void lock();
         bool try_lock();
         bool try_lock_for(size_t milliseconds);
@@ -66,9 +60,9 @@ namespace fast_task {
         uint32_t recursive_count = 0;
 
     public:
-        task_recursive_mutex() = default;
-
+        task_recursive_mutex();
         ~task_recursive_mutex();
+
         void lock();
         bool try_lock();
         bool try_lock_for(size_t milliseconds);
@@ -80,17 +74,18 @@ namespace fast_task {
     };
 
     class task_rw_mutex {
+        struct resume_task;
         friend class task_recursive_mutex;
-        std::list<__::resume_task> resume_task;
+        std::list<resume_task> resume_task;
         std::list<task*> readers;
         fast_task::timed_mutex no_race;
         class task* current_writer_task = nullptr;
 
 
     public:
-        task_rw_mutex() = default;
-
+        task_rw_mutex();
         ~task_rw_mutex();
+
         void read_lock();
         bool try_read_lock();
         bool try_read_lock_for(size_t milliseconds);
@@ -165,22 +160,22 @@ namespace fast_task {
         }
     };
 
-    enum class mutex_unify_type : uint8_t {
-        noting,
-        nmut,
-        ntimed,
-        nrec,
-        std_nmut,
-        std_ntimed,
-        std_nrec,
-        umut,
-        urmut,
-        urwmut_r,
-        urwmut_w,
-        mmut
-    };
-
     class mutex_unify {
+        enum class mutex_unify_type : uint8_t {
+            noting,
+            nmut,
+            ntimed,
+            nrec,
+            std_nmut,
+            std_ntimed,
+            std_nrec,
+            umut,
+            urmut,
+            urwmut_r,
+            urwmut_w,
+            mmut
+        };
+
         union {
             std::mutex* std_nmut = nullptr;
             std::timed_mutex* std_ntimed;
@@ -263,7 +258,8 @@ namespace fast_task {
     };
 
     class task_condition_variable {
-        std::list<__::resume_task> resume_task;
+        struct resume_task;
+        std::list<resume_task> resume_task;
         fast_task::mutex no_race;
 
     public:
@@ -292,6 +288,14 @@ namespace fast_task {
         semi_realtime,
     };
 
+    //The task class has two modes,
+    // the normal one allows setting `func` function which would start on ist own stack
+    //  on exception it allows to catch using `ex_handle`
+    // the extended one allows handling on_start, on_await and on_cancel events.
+    //  the on_await and on_cancel executed on calling thread and could be used for example, to wrap the sockets in the task interface
+    //  the on_start executed on its own stack like normal one and allows using all synchronization primitives
+    //    but when is_coroutine is set the task could be restarted, to complete coroutine use this_task::the_coroutine_ended
+    //    this could be used to reduce allocated memory for stacks, because they would be reused for other coroutines
     class task {
         void awaitEnd(fast_task::unique_lock<mutex_unify>& l);
 
@@ -307,6 +311,7 @@ namespace fast_task {
 
                 struct {
                     bool is_extended_mode : 1;
+                    bool is_coroutine : 1;
                     void* data;
                     void (*on_start)(void*);
                     void (*on_await)(void*);
@@ -319,6 +324,7 @@ namespace fast_task {
                 callbacks_data(callbacks_data&& move) noexcept {
                     if (move.is_extended_mode) {
                         is_extended_mode = true;
+                        extended_mode.is_coroutine = move.extended_mode.is_coroutine;
                         extended_mode.data = move.extended_mode.data;
                         extended_mode.on_start = move.extended_mode.on_start;
                         extended_mode.on_await = move.extended_mode.on_await;
@@ -383,19 +389,21 @@ namespace fast_task {
         static size_t max_running_tasks;
         static bool enable_task_naming;
 
-        task(void* data, void (*on_start)(void*), void (*on_await)(void*), void (*on_cancel)(void*), void (*on_destruct)(void*));
+        task(void* data, void (*on_start)(void*), void (*on_await)(void*), void (*on_cancel)(void*), void (*on_destruct)(void*), bool is_coroutine = false);
         task(std::function<void()> func, std::function<void(const std::exception_ptr&)> ex_handle = nullptr, std::chrono::high_resolution_clock::time_point timeout = std::chrono::high_resolution_clock::time_point::min(), task_priority priority = task_priority::high);
 
         task(task&& mov) noexcept;
         ~task();
-        void set_auto_bind_worker(bool enable = true);
-        void set_worker_id(uint16_t id);
-        void set_priority(task_priority);
-        task_priority get_priority() const;
-        size_t get_counter_interrupt() const;
-        size_t get_counter_context_switch() const;
-        bool is_cancellation_requested() const;
-        bool is_ended() const;
+        void set_auto_bind_worker(bool enable = true) noexcept;
+        void set_worker_id(uint16_t id) noexcept;
+        void set_priority(task_priority) noexcept;
+        void set_timeout(std::chrono::high_resolution_clock::time_point timeout) noexcept;
+        task_priority get_priority() const noexcept;
+        size_t get_counter_interrupt() const noexcept;
+        size_t get_counter_context_switch() const noexcept;
+        std::chrono::high_resolution_clock::time_point get_timeout() const noexcept;
+        bool is_cancellation_requested() const noexcept;
+        bool is_ended() const noexcept;
         void await_task();
         void callback(const std::shared_ptr<task>& task);
         void notify_cancel();
@@ -420,23 +428,15 @@ namespace fast_task {
                 throw std::runtime_error("This task is not in extended mode");
         };
 
-        static void run(std::function<void()>&& func);
+        static std::shared_ptr<task> run(std::function<void()>&& func);
 
 
         static void await_task(const std::shared_ptr<task>& lgr_task, bool make_start = true);
         static void await_multiple(std::list<std::shared_ptr<task>>& tasks, bool pre_started = false, bool release = false);
         static void await_multiple(std::shared_ptr<task>* tasks, size_t len, bool pre_started = false, bool release = false);
-        static void notify_cancel(std::shared_ptr<task>& task);
-        static void notify_cancel(std::list<std::shared_ptr<task>>& tasks);
-        static void await_notify_cancel(std::shared_ptr<task>& task);
-        static void await_notify_cancel(std::list<std::shared_ptr<task>>& tasks);
 
-        static std::shared_ptr<task> callback_dummy(void* dummy_data, void (*on_start)(void*), void (*on_await)(void*), void (*on_cancel)(void*), void (*on_destruct)(void*));
-        static std::shared_ptr<task> callback_dummy(void* dummy_data, void (*on_await)(void*), void (*on_cancel)(void*), void (*on_destruct)(void*));
-
-
-        static std::shared_ptr<task> dummy_task();
-        static std::shared_ptr<task> cxx_native_bridge(bool& checker, fast_task::condition_variable_any& cd);
+        static std::shared_ptr<task> callback_dummy(void* dummy_data, void (*on_start)(void*), void (*on_await)(void*), void (*on_cancel)(void*), void (*on_destruct)(void*), bool is_coroutine = false);
+        static std::shared_ptr<task> callback_dummy(void* dummy_data, void (*on_await)(void*), void (*on_cancel)(void*), void (*on_destruct)(void*), bool is_coroutine = false);
     };
 
     namespace scheduler {
@@ -506,17 +506,20 @@ namespace fast_task {
         bool is_cancellation_requested() noexcept;
         void self_cancel();
         bool is_task() noexcept;
+        void the_coroutine_ended() noexcept;
     }
 
     class task_semaphore {
-        std::list<__::resume_task> resume_task;
+        struct resume_task;
+        std::list<resume_task> resume_task;
         fast_task::timed_mutex no_race;
         fast_task::condition_variable_any native_notify;
         size_t allow_threshold = 0;
         size_t max_threshold = 0;
 
     public:
-        task_semaphore() = default;
+        task_semaphore();
+        ~task_semaphore();
 
         void setMaxThreshold(size_t val);
         void lock();
@@ -529,8 +532,9 @@ namespace fast_task {
     };
 
     class task_limiter {
+        struct resume_task;
         std::list<void*> lock_check;
-        std::list<__::resume_task> resume_task;
+        std::list<resume_task> resume_task;
         fast_task::timed_mutex no_race;
         fast_task::condition_variable_any native_notify;
         size_t allow_threshold = 0;
@@ -539,7 +543,8 @@ namespace fast_task {
         void unchecked_unlock();
 
     public:
-        task_limiter() = default;
+        task_limiter();
+        ~task_limiter();
 
         void set_max_threshold(size_t val);
         void lock();

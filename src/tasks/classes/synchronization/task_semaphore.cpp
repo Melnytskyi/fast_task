@@ -8,6 +8,16 @@
 #include <tasks/_internal.hpp>
 
 namespace fast_task {
+    struct task_semaphore::resume_task {
+        std::shared_ptr<task> task;
+        uint16_t awake_check;
+    };
+
+    task_semaphore::task_semaphore() {}
+
+    task_semaphore::~task_semaphore() {}
+
+
     void task_semaphore::setMaxThreshold(size_t val) {
         fast_task::lock_guard guard(no_race);
         release_all();

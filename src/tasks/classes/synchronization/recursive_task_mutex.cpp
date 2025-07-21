@@ -8,6 +8,8 @@
 #include <tasks/_internal.hpp>
 
 namespace fast_task {
+    task_recursive_mutex::task_recursive_mutex() {}
+
     task_recursive_mutex::~task_recursive_mutex() {
         assert(recursive_count == 0 && "Mutex destroyed while locked");
     }

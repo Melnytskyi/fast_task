@@ -189,9 +189,18 @@ namespace fast_task {
         stop_timer();
         flush_interput_data;
         fast_task::lock_guard l(get_data(loc.curr_task).no_race);
+        --glob.in_run_tasks;
+        if (get_data(loc.curr_task).callbacks.is_extended_mode) {
+            if (get_data(loc.curr_task).callbacks.extended_mode.is_coroutine) {
+                get_data(loc.curr_task).started = false;
+                get_data(loc.curr_task).result_notify.notify_all();
+                if (task::max_running_tasks)
+                    glob.can_started_new_notifier.notify_one();
+                return std::move(*loc.stack_current_context);
+            }
+        }
         get_data(loc.curr_task).end_of_life = true;
         get_data(loc.curr_task).result_notify.notify_all();
-        --glob.in_run_tasks;
         if (task::max_running_tasks)
             glob.can_started_new_notifier.notify_one();
         return std::move(*loc.stack_current_context);
@@ -205,7 +214,6 @@ namespace fast_task {
             timer_reinit();
             if (!get_data(loc.curr_task).callbacks.is_extended_mode)
                 get_data(loc.curr_task).callbacks.normal_mode.ex_handle(loc.ex_ptr);
-            //TODO : implement extended mode
         } catch (task_cancellation& cancel) {
             forceCancelCancellation(cancel);
         } catch (const boost::context::detail::forced_unwind&) {
@@ -315,11 +323,18 @@ namespace fast_task {
         bool pseudo_handle_caught_ex = false;
         if (!loc.curr_task)
             return false;
-        if (!get_data(loc.curr_task).callbacks.is_extended_mode)
+        if (!get_data(loc.curr_task).callbacks.is_extended_mode) {
             if (!get_data(loc.curr_task).callbacks.normal_mode.func)
                 return true;
+        } else if (!get_data(loc.curr_task).callbacks.extended_mode.on_start) {
+            get_data(loc.curr_task).end_of_life = true;
+            get_data(loc.curr_task).result_notify.notify_all();
+            goto end_task;
+        }
+
         if (get_data(loc.curr_task).end_of_life)
             goto end_task;
+
 
         worker_mode_desk(old_name, "process task - " + std::to_string(this_task::get_id()));
         if (*loc.stack_current_context) {

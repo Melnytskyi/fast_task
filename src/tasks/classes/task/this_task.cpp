@@ -29,10 +29,19 @@ namespace fast_task::this_task {
     }
 
     void self_cancel() {
-        if (loc.is_task_thread)
+        if (loc.is_task_thread) {
+            if (loc.curr_task)
+                loc.curr_task->notify_cancel();
             throw task_cancellation();
-        else
+        } else
             throw std::runtime_error("Thread attempted cancel self, like task");
+    }
+
+    void the_coroutine_ended() noexcept {
+        if (loc.is_task_thread)
+            if (loc.curr_task)
+                if (get_data(loc.curr_task).callbacks.is_extended_mode)
+                    get_data(loc.curr_task).callbacks.extended_mode.is_coroutine = false;
     }
 
 #pragma optimize("", off)
@@ -41,23 +50,23 @@ namespace fast_task::this_task {
     #pragma GCC optimize("O0")
 #endif
 
-        void sleep_until(std::chrono::high_resolution_clock::time_point time_point) {
-            if (loc.is_task_thread) {
-                fast_task::lock_guard guard(get_data(loc.curr_task).no_race);
-                makeTimeWait(time_point);
-                swapCtxRelock(get_data(loc.curr_task).no_race);
-            } else
-                this_thread::sleep_until(time_point);
-        }
+    void sleep_until(std::chrono::high_resolution_clock::time_point time_point) {
+        if (loc.is_task_thread) {
+            fast_task::lock_guard guard(get_data(loc.curr_task).no_race);
+            makeTimeWait(time_point);
+            swapCtxRelock(get_data(loc.curr_task).no_race);
+        } else
+            this_thread::sleep_until(time_point);
+    }
 
-        void yield() {
-            if (loc.is_task_thread) {
-                fast_task::lock_guard guard(glob.task_thread_safety);
-                glob.tasks.push(loc.curr_task);
-                swapCtxRelock(glob.task_thread_safety);
-            } else
-                this_thread::yield();
-        }
+    void yield() {
+        if (loc.is_task_thread) {
+            fast_task::lock_guard guard(glob.task_thread_safety);
+            glob.tasks.push(loc.curr_task);
+            swapCtxRelock(glob.task_thread_safety);
+        } else
+            this_thread::yield();
+    }
 
 #if defined(__GNUC__) && !defined(__clang__)
     #pragma GCC pop_options

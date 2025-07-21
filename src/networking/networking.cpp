@@ -1642,9 +1642,11 @@ namespace fast_task::networking {
     #pragma endregion
 
     class udp_handle : public util::native_worker_handle, public util::native_worker_manager {
-        std::shared_ptr<task> notify_task;
+        task_mutex mt;
+        task_condition_variable cv;
         SOCKET socket;
         sockaddr_in6 server_address;
+        bool is_complete = false;
 
     public:
         DWORD fullifed_bytes;
@@ -1667,7 +1669,9 @@ namespace fast_task::networking {
         void handle(void* data, util::native_worker_handle* overlapped, unsigned long fullifed_bytes) override {
             this->fullifed_bytes = fullifed_bytes;
             last_error = (DWORD)overlapped->overlapped.Internal;
-            scheduler::start(notify_task);
+            unique_lock lock(mt);
+            is_complete = true;
+            cv.notify_all();
         }
 
         void recv(uint8_t* data, uint32_t size, sockaddr_storage& sender, int& sender_len) {
@@ -1676,18 +1680,20 @@ namespace fast_task::networking {
             WSABUF buf;
             buf.buf = (char*)data;
             buf.len = size;
-            notify_task = task::dummy_task();
             DWORD flags = 0;
+            mutex_unify u(mt);
+            unique_lock lock(u);
+            is_complete = false;
             if (WSARecvFrom(socket, &buf, 1, nullptr, &flags, (sockaddr*)&sender, &sender_len, (OVERLAPPED*)this, nullptr)) {
                 if (WSAGetLastError() != WSA_IO_PENDING) {
                     last_error = WSAGetLastError();
                     fullifed_bytes = 0;
-                    notify_task = nullptr;
                     return;
                 }
             }
-            task::await_task(notify_task);
-            notify_task = nullptr;
+            while (is_complete)
+                cv.wait(lock);
+            is_complete = false;
         }
 
         void send(uint8_t* data, uint32_t size, sockaddr_storage& to) {
@@ -1695,17 +1701,19 @@ namespace fast_task::networking {
             WSABUF buf;
             buf.buf = (char*)data;
             buf.len = size;
-            notify_task = task::dummy_task();
+            mutex_unify u(mt);
+            unique_lock lock(u);
+            is_complete = false;
             if (WSASendTo(socket, &buf, 1, nullptr, 0, (sockaddr*)&to, sizeof(to), (OVERLAPPED*)this, nullptr)) {
                 if (WSAGetLastError() != WSA_IO_PENDING) {
                     last_error = WSAGetLastError();
                     fullifed_bytes = 0;
-                    notify_task = nullptr;
                     return;
                 }
             }
-            task::await_task(notify_task);
-            notify_task = nullptr;
+            while (is_complete)
+                cv.wait(lock);
+            is_complete = false;
         }
 
         address local_address() {
@@ -3299,9 +3307,11 @@ namespace fast_task::networking {
     };
 
     class udp_handle : public util::native_worker_handle, public util::native_worker_manager {
-        std::shared_ptr<task> notify_task;
+        task_mutex mt;
+        task_condition_variable cv;
         SOCKET socket;
         sockaddr_in6 server_address;
+        bool is_complete = false;
 
     public:
         uint32_t fullifed_bytes;
@@ -3323,27 +3333,36 @@ namespace fast_task::networking {
         void handle(util::native_worker_handle* overlapped, io_uring_cqe* cqe) override {
             this->fullifed_bytes = cqe->res > -1 ? cqe->res : 0;
             this->last_error = cqe->res > -1 ? 0 : errno;
-            scheduler::start(notify_task);
+
+            unique_lock lock(mt);
+            is_complete = true;
+            cv.notify_all();
         }
 
         void recv(uint8_t* data, uint32_t size, sockaddr_storage& sender, int& sender_len) {
             if (socket == INVALID_SOCKET)
                 throw std::runtime_error("Socket not connected");
-            notify_task = task::dummy_task();
+            mutex_unify u(mt);
+            unique_lock lock(u);
+            is_complete = false;
             socklen_t sender_len_ = 0;
             util::native_workers_singleton::post_recvfrom(this, socket, data, size, 0, (sockaddr*)&sender, &sender_len_);
-            task::await_task(notify_task);
+            while (is_complete)
+                cv.wait(lock);
+            is_complete = false;
             sender_len = sender_len_;
-            notify_task = nullptr;
         }
 
         void send(uint8_t* data, uint32_t size, sockaddr_storage& to) {
             if (socket == INVALID_SOCKET)
                 throw std::runtime_error("Socket not connected");
-            notify_task = task::dummy_task();
+            mutex_unify u(mt);
+            unique_lock lock(u);
+            is_complete = false;
             util::native_workers_singleton::post_sendto(this, socket, data, size, 0, (sockaddr*)&to, sizeof(sockaddr_in6));
-            task::await_task(notify_task);
-            notify_task = nullptr;
+            while (is_complete)
+                cv.wait(lock);
+            is_complete = false;
         }
 
         address local_address() {

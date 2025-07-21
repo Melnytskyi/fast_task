@@ -7,17 +7,16 @@
 #include <tasks.hpp>
 
 namespace fast_task {
-    struct task_query_handle {                  //344 [sizeof]
-        task_mutex no_race;                     //188
-        bool destructed = false;                //1
-        bool is_running = false;                //1
-        ;                                       //1 [padding]
-        task_condition_variable end_of_query;   //104
-        ;                                       //7 [padding]
+    struct task_query_handle {                  //144 [sizeof]
+        task_mutex no_race;                     //56
+        task_condition_variable end_of_query;   //32
         std::list<std::shared_ptr<task>> tasks; //24
         task_query* tq = nullptr;               //8
         size_t now_at_execution = 0;            //8
         size_t at_execution_max = 0;            //8
+        bool destructed = false;                //1
+        bool is_running = false;                //1
+                                                //6 [padding]
     };
 
     task_query::task_query(size_t at_execution_max) {
@@ -47,43 +46,59 @@ namespace fast_task {
         }
     }
 
-    void redefine_start_function(std::shared_ptr<task>& task, task_query_handle* tqh) {
-        if (get_data(task).callbacks.is_extended_mode)
-            throw std::runtime_error("Extended mode does not support task queries");
-        auto old_func = std::move(get_data(task).callbacks.normal_mode.func);
-        get_data(task).callbacks.normal_mode.func = [old_func = std::move(old_func), tqh]() {
-            try {
-                old_func();
-            } catch (...) {
-                __TaskQuery_add_task_leave(tqh);
-                throw;
+    std::shared_ptr<task> redefine_start_function(std::shared_ptr<task>& task, task_query_handle* tqh) {
+        if (get_data(task).callbacks.is_extended_mode) {
+            if (!get_data(task).callbacks.extended_mode.on_start)
+                throw std::logic_error("task_query::add requires in extended mode the on_start variable to be set");
+            else if (!get_data(task).callbacks.extended_mode.is_coroutine)
+                throw std::logic_error("task_query::add requires in extended mode the coroutine mode to be disabled");
+            else {
+                return task::run([task, tqh]() {
+                    try {
+                        task::await_task(task, true);
+                    } catch (...) {
+                        __TaskQuery_add_task_leave(tqh);
+                        throw;
+                    }
+                    __TaskQuery_add_task_leave(tqh);
+                });
             }
-            __TaskQuery_add_task_leave(tqh);
-        };
+        } else {
+            auto old_func = std::move(get_data(task).callbacks.normal_mode.func);
+            get_data(task).callbacks.normal_mode.func = [old_func = std::move(old_func), tqh]() {
+                try {
+                    old_func();
+                } catch (...) {
+                    __TaskQuery_add_task_leave(tqh);
+                    throw;
+                }
+                __TaskQuery_add_task_leave(tqh);
+            };
+        }
     }
 
     void task_query::add(std::shared_ptr<task>&& querying_task) {
         if (get_data(querying_task).started)
             throw std::runtime_error("Task already started");
-        redefine_start_function(querying_task, handle);
+        auto new_task = redefine_start_function(querying_task, handle);
         fast_task::lock_guard lock(handle->no_race);
         if (handle->is_running && handle->now_at_execution <= handle->at_execution_max) {
-            scheduler::start(std::move(querying_task));
+            scheduler::start(std::move(new_task));
             handle->now_at_execution++;
         } else
-            handle->tasks.push_back(std::move(querying_task));
+            handle->tasks.push_back(std::move(new_task));
     }
 
     void task_query::add(std::shared_ptr<task>& querying_task) {
         if (get_data(querying_task).started)
             throw std::runtime_error("Task already started");
-        redefine_start_function(querying_task, handle);
+        auto new_task = redefine_start_function(querying_task, handle);
         fast_task::lock_guard lock(handle->no_race);
         if (handle->is_running && handle->now_at_execution <= handle->at_execution_max) {
-            scheduler::start(querying_task);
+            scheduler::start(new_task);
             handle->now_at_execution++;
         } else
-            handle->tasks.push_back(querying_task);
+            handle->tasks.push_back(new_task);
     }
 
     void task_query::enable() {

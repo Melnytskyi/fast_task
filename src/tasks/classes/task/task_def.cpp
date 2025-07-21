@@ -10,9 +10,10 @@
 namespace fast_task {
     bool task::enable_task_naming = false;
 
-    task::task(void* data, void (*on_start)(void*), void (*on_await)(void*), void (*on_cancel)(void*), void (*on_destruct)(void*))
+    task::task(void* data, void (*on_start)(void*), void (*on_await)(void*), void (*on_cancel)(void*), void (*on_destruct)(void*), bool is_coroutine)
         : data_{.timeout = std::chrono::high_resolution_clock::time_point::min()} {
         data_.callbacks.is_extended_mode = true;
+        data_.callbacks.extended_mode.is_coroutine = is_coroutine;
         data_.callbacks.extended_mode.data = data;
         data_.callbacks.extended_mode.on_start = on_start;
         data_.callbacks.extended_mode.on_await = on_await;
@@ -49,24 +50,28 @@ namespace fast_task {
         }
     }
 
-    void task::set_auto_bind_worker(bool enable) {
+    void task::set_auto_bind_worker(bool enable) noexcept {
         data_.auto_bind_worker = enable;
         if (enable)
             data_.bind_to_worker_id = -1;
     }
 
-    void task::set_worker_id(uint16_t id) {
+    void task::set_worker_id(uint16_t id) noexcept {
         data_.bind_to_worker_id = id;
         data_.auto_bind_worker = false;
     }
 
-    void task::set_priority(task_priority p) {
+    void task::set_priority(task_priority p) noexcept {
 #if tasks_enable_preemptive_scheduler_preview
         data_.priority = p;
 #endif
     }
 
-    task_priority task::get_priority() const {
+    void task::set_timeout(std::chrono::high_resolution_clock::time_point timeout) noexcept {
+        data_.timeout = timeout;
+    }
+
+    task_priority task::get_priority() const noexcept {
 #if tasks_enable_preemptive_scheduler_preview
         return data_.priority;
 #else
@@ -74,7 +79,7 @@ namespace fast_task {
 #endif
     }
 
-    size_t task::get_counter_interrupt() const {
+    size_t task::get_counter_interrupt() const noexcept {
 #if tasks_enable_preemptive_scheduler_preview
         return data_.interrupt_count;
 #else
@@ -82,15 +87,19 @@ namespace fast_task {
 #endif
     }
 
-    size_t task::get_counter_context_switch() const {
+    size_t task::get_counter_context_switch() const noexcept {
         return data_.context_switch_count;
     }
 
-    bool task::is_cancellation_requested() const {
+    std::chrono::high_resolution_clock::time_point task::get_timeout() const noexcept {
+        return data_.timeout;
+    }
+
+    bool task::is_cancellation_requested() const noexcept {
         return data_.make_cancel;
     }
 
-    bool task::is_ended() const {
+    bool task::is_ended() const noexcept {
         return !data_.end_of_life;
     }
 
@@ -100,13 +109,16 @@ namespace fast_task {
 
         if (!data_.started)
             throw std::runtime_error("Task is not started");
-        if (data_.callbacks.is_extended_mode)
+        if (data_.callbacks.is_extended_mode) {
             data_.callbacks.extended_mode.on_await(data_.callbacks.extended_mode.data);
-        else {
-            mutex_unify uni(data_.no_race);
-            fast_task::unique_lock l(uni);
-            awaitEnd(l);
+            if (!data_.callbacks.extended_mode.on_start)
+                return;
+            if (!data_.started)
+                return;
         }
+        mutex_unify uni(data_.no_race);
+        fast_task::unique_lock l(uni);
+        awaitEnd(l);
     }
 
     void task::callback(const std::shared_ptr<task>& task) {
@@ -121,8 +133,7 @@ namespace fast_task {
     void task::notify_cancel() {
         if (data_.callbacks.is_extended_mode)
             data_.callbacks.extended_mode.on_cancel(data_.callbacks.extended_mode.data);
-        else
-            data_.make_cancel = true;
+        data_.make_cancel = true;
     }
 
     void task::await_notify_cancel() {
@@ -135,8 +146,10 @@ namespace fast_task {
         awaitEnd(l);
     }
 
-    void task::run(std::function<void()>&& func) {
-        scheduler::start(std::shared_ptr<task>(new task(std::move(func))));
+    std::shared_ptr<task> task::run(std::function<void()>&& func) {
+        auto r = std::shared_ptr<task>(new task(std::move(func)));
+        scheduler::start(r);
+        return r;
     }
 
     void task::await_task(const std::shared_ptr<task>& lgr_task, bool make_start) {
@@ -145,13 +158,17 @@ namespace fast_task {
 
         if (!lgr_task->data_.started && make_start)
             scheduler::start(lgr_task);
-        if (lgr_task->data_.callbacks.is_extended_mode)
+        if (lgr_task->data_.callbacks.is_extended_mode) {
             lgr_task->data_.callbacks.extended_mode.on_await(lgr_task->data_.callbacks.extended_mode.data);
-        else {
-            mutex_unify uni(lgr_task->data_.no_race);
-            fast_task::unique_lock l(uni);
-            lgr_task->awaitEnd(l);
+            if (!lgr_task->data_.callbacks.extended_mode.on_start)
+                return;
+            if (!(make_start || lgr_task->data_.started))
+                return;
         }
+
+        mutex_unify uni(lgr_task->data_.no_race);
+        fast_task::unique_lock l(uni);
+        lgr_task->awaitEnd(l);
     }
 
     void task::await_multiple(std::list<std::shared_ptr<task>>& tasks, bool pre_started, bool release) {
@@ -186,50 +203,11 @@ namespace fast_task {
                 await_task(*tasks, false);
     }
 
-
-    void task::notify_cancel(std::shared_ptr<task>& lgr_task) {
-        if (lgr_task->data_.callbacks.is_extended_mode)
-            lgr_task->data_.callbacks.extended_mode.on_cancel(lgr_task->data_.callbacks.extended_mode.data);
-        else
-            lgr_task->data_.make_cancel = true;
+    std::shared_ptr<task> task::callback_dummy(void* dummy_data, void (*on_start)(void*), void (*on_await)(void*), void (*on_cancel)(void*), void (*on_destruct)(void*), bool is_coroutine) {
+        return std::make_shared<task>(dummy_data, on_start, on_await, on_cancel, on_destruct, is_coroutine);
     }
 
-    void task::notify_cancel(std::list<std::shared_ptr<task>>& tasks) {
-        for (auto& it : tasks)
-            notify_cancel(it);
-    }
-
-    void task::await_notify_cancel(std::shared_ptr<task>& lgr_task) {
-        if (lgr_task->data_.callbacks.is_extended_mode)
-            lgr_task->data_.callbacks.extended_mode.on_cancel(lgr_task->data_.callbacks.extended_mode.data);
-
-        mutex_unify uni(lgr_task->data_.no_race);
-        fast_task::unique_lock l(uni);
-        lgr_task->data_.make_cancel = true;
-        lgr_task->awaitEnd(l);
-    }
-
-    void task::await_notify_cancel(std::list<std::shared_ptr<task>>& tasks) {
-        for (auto& it : tasks)
-            await_notify_cancel(it);
-    }
-
-    std::shared_ptr<task> task::cxx_native_bridge(bool& checker, fast_task::condition_variable_any& cd) {
-        return std::make_shared<task>([&] {
-            checker = true;
-            cd.notify_one();
-        });
-    }
-
-    std::shared_ptr<task> task::callback_dummy(void* dummy_data, void (*on_start)(void*), void (*on_await)(void*), void (*on_cancel)(void*), void (*on_destruct)(void*)) {
-        return std::make_shared<task>(dummy_data, on_start, on_await, on_cancel, on_destruct);
-    }
-
-    std::shared_ptr<task> task::callback_dummy(void* dummy_data, void (*on_await)(void*), void (*on_cancel)(void*), void (*on_destruct)(void*)) {
-        return std::make_shared<task>(dummy_data, nullptr, on_await, on_cancel, on_destruct);
-    }
-
-    std::shared_ptr<task> task::dummy_task() {
-        return std::make_shared<task>([] {});
+    std::shared_ptr<task> task::callback_dummy(void* dummy_data, void (*on_await)(void*), void (*on_cancel)(void*), void (*on_destruct)(void*), bool is_coroutine) {
+        return std::make_shared<task>(dummy_data, nullptr, on_await, on_cancel, on_destruct, is_coroutine);
     }
 }
