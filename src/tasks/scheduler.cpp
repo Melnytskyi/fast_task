@@ -320,7 +320,6 @@ namespace fast_task {
     }
 
     bool execute_task(const std::string& old_name) {
-        bool pseudo_handle_caught_ex = false;
         if (!loc.curr_task)
             return false;
         if (!get_data(loc.curr_task).callbacks.is_extended_mode) {
@@ -349,7 +348,6 @@ namespace fast_task {
             get_data(loc.curr_task).relock_1.relock_start();
             get_data(loc.curr_task).relock_2.relock_start();
         }
-    caught_ex:
         if (loc.ex_ptr) {
             ++glob.in_run_tasks;
             *loc.stack_current_context = boost::context::callcc(std::allocator_arg, light_stack(1048576 /*1 mb*/), context_exec);
@@ -398,11 +396,12 @@ namespace fast_task {
     void taskExecutor(bool end_in_task_out, bool prevent_naming) {
         set_interruptTask();
         std::string old_name = end_in_task_out && !prevent_naming ? _get_name_thread_dbg(_thread_id()) : "";
-        if (!prevent_naming)
+        if (!prevent_naming) {
             if (old_name.empty())
                 _set_name_thread_dbg("Worker " + std::to_string(_thread_id()));
             else
                 _set_name_thread_dbg(old_name + " | (Temporal worker) " + std::to_string(_thread_id()));
+        }
 
         fast_task::unique_lock guard(glob.task_thread_safety);
         ++glob.executors;
@@ -447,12 +446,20 @@ namespace fast_task {
         std::list<std::shared_ptr<task>>& queue = context.tasks;
         auto& safety = context.no_race;
         auto& notifier = context.new_task_notifier;
-        bool pseudo_handle_caught_ex = false;
         _set_name_thread_dbg("Binded worker " + std::to_string(_thread_id()) + ": " + std::to_string(id));
 
         fast_task::unique_lock guard(safety);
         context.executors++;
         while (true) {
+            while (queue.empty()) {
+                if (context.in_close) {
+                    guard.unlock();
+                    break;
+                }
+                notifier.wait(guard);
+            }
+            loc.curr_task = queue.back();
+            queue.pop_back();
             guard.unlock();
 
             if (get_data(loc.curr_task).bind_to_worker_id != (uint16_t)id) {

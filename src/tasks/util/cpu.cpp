@@ -119,9 +119,8 @@ int psnip_cpu_count(void) {
     int c;
 
 #if defined(_WIN32)
-    DWORD_PTR lpProcessAffinityMask;
-    DWORD_PTR lpSystemAffinityMask;
-    int i;
+    DWORD_PTR lpProcessAffinityMask = 0;
+    DWORD_PTR lpSystemAffinityMask = 0;
 #elif defined(PSNIP_CPU__IMPL_SYSCONF) && defined(HW_NCPU)
     int mib[2];
     size_t len;
@@ -135,7 +134,7 @@ int psnip_cpu_count(void) {
         c = -1;
     } else {
         c = 0;
-        for (i = 0; lpProcessAffinityMask != 0; lpProcessAffinityMask >>= 1)
+        for (; lpProcessAffinityMask != 0; lpProcessAffinityMask >>= 1)
             c += lpProcessAffinityMask & 1;
     }
 #elif defined(_SC_NPROCESSORS_ONLN)

@@ -74,6 +74,7 @@ namespace fast_task {
                 }
                 __TaskQuery_add_task_leave(tqh);
             };
+            return task;
         }
     }
 

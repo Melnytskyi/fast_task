@@ -109,30 +109,31 @@ namespace fast_task {
                 std::rethrow_exception(ex_ptr);
         }
 
-        template <class T>
-        void wait_with(fast_task::unique_lock<T>& lock) {
+        template <class Lock>
+        void wait_with(fast_task::unique_lock<Lock>& lock) {
             mutex_unify um(task_mt);
             fast_task::unique_lock l(um);
-            lock.unlock();
-            while (!_is_ready)
-                task_cv.wait(l);
-            lock.lock();
+            {
+                fast_task::relock_guard relock(lock);
+                while (!_is_ready)
+                    task_cv.wait(l);
+            }
             if (ex_ptr)
                 std::rethrow_exception(ex_ptr);
         }
 
-        template <class T>
-        void wait_with(std::unique_lock<T>& lock) {
+        template <class Lock>
+        void wait_with(std::unique_lock<Lock>& lock) {
             mutex_unify um(task_mt);
             fast_task::unique_lock l(um);
-            lock.unlock();
-            while (!_is_ready)
-                task_cv.wait(l);
-            lock.lock();
+            {
+                fast_task::relock_guard relock(lock);
+                while (!_is_ready)
+                    task_cv.wait(l);
+            }
             if (ex_ptr)
                 std::rethrow_exception(ex_ptr);
         }
-
 
         bool wait_for(std::chrono::milliseconds ms) {
             return wait_until(std::chrono::high_resolution_clock::now() + ms);
@@ -253,8 +254,11 @@ namespace fast_task {
         void wait_with(fast_task::unique_lock<T>& lock) {
             mutex_unify um(task_mt);
             fast_task::unique_lock l(um);
-            while (!_is_ready)
-                task_cv.wait(l);
+            {
+                fast_task::relock_guard relock(lock);
+                while (!_is_ready)
+                    task_cv.wait(l);
+            }
             if (ex_ptr)
                 std::rethrow_exception(ex_ptr);
         }
@@ -263,8 +267,11 @@ namespace fast_task {
         void wait_with(std::unique_lock<T>& lock) {
             mutex_unify um(task_mt);
             fast_task::unique_lock l(um);
-            while (!_is_ready)
-                task_cv.wait(l);
+            {
+                fast_task::relock_guard relock(lock);
+                while (!_is_ready)
+                    task_cv.wait(l);
+            }
             if (ex_ptr)
                 std::rethrow_exception(ex_ptr);
         }

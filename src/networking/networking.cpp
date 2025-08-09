@@ -76,11 +76,10 @@ namespace fast_task::networking {
         else {
             std::string port_(std::to_string(port));
             addrinfo* addr_res;
-            if (auto res = getaddrinfo(ip, port_.c_str(), nullptr, &addr_res)) {
+            if (getaddrinfo(ip, port_.c_str(), nullptr, &addr_res)) {
                 freeaddrinfo(addr_res);
                 throw std::invalid_argument("Invalid ip address");
             }
-            auto& res = *addr_res;
             memset(&addr_storage, 0, sizeof(addr_storage));
             memcpy(&addr_storage, addr_res->ai_addr, addr_res->ai_addrlen);
             freeaddrinfo(addr_res);
@@ -102,11 +101,10 @@ namespace fast_task::networking {
             internal_makeIP4(addr_storage, ip.c_str(), port_num);
         else {
             addrinfo* addr_res;
-            if (auto res = getaddrinfo(ip.c_str(), port + 1, nullptr, &addr_res)) {
+            if (getaddrinfo(ip.c_str(), port + 1, nullptr, &addr_res)) {
                 freeaddrinfo(addr_res);
                 throw std::invalid_argument("Invalid ip4 address");
             }
-            auto& res = *addr_res;
             memset(&addr_storage, 0, sizeof(addr_storage));
             memcpy(&addr_storage, addr_res->ai_addr, addr_res->ai_addrlen);
             freeaddrinfo(addr_res);
@@ -363,7 +361,7 @@ namespace fast_task::networking {
             bool accept_flag = false;
             bool close_flag = false;
 
-            operation(tcp_handle_2* self, const std::shared_ptr<task_mutex>& lock, util::native_worker_manager* manager) : self(self), cv_mutex(lock), util::native_worker_handle(manager) {}
+            operation(tcp_handle_2* self, const std::shared_ptr<task_mutex>& lock, util::native_worker_manager* manager) : util::native_worker_handle(manager), cv_mutex(lock), self(self) {}
 
             void handle(void* _, unsigned long dwBytesTransferred, util::native_worker_handle* overlapped) {
                 fast_task::unique_lock lock(*cv_mutex);
@@ -383,7 +381,7 @@ namespace fast_task::networking {
         bool delayed_buffer_clean = false;
 
         tcp_handle_2(SOCKET socket, int32_t buffer_len, util::native_worker_manager* manager)
-            : socket(socket), buffer_size(buffer_len), manager(manager) {
+            : manager(manager), socket(socket), buffer_size(buffer_len) {
             if (buffer_len < 0)
                 buffer_size = 0x1000;
         }
@@ -995,7 +993,6 @@ namespace fast_task::networking {
         std::function<bool(address& client, address& server)> accept_filter;
         address _address;
         SOCKET main_socket;
-        int timeout_ms;
 
     public:
         TcpConfiguration config;
@@ -1238,7 +1235,7 @@ namespace fast_task::networking {
 
     public:
         TcpNetworkManager(const address& ip_port, size_t acceptors, const TcpConfiguration& config)
-            : acceptors(acceptors), config(config), main_socket(INVALID_SOCKET), timeout_ms(0), _address(ip_port) {
+            : _address(ip_port), main_socket(INVALID_SOCKET), config(config), acceptors(acceptors) {
         }
 
         ~TcpNetworkManager() override {
@@ -1653,7 +1650,7 @@ namespace fast_task::networking {
         DWORD last_error;
 
         udp_handle(sockaddr_in6& address, uint32_t timeout_ms)
-            : util::native_worker_handle(this), last_error(0), fullifed_bytes(0), server_address{0} {
+            : util::native_worker_handle(this), server_address{0}, fullifed_bytes(0), last_error(0) {
             socket = WSASocketW(AF_INET6, SOCK_DGRAM, IPPROTO_UDP, NULL, 0, WSA_FLAG_OVERLAPPED);
 
             if (socket == INVALID_SOCKET)
@@ -1697,7 +1694,6 @@ namespace fast_task::networking {
         }
 
         void send(uint8_t* data, uint32_t size, sockaddr_storage& to) {
-            sockaddr_in6 sender;
             WSABUF buf;
             buf.buf = (char*)data;
             buf.len = size;

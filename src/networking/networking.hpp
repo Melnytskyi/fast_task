@@ -140,7 +140,7 @@ namespace fast_task {
         };
 
         class TcpNetworkServer {
-            struct TcpNetworkManager* handle;
+            class TcpNetworkManager* handle;
 
         public:
             TcpNetworkServer(std::function<void(TcpNetworkBlocking&)> on_connect, const address& ip_port, size_t acceptors = 10, const TcpConfiguration& config = {});

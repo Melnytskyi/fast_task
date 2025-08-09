@@ -57,7 +57,7 @@ namespace fast_task::files {
         bool fullifed = false;
 
         File_(bool buffer_alloc, util::native_worker_manager* manager, void* handle, char* buffer, uint32_t buffer_size, uint64_t offset)
-            : native_worker_handle(manager), handle(handle), is_read(false), buffer_size(buffer_size), offset(offset), required_full(true), buffer_alloc(buffer_alloc) {
+            : native_worker_handle(manager), handle(handle), buffer_size(buffer_size), offset(offset), is_read(false), required_full(true), buffer_alloc(buffer_alloc) {
             overlapped.Offset = offset & 0xFFFFFFFF;
             overlapped.OffsetHigh = (offset >> 32) & 0xFFFFFFFF;
             if (buffer_alloc) {
@@ -69,7 +69,7 @@ namespace fast_task::files {
         }
 
         File_(util::native_worker_manager* manager, void* handle, uint32_t buffer_size, uint64_t offset, bool required_full)
-            : native_worker_handle(manager), handle(handle), is_read(true), buffer_size(buffer_size), offset(offset), required_full(required_full), buffer_alloc(true) {
+            : native_worker_handle(manager), handle(handle), buffer_size(buffer_size), offset(offset), is_read(true), required_full(required_full), buffer_alloc(true) {
             overlapped.Offset = offset & 0xFFFFFFFF;
             overlapped.OffsetHigh = (offset >> 32) & 0xFFFFFFFF;
 
@@ -77,7 +77,7 @@ namespace fast_task::files {
         }
 
         File_(util::native_worker_manager* manager, void* handle, char* buffer, uint32_t buffer_size, uint64_t offset, bool required_full)
-            : native_worker_handle(manager), handle(handle), is_read(true), buffer_size(buffer_size), offset(offset), required_full(required_full), buffer_alloc(false) {
+            : native_worker_handle(manager), handle(handle), buffer_size(buffer_size), offset(offset), is_read(true), required_full(required_full), buffer_alloc(false) {
             overlapped.Offset = offset & 0xFFFFFFFF;
             overlapped.OffsetHigh = (offset >> 32) & 0xFFFFFFFF;
 
@@ -289,7 +289,7 @@ namespace fast_task::files {
             }
         }
 
-        bool status_filter(DWORD last_error, uint32_t len) {
+        bool status_filter(NTSTATUS last_error, uint32_t len) {
             switch (last_error) {
             case STATUS_PENDING:
                 return false;
@@ -349,7 +349,7 @@ namespace fast_task::files {
 
         uint64_t _file_size() {
             uint64_t size = 0;
-            FILE_STANDARD_INFO finfo = {0};
+            FILE_STANDARD_INFO finfo = {};
             if (GetFileInformationByHandleEx(_handle, FileStandardInfo, &finfo, sizeof(finfo))) {
                 if (finfo.EndOfFile.QuadPart > 0)
                     size = finfo.EndOfFile.QuadPart;

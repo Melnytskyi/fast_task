@@ -85,7 +85,6 @@ namespace fast_task::scheduler {
 
     void assign_bind_only_executor(uint16_t id, uint16_t fixed_count, bool allow_implicit_start) {
         fast_task::lock_guard guard(glob.binded_workers_safety);
-        uint16_t try_count = 0;
         if (glob.binded_workers.contains(id))
             throw std::runtime_error("Worker already assigned!");
         if (id == (uint16_t)-1)

@@ -556,8 +556,8 @@ namespace fast_task {
     };
 
     class task_query {
-        class task_query_handle* handle;
-        friend void __TaskQuery_add_task_leave(class task_query_handle* tqh);
+        struct task_query_handle* handle;
+        friend void __TaskQuery_add_task_leave(struct task_query_handle* tqh);
 
     public:
         task_query(size_t at_execution_max = 0);
