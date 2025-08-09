@@ -86,4 +86,4 @@ Contributions to `fast_task` are welcome. Whether it's bug fixes, new features, 
 
 ## License
 
-This project is licensed under the **Boost Software License - Version 1.0**. For more details, please see the [LICENSE](https://www.google.com/search?q=LICENSE) file. 
+This project is licensed under the **Boost Software License - Version 1.0**. For more details, please see the [LICENSE](https://github.com/Melnytskyi/fast_task/blob/main/LICENSE) file. 
