@@ -1,67 +1,89 @@
-# Fast task
+[![Language](https://img.shields.io/badge/C%2B%2B-20-blue.svg)](https://isocpp.org/) 
+[![License](https://img.shields.io/badge/License-BSL%201.0-orange.svg)](LICENSE)
 
-is stack based green threads implementation for C++
+# Fast Task: A High-Performance C++ Green Thread Library
 
-this library aims to be simple, fast and powerful tool for concurrent programming in C++
-it could simply replaced with std::thread, the only difference is the tasks do not implement joining or detaching
+**Fast task** is a modern, stack-based green thread implementation for C++ designed to be a simple, fast, and powerful tool for concurrent programming. It offers a lightweight alternative to `std::thread`, focusing on high-performance asynchronous operations and efficient task management.
 
-# Features
-- guard pages for stacks(Windows)
-- asynchronous file I/O
-- asynchronous network I/O
-- universal synchronization primitives for tasks and native threads
-- task cancellation
-- callbacks support
-- preemptive scheduler (testing in Windows, Linux is incomplete)
-    this feature could be disabled by setting tasks_enable_preemptive_scheduler_preview macro to false
-- improved native threads implementation
-    if application still using std::thread, this should be used when preemptive scheduler is enabled
-    it prevents context switching by scheduler when mutex is locked to avoid deadlocks
-    also it used more latest api for windows and reduces memory usage
-    adds thread pausing and resuming support for windows and linux(linux is untested)
+The library is built with a C++20 compiler and is designed for Windows and Linux platforms. 
 
-# Getting started
+## Core Features
 
-Prerequisites:
-- C++20 compiler
-- CMake 3.31 or later
-- Windows or Linux
-- vcpkg package manager (included in project as submodule)
+- **Lightweight Green Threads:** Utilizes stack-based green threads for efficient context switching, enabling high concurrency with minimal overhead.
+- **Asynchronous I/O:**
+    - **File I/O:** Non-blocking file operations for reading and writing data.
+    - **Network I/O:** Asynchronous networking capabilities for building responsive and scalable applications.
+- **Advanced Synchronization:** Provides a rich set of synchronization primitives that work seamlessly with both tasks and native threads, including:
+    - Mutexes (`task_mutex`, `task_recursive_mutex`, `task_rw_mutex`)
+    - Condition Variables (`task_condition_variable`)
+    - Semaphores (`task_semaphore`)
+    - Utilities like `task_limiter` and `task_query` for managing concurrent access.
+- **Preemptive Scheduler:** Includes a preemptive scheduler (currently in testing for Windows, with incomplete Linux support) to prevent tasks from monopolizing execution time. This feature can be disabled if not needed.
+- **Task Cancellation:** Supports cancellation of tasks, allowing for graceful termination of operations. 
+- **Improved Native Thread Implementation:** Offers an enhanced version of native threads that prevents deadlocks when used with the preemptive scheduler by avoiding context switching when a mutex is locked.  It also utilizes modern APIs for Windows, reduces memory usage, and adds support for thread pausing and resuming.
+- **Callback Support:** Facilitates the use of callbacks for handling asynchronous events.
+- **Stack Protection:** Implements guard pages for stacks on Windows to protect against stack overflows.
 
-Building:
+## Getting Started
 
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/Melnytskyi/fast_task.git
-   git submodules update --init --recursive
-   ```
+### Prerequisites
 
-2. Initialize vcpkg:
-   ```bash
-   cd fast_task
-   ./vcpkg/bootstrap-vcpkg.sh
-   ```
-3. Build the project:
-   ```bash
-   ./vcpkg/vcpkg install
-   cmake -B build -S . -DCMAKE_TOOLCHAIN_FILE=./vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-windows-static 
-   cmake --build build
-   ```
+- **C++20 Compiler:** A compiler that supports C++20 is required.
+- **CMake:** Version 3.31 or later. 
+- **Operating System:** Windows or Linux.
+- **vcpkg:** The vcpkg package manager is used for dependency management and is included as a submodule in the project.
 
-Or your could use cmake presets in your IDE (e.g., Visual Studio, CLion) to configure and build the project.
+### Building the Project
 
-# Usage
+1.  **Clone the Repository:**
+    ```bash
+    git clone https://github.com/Melnytskyi/fast_task.git
+    cd fast_task
+    git submodule update --init --recursive
+    ```
 
-Add library to your project:
+2.  **Initialize vcpkg:**
+    ```bash
+    ./vcpkg/bootstrap-vcpkg.sh
+    ```
+
+3.  **Install Dependencies and Build:**
+    ```bash
+    ./vcpkg/vcpkg install
+    cmake -B build -S . -DCMAKE_TOOLCHAIN_FILE=./vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-windows-static
+    cmake --build build
+    ```
+    Alternatively, you can use the CMake presets available in the `CMakePresets.json` file with an IDE like Visual Studio or CLion to configure and build the project. 
+
+### Project Structure
+
+The repository is organized as follows:
+-   `include/`: Public header files for the library. 
+-   `src/`: Source code, including implementation details for tasks, networking, and file operations. 
+-   `CMakeLists.txt`: The main CMake build script.
+-   `vcpkg.json`: vcpkg manifest for dependencies (`boost-context`, `boost-lockfree`).
+-   `LICENSE`: The Boost Software License under which the project is distributed. 
+
+## Usage
+
+To integrate `fast_task` into your project, you can add it as a subdirectory in your `CMakeLists.txt`:
+
 ```cmake
 add_subdirectory(fast_task)
-target_link_libraries(PROJECT_NAME PRIVATE fast_task)
+target_link_libraries(YOUR_PROJECT_NAME PRIVATE fast_task)
+````
+
+If you have installed the library globally, you can use `find_package`:
+
+```cmake
+find_package(fast_task CONFIG REQUIRED)
+target_link_libraries(YOUR_PROJECT_NAME PRIVATE fast_task)
 ```
-You can also use `find_package(fast_task CONFIG REQUIRED)` if you have installed the library globally.
 
+## Contributing
 
-# Contributing
-Contributions are welcome! Please open issues or pull requests for bug fixes, features, or documentation improvements.
+Contributions to `fast_task` are welcome. Whether it's bug fixes, new features, or documentation improvements, please feel free to open an issue or submit a pull request. 
 
-# License
-This project is licensed under the Boost Software License - V1.0. See the LICENSE file for details.
+## License
+
+This project is licensed under the **Boost Software License - Version 1.0**. For more details, please see the [LICENSE](https://www.google.com/search?q=LICENSE) file. 
