@@ -80,7 +80,7 @@ namespace fast_task {
                 uint32_t interval_ms = 3000;
                 uint8_t retry_count = 3;                                        //255 is max,0 - invalid value and will be replaced by 3
                 uint32_t user_timeout_ms = idle_ms + interval_ms * retry_count; //not recommended to decrease this value
-            } keep_alive_settings;
+            } keep_alive_settings{};
         };
 
 

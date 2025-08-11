@@ -26,6 +26,7 @@
 #include <condition_variable>
 #include <files/files.hpp>
 #include <filesystem>
+#include <functional>
 #include <networking/networking.hpp>
 #include <tasks/util/native_workers_singleton.hpp>
 #include <variant>

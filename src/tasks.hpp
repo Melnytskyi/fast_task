@@ -303,13 +303,15 @@ namespace fast_task {
             union callbacks_data {
                 bool is_extended_mode : 1 = false;
 
-                struct {
+                struct normal_mode_t {
                     bool is_extended_mode : 1;
                     std::function<void(const std::exception_ptr&)> ex_handle;
                     std::function<void()> func;
+
+                    ~normal_mode_t() {}
                 } normal_mode;
 
-                struct {
+                struct extended_mode_t {
                     bool is_extended_mode : 1;
                     bool is_coroutine : 1;
                     void* data;
@@ -317,6 +319,8 @@ namespace fast_task {
                     void (*on_await)(void*);
                     void (*on_cancel)(void*);
                     void (*on_destruct)(void*);
+
+                    ~extended_mode_t() {}
                 } extended_mode;
 
                 callbacks_data() : normal_mode() {}
