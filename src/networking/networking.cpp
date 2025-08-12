@@ -1249,7 +1249,7 @@ namespace fast_task::networking {
             auto error = (DWORD)overlapped->overlapped.Internal;
             if (data.accept_flag) {
                 data.transferred = dwBytesTransferred;
-                new_connection(&data, *data.self, 0 == dwBytesTransferred && !error);
+                new_connection(&data, *data.self, !error);
             } else if (0 != dwBytesTransferred && !error)
                 data.handle(_data, dwBytesTransferred, &data);
             else {
