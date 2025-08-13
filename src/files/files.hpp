@@ -184,213 +184,53 @@ namespace fast_task {
             FileHandle& file_handle;
             std::vector<char> buffer;
 
-            std::streamsize make_sputn(const char* s, std::streamsize n) {
-                size_t bytes_to_write = std::min(static_cast<size_t>(n), size_t(epptr() - pptr()));
-                traits_type::copy(pptr(), s, bytes_to_write);
-                pbump(static_cast<int>(bytes_to_write));
-                if (flush_buffer() == traits_type::eof())
-                    return traits_type::eof();
-                return static_cast<std::streamsize>(bytes_to_write);
-            }
+            std::streamsize make_sputn(const char* s, std::streamsize n);
 
         protected:
-            std::streamsize xsgetn(char* s, std::streamsize n) override {
-                if (gptr() == egptr()) {
-                    uint32_t bytes_read = file_handle.read(reinterpret_cast<uint8_t*>(buffer.data()), buffer_size);
-                    if (bytes_read == 0)
-                        return traits_type::eof();
-                    setg(buffer.data(), buffer.data(), buffer.data() + bytes_read);
-                }
-                size_t bytes_to_copy = std::min(static_cast<size_t>(n), size_t(egptr() - gptr()));
-                traits_type::copy(s, gptr(), bytes_to_copy);
-                gbump(static_cast<int>(bytes_to_copy));
-                return static_cast<std::streamsize>(bytes_to_copy);
-            }
-
-            std::streamsize xsputn(const char* s, std::streamsize n) override {
-                auto res = n;
-                while (n > 0) {
-                    size_t available_space = pptr() < epptr() ? epptr() - pptr() : 0;
-                    if (available_space == 0) {
-                        if (flush_buffer() == traits_type::eof())
-                            return traits_type::eof();
-                        available_space = epptr() - pptr();
-                    }
-                    size_t bytes_to_write = std::min(static_cast<size_t>(n), available_space);
-                    auto sput_res = make_sputn(s, static_cast<std::streamsize>(bytes_to_write));
-                    if (sput_res == traits_type::eof())
-                        return traits_type::eof();
-                    s += bytes_to_write;
-                    n -= static_cast<std::streamsize>(bytes_to_write);
-                }
-                return res;
-            }
-
-            int_type underflow() override {
-                if (gptr() == egptr()) {
-                    uint32_t bytes_read = file_handle.read(reinterpret_cast<uint8_t*>(buffer.data()), buffer_size);
-                    if (bytes_read == 0)
-                        return traits_type::eof();
-                    setg(buffer.data(), buffer.data(), buffer.data() + bytes_read);
-                }
-                return traits_type::to_int_type(*gptr());
-            }
-
-            int_type overflow(int_type ch) override {
-                if (ch != traits_type::eof()) {
-                    *pptr() = traits_type::to_char_type(ch);
-                    pbump(1);
-                }
-                if (flush_buffer() == traits_type::eof())
-                    return traits_type::eof();
-                return traits_type::not_eof(ch);
-            }
-
-            int flush_buffer() {
-                size_t size = pptr() - pbase();
-                if (size > 0) {
-                    file_handle.write_inline(reinterpret_cast<const uint8_t*>(pbase()), static_cast<uint32_t>(size));
-                    setp(buffer.data(), buffer.data() + buffer_size);
-                }
-                return 0;
-            }
-
-            int sync() override {
-                return flush_buffer() == traits_type::eof() ? -1 : 0;
-            }
-
-            std::streampos seekoff(std::streamoff off, std::ios_base::seekdir dir, std::ios_base::openmode which) override {
-                pointer_offset offset_mode;
-                switch (dir) {
-                case std::ios_base::beg:
-                    offset_mode = pointer_offset::begin;
-                    break;
-                case std::ios_base::cur:
-                    offset_mode = pointer_offset::current;
-                    break;
-                case std::ios_base::end:
-                    offset_mode = pointer_offset::end;
-                    break;
-                default:
-                    return std::streampos(std::streamoff(-1));
-                }
-
-                pointer pointer_type = (which & std::ios_base::out) ? pointer::write : pointer::read;
-
-                if (!file_handle.seek_pos(static_cast<uint64_t>(off), offset_mode, pointer_type))
-                    return std::streampos(std::streamoff(-1));
-
-                return std::streampos(static_cast<std::streamoff>(file_handle.tell_pos(pointer_type)));
-            }
-
-            std::streampos seekpos(std::streampos pos, std::ios_base::openmode which) override {
-                return seekoff(static_cast<std::streamoff>(pos), std::ios_base::beg, which);
-            }
+            std::streamsize xsgetn(char* s, std::streamsize n) override;
+            std::streamsize xsputn(const char* s, std::streamsize n) override;
+            int_type underflow() override;
+            int_type overflow(int_type ch) override;
+            int flush_buffer();
+            int sync() override;
+            std::streampos seekoff(std::streamoff off, std::ios_base::seekdir dir, std::ios_base::openmode which) override;
+            std::streampos seekpos(std::streampos pos, std::ios_base::openmode which) override;
 
         public:
-            explicit async_filebuf(FileHandle& fh)
-                : file_handle(fh), buffer(buffer_size) {
-                setg(buffer.data(), buffer.data(), buffer.data());
-                setp(buffer.data(), buffer.data() + buffer_size);
-            }
+            explicit async_filebuf(FileHandle& fh);
 
-            ~async_filebuf() {
-                flush_buffer();
-            }
+            ~async_filebuf();
         };
 
         class async_iofstream : public std::iostream {
-            FileHandle handle;
-
-            static open_mode to_open_mode(ios_base::openmode mode) {
-                if (mode & ios_base::in) {
-                    return open_mode::read;
-                } else if (mode & ios_base::out) {
-                    return open_mode::write;
-                } else if (mode & ios_base::app) {
-                    return open_mode::append;
-                } else {
-                    return open_mode::read_write;
-                }
-            }
-
-            static on_open_action to_open_action(ios_base::openmode mode) {
-                if (mode & ios_base::trunc) {
-                    return on_open_action::truncate_exists;
-                } else if (mode & ios_base::ate) {
-                    return on_open_action::open_exists;
-                } else if (mode & ios_base::app) {
-                    return on_open_action::always_new;
-                } else {
-                    return on_open_action::open;
-                }
-            }
-
-            static share_mode to_protection_mode(ios_base::openmode op_mod, int mode) {
-                share_mode protection_mode;
-                if (mode & _SH_DENYRW) {
-                    protection_mode.read = false;
-                    protection_mode.write = false;
-                } else if (mode & _SH_DENYWR) {
-                    protection_mode.read = true;
-                    protection_mode.write = false;
-                } else if (mode & _SH_DENYRD) {
-                    protection_mode.read = false;
-                    protection_mode.write = true;
-                } else if (mode & _SH_DENYNO) {
-                    protection_mode.read = true;
-                    protection_mode.write = true;
-                } else if (mode & _SH_SECURE) {
-                    if (op_mod & ios_base::in)
-                        protection_mode.read = true;
-                    else
-                        protection_mode.read = false;
-                    protection_mode.write = false;
-                } else {
-                    protection_mode.read = true;
-                    protection_mode.write = true;
-                }
-                return protection_mode;
-            }
-
+            FileHandle* handle;
 
         public:
             explicit async_iofstream(
                 const char* str,
                 ios_base::openmode mode = ios_base::in,
                 int prot = ios_base::_Default_open_prot
-            )
-                : async_iofstream(std::filesystem::path(str), mode, prot) {}
-
+            );
             explicit async_iofstream(
                 const std::string& str,
                 ios_base::openmode mode = ios_base::in,
                 int prot = ios_base::_Default_open_prot
-            )
-                : async_iofstream(std::filesystem::path(str), mode, prot) {}
-
+            );
             explicit async_iofstream(
                 const wchar_t* str,
                 ios_base::openmode mode = ios_base::in,
                 int prot = ios_base::_Default_open_prot
-            )
-                : async_iofstream(std::filesystem::path(str), mode, prot) {}
-
+            );
             explicit async_iofstream(
                 const std::wstring& str,
                 ios_base::openmode mode = ios_base::in,
                 int prot = ios_base::_Default_open_prot
-            )
-                : async_iofstream(std::filesystem::path(str), mode, prot) {}
-
+            );
             explicit async_iofstream(
                 const std::filesystem::path& path,
                 ios_base::openmode mode = ios_base::in | ios_base::out,
                 int prot = ios_base::_Default_open_prot
-            )
-                : std::iostream(new async_filebuf(handle)),
-                  handle(path.string(), to_open_mode(mode), to_open_action(mode), _sync_flags{}, to_protection_mode(mode, prot)) {
-            }
+            );
 
             explicit async_iofstream(
                 const std::filesystem::path& path,
@@ -399,19 +239,10 @@ namespace fast_task {
                 _sync_flags flags = {},
                 share_mode share = {},
                 pointer_mode pointer_mode = pointer_mode::combined
-            )
-                : std::iostream(new async_filebuf(handle)),
-                  handle(path.string(), open, action, flags, share, pointer_mode) {
-            }
+            );
+            ~async_iofstream();
 
-            ~async_iofstream() {
-                flush();
-                delete rdbuf();
-            }
-
-            bool is_open() const {
-                return handle.internal_get_handle() != nullptr;
-            }
+            bool is_open() const;
         };
     }
 }

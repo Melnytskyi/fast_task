@@ -1125,7 +1125,7 @@ namespace fast_task::files {
                     io_error_to_exception(data->error);
                     std::unreachable();
                 } else
-                    return std::vector<uint8_t>((uint8_t*)data->data, (uint8_t*)data->data + data->completed_bytes);               
+                    return std::vector<uint8_t>((uint8_t*)data->data, (uint8_t*)data->data + data->completed_bytes);
             });
         }
 
@@ -1388,20 +1388,24 @@ namespace fast_task::files {
         sync_flags.posix_semantics = flags.posix_semantics;
         sync_flags.random_access = flags.random_access;
         sync_flags.sequential_scan = flags.sequential_scan;
+        handle = nullptr;
         try {
             handle = new FileManager(path, path_len, open, action, share, sync_flags, pointer_mode);
         } catch (...) {
-            delete handle;
+            if (handle)
+                delete handle;
             throw;
         }
     }
 
     FileHandle::FileHandle(const char* path, size_t path_len, open_mode open, on_open_action action, _sync_flags flags, share_mode share, pointer_mode pointer_mode) noexcept(false) {
+        handle = nullptr;
         try {
             handle = new FileManager(path, path_len, open, action, share, flags, pointer_mode);
             mimic_non_async.emplace();
         } catch (...) {
-            delete handle;
+            if (handle)
+                delete handle;
             throw;
         }
     }
@@ -1524,5 +1528,243 @@ namespace fast_task::files {
 
     std::string FileHandle::get_path() const {
         return handle->get_path();
+    }
+
+    std::streamsize async_filebuf::make_sputn(const char* s, std::streamsize n) {
+        size_t bytes_to_write = std::min(static_cast<size_t>(n), size_t(epptr() - pptr()));
+        traits_type::copy(pptr(), s, bytes_to_write);
+        pbump(static_cast<int>(bytes_to_write));
+        if (flush_buffer() == traits_type::eof())
+            return traits_type::eof();
+        return static_cast<std::streamsize>(bytes_to_write);
+    }
+
+    std::streamsize async_filebuf::xsgetn(char* s, std::streamsize n) {
+        if (gptr() == egptr()) {
+            uint32_t bytes_read = file_handle.read(reinterpret_cast<uint8_t*>(buffer.data()), buffer_size);
+            if (bytes_read == 0)
+                return traits_type::eof();
+            setg(buffer.data(), buffer.data(), buffer.data() + bytes_read);
+        }
+        size_t bytes_to_copy = std::min(static_cast<size_t>(n), size_t(egptr() - gptr()));
+        traits_type::copy(s, gptr(), bytes_to_copy);
+        gbump(static_cast<int>(bytes_to_copy));
+        return static_cast<std::streamsize>(bytes_to_copy);
+    }
+
+    std::streamsize async_filebuf::xsputn(const char* s, std::streamsize n) {
+        auto res = n;
+        while (n > 0) {
+            size_t available_space = pptr() < epptr() ? epptr() - pptr() : 0;
+            if (available_space == 0) {
+                if (flush_buffer() == traits_type::eof())
+                    return traits_type::eof();
+                available_space = epptr() - pptr();
+            }
+            size_t bytes_to_write = std::min(static_cast<size_t>(n), available_space);
+            auto sput_res = make_sputn(s, static_cast<std::streamsize>(bytes_to_write));
+            if (sput_res == traits_type::eof())
+                return traits_type::eof();
+            s += bytes_to_write;
+            n -= static_cast<std::streamsize>(bytes_to_write);
+        }
+        return res;
+    }
+
+    async_filebuf::int_type async_filebuf::underflow() {
+        if (gptr() == egptr()) {
+            uint32_t bytes_read = file_handle.read(reinterpret_cast<uint8_t*>(buffer.data()), buffer_size);
+            if (bytes_read == 0)
+                return traits_type::eof();
+            setg(buffer.data(), buffer.data(), buffer.data() + bytes_read);
+        }
+        return traits_type::to_int_type(*gptr());
+    }
+
+    async_filebuf::int_type async_filebuf::overflow(int_type ch) {
+        if (ch != traits_type::eof()) {
+            *pptr() = traits_type::to_char_type(ch);
+            pbump(1);
+        }
+        if (flush_buffer() == traits_type::eof())
+            return traits_type::eof();
+        return traits_type::not_eof(ch);
+    }
+
+    int async_filebuf::flush_buffer() {
+        size_t size = pptr() - pbase();
+        if (size > 0) {
+            file_handle.write_inline(reinterpret_cast<const uint8_t*>(pbase()), static_cast<uint32_t>(size));
+            setp(buffer.data(), buffer.data() + buffer_size);
+        }
+        return 0;
+    }
+
+    int async_filebuf::sync() {
+        return flush_buffer() == traits_type::eof() ? -1 : 0;
+    }
+
+    std::streampos async_filebuf::seekoff(std::streamoff off, std::ios_base::seekdir dir, std::ios_base::openmode which) {
+        pointer_offset offset_mode;
+        switch (dir) {
+        case std::ios_base::beg:
+            offset_mode = pointer_offset::begin;
+            break;
+        case std::ios_base::cur:
+            offset_mode = pointer_offset::current;
+            break;
+        case std::ios_base::end:
+            offset_mode = pointer_offset::end;
+            break;
+        default:
+            return std::streampos(std::streamoff(-1));
+        }
+
+        pointer pointer_type = (which & std::ios_base::out) ? pointer::write : pointer::read;
+
+        if (!file_handle.seek_pos(static_cast<uint64_t>(off), offset_mode, pointer_type))
+            return std::streampos(std::streamoff(-1));
+
+        return std::streampos(static_cast<std::streamoff>(file_handle.tell_pos(pointer_type)));
+    }
+
+    std::streampos async_filebuf::seekpos(std::streampos pos, std::ios_base::openmode which) {
+        return seekoff(static_cast<std::streamoff>(pos), std::ios_base::beg, which);
+    }
+
+    async_filebuf::async_filebuf(FileHandle& fh)
+        : file_handle(fh), buffer(buffer_size) {
+        setg(buffer.data(), buffer.data(), buffer.data());
+        setp(buffer.data(), buffer.data() + buffer_size);
+    }
+
+    async_filebuf::~async_filebuf() {
+        flush_buffer();
+    }
+
+    FileHandle* handle;
+
+    open_mode to_open_mode(std::ios_base::openmode mode) {
+        if (mode & std::ios_base::in) {
+            return open_mode::read;
+        } else if (mode & std::ios_base::out) {
+            return open_mode::write;
+        } else if (mode & std::ios_base::app) {
+            return open_mode::append;
+        } else {
+            return open_mode::read_write;
+        }
+    }
+
+    on_open_action to_open_action(std::ios_base::openmode mode) {
+        if (mode & std::ios_base::trunc) {
+            return on_open_action::truncate_exists;
+        } else if (mode & std::ios_base::ate) {
+            return on_open_action::open_exists;
+        } else if (mode & std::ios_base::app) {
+            return on_open_action::always_new;
+        } else {
+            return on_open_action::open;
+        }
+    }
+
+    static share_mode to_protection_mode(std::ios_base::openmode op_mod, int mode) {
+        share_mode protection_mode;
+        if (mode & _SH_DENYRW) {
+            protection_mode.read = false;
+            protection_mode.write = false;
+        } else if (mode & _SH_DENYWR) {
+            protection_mode.read = true;
+            protection_mode.write = false;
+        } else if (mode & _SH_DENYRD) {
+            protection_mode.read = false;
+            protection_mode.write = true;
+        } else if (mode & _SH_DENYNO) {
+            protection_mode.read = true;
+            protection_mode.write = true;
+        } else if (mode & _SH_SECURE) {
+            if (op_mod & std::ios_base::in)
+                protection_mode.read = true;
+            else
+                protection_mode.read = false;
+            protection_mode.write = false;
+        } else {
+            protection_mode.read = true;
+            protection_mode.write = true;
+        }
+        return protection_mode;
+    }
+
+    async_iofstream::async_iofstream(
+        const char* str,
+        ios_base::openmode mode,
+        int prot
+    )
+        : async_iofstream(std::filesystem::path(str), mode, prot) {}
+
+    async_iofstream::async_iofstream(
+        const std::string& str,
+        ios_base::openmode mode,
+        int prot
+    )
+        : async_iofstream(std::filesystem::path(str), mode, prot) {}
+
+    async_iofstream::async_iofstream(
+        const wchar_t* str,
+        ios_base::openmode mode,
+        int prot
+    )
+        : async_iofstream(std::filesystem::path(str), mode, prot) {}
+
+    async_iofstream::async_iofstream(
+        const std::wstring& str,
+        ios_base::openmode mode,
+        int prot
+    )
+        : async_iofstream(std::filesystem::path(str), mode, prot) {}
+
+    async_iofstream::async_iofstream(
+        const std::filesystem::path& path,
+        ios_base::openmode mode,
+        int prot
+    ) : std::iostream(nullptr) {
+        try {
+            handle = new FileHandle(path.string(), to_open_mode(mode), to_open_action(mode), _sync_flags{}, to_protection_mode(mode, prot));
+            set_rdbuf(new async_filebuf(*handle));
+            clear();
+        } catch (...) {
+            setstate(std::ios_base::badbit);
+        }
+    }
+
+    async_iofstream::async_iofstream(
+        const std::filesystem::path& path,
+        open_mode open,
+        on_open_action action,
+        _sync_flags flags,
+        share_mode share,
+        pointer_mode pointer_mode
+    ) : std::iostream(nullptr) {
+        try {
+            handle = new FileHandle(path.string(), open, action, flags, share, pointer_mode);
+            set_rdbuf(new async_filebuf(*handle));
+            clear();
+        } catch (...) {
+            setstate(std::ios_base::badbit);
+        }
+    }
+
+    async_iofstream::~async_iofstream() {
+        if (handle) {
+            if (rdbuf()) {
+                flush();
+                delete rdbuf();
+            }
+            delete handle;
+        }
+    }
+
+    bool async_iofstream::is_open() const {
+        return handle != nullptr;
     }
 }
