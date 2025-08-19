@@ -79,6 +79,7 @@ namespace fast_task {
             bool posix_semantics : 1; //used in windows
             bool random_access : 1;   //hint to cache manager
             bool sequential_scan : 1; //hint to cache manager
+            bool at_end : 1;
 
             uint8_t get() const {
                 union union_t {
@@ -106,6 +107,7 @@ namespace fast_task {
             bool sequential_scan : 1; //hint to cache manager
             bool no_buffering : 1;    //hint to cache manager, affect seek and read write operations, like disc page size aligned operations
             bool write_through : 1;   //hint to cache manager
+            bool at_end : 1;
 
             uint8_t get() const {
                 union union_t {

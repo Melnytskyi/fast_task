@@ -588,7 +588,7 @@ namespace fast_task::networking {
         }
 
         bool valid() {
-            return socket != INVALID_SOCKET;
+            return socket != INVALID_SOCKET && invalid_reason == TcpError::none;
         }
 
         void reset() {
@@ -699,7 +699,7 @@ namespace fast_task::networking {
             : handle(handle), last_error(TcpError::none) {}
 
         ~TcpNetworkStreamImpl() override {
-            if (handle) {
+            if (checkup()) {
                 write_lock lg(mutex);
                 handle->close();
                 delete handle;
@@ -709,7 +709,7 @@ namespace fast_task::networking {
 
         std::span<char> read_available_ref() override {
             read_lock lock(mutex);
-            if (!handle)
+            if (!checkup())
                 return {};
             unsigned long readed = 0;
             char* data = handle->read_no_copy(readed);
@@ -718,7 +718,7 @@ namespace fast_task::networking {
 
         int read_available(char* buffer, int buffer_len) override {
             read_lock lock(mutex);
-            if (!handle)
+            if (!checkup())
                 return 0;
             int readed = 0;
             handle->read(buffer, buffer_len, readed);
@@ -727,14 +727,14 @@ namespace fast_task::networking {
 
         bool data_available() override {
             read_lock lock(mutex);
-            if (handle)
+            if (checkup())
                 return handle->bytes_available();
             return false;
         }
 
         void write(const char* data, size_t size) override {
             read_lock lock(mutex);
-            if (handle) {
+            if (checkup()) {
                 handle->send(data, size);
                 checkup();
             }
@@ -742,21 +742,15 @@ namespace fast_task::networking {
 
         bool write_file(char* path, size_t path_len, uint64_t data_len, uint64_t offset, uint32_t chunks_size) override {
             read_lock lock(mutex);
-            if (handle) {
-                if (!checkup())
-                    return false;
+            if (checkup())
                 return handle->send_file(path, path_len, data_len, offset, chunks_size);
-            }
             return false;
         }
 
         bool write_file(void* fhandle, uint64_t data_len, uint64_t offset, uint32_t chunks_size) override {
             read_lock lock(mutex);
-            if (handle) {
-                if (!checkup())
-                    return false;
+            if (checkup())
                 return handle->send_file(fhandle, data_len, offset, chunks_size);
-            }
             return false;
         }
 
@@ -766,7 +760,7 @@ namespace fast_task::networking {
 
         void force_write_and_close(const char* data, size_t size) override {
             read_lock lock(mutex);
-            if (handle) {
+            if (checkup()) {
                 handle->send_and_close(data, size);
                 last_error = handle->invalid_reason;
             }
@@ -774,7 +768,7 @@ namespace fast_task::networking {
 
         void close() override {
             read_lock lock(mutex);
-            if (handle) {
+            if (checkup()) {
                 handle->close();
                 last_error = handle->invalid_reason;
             }
@@ -782,7 +776,7 @@ namespace fast_task::networking {
 
         void reset() override {
             read_lock lock(mutex);
-            if (handle) {
+            if (checkup()) {
                 handle->reset();
                 last_error = handle->invalid_reason;
             }
@@ -790,7 +784,7 @@ namespace fast_task::networking {
 
         void rebuffer(int32_t new_size) override {
             read_lock lock(mutex);
-            if (handle)
+            if (checkup())
                 handle->rebuffer(new_size);
         }
 
@@ -801,14 +795,14 @@ namespace fast_task::networking {
 
         TcpError error() override {
             read_lock lock(mutex);
-            if (handle)
+            if (checkup())
                 return handle->invalid_reason;
             return last_error;
         }
 
         address local_address() override {
             write_lock lg(mutex);
-            if (!handle)
+            if (!checkup())
                 return {};
             universal_address addr;
             int socklen = sizeof(universal_address);
@@ -819,7 +813,7 @@ namespace fast_task::networking {
 
         address remote_address() override {
             write_lock lg(mutex);
-            if (!handle->valid())
+            if (!checkup())
                 return {};
             universal_address addr;
             int socklen = sizeof(universal_address);
@@ -864,9 +858,7 @@ namespace fast_task::networking {
 
         std::vector<char> read(uint32_t len) override {
             fast_task::lock_guard lg(mutex);
-            if (handle) {
-                if (!checkup())
-                    return {};
+            if (checkup()) {
                 std::vector<char> buf;
                 buf.resize(len);
                 handle->read_fixed(buf.data(), len);
@@ -881,44 +873,35 @@ namespace fast_task::networking {
 
         uint32_t available_bytes() override {
             fast_task::lock_guard lg(mutex);
-            if (handle)
+            if (checkup())
                 return handle->bytes_available_count();
             return 0ui32;
         }
 
         int64_t write(const char* data, uint32_t len) override {
             fast_task::lock_guard lg(mutex);
-            if (handle) {
-                if (!checkup())
-                    return 0;
+            if (checkup())
                 return handle->send(data, len);
-            }
             return 0;
         }
 
         bool write_file(char* path, size_t len, uint64_t data_len, uint64_t offset, uint32_t block_size) override {
             fast_task::lock_guard lg(mutex);
-            if (handle) {
-                if (!checkup())
-                    return false;
+            if (checkup())
                 return handle->send_file(path, len, data_len, offset, block_size);
-            }
             return false;
         }
 
         bool write_file(void* fhandle, uint64_t data_len, uint64_t offset, uint32_t block_size) override {
             fast_task::lock_guard lg(mutex);
-            if (handle) {
-                if (!checkup())
-                    return false;
+            if (checkup())
                 return handle->send_file(fhandle, data_len, offset, block_size);
-            }
             return false;
         }
 
         void close() override {
             fast_task::lock_guard lg(mutex);
-            if (handle) {
+            if (checkup()) {
                 handle->close();
                 last_error = handle->invalid_reason;
                 delete handle;
@@ -928,7 +911,7 @@ namespace fast_task::networking {
 
         void reset() override {
             fast_task::lock_guard lg(mutex);
-            if (handle) {
+            if (checkup()) {
                 handle->reset();
                 last_error = handle->invalid_reason;
                 delete handle;
@@ -938,13 +921,13 @@ namespace fast_task::networking {
 
         void rebuffer(size_t new_size) override {
             fast_task::lock_guard lg(mutex);
-            if (handle)
+            if (checkup())
                 handle->rebuffer(new_size);
         }
 
         bool is_closed() override {
             fast_task::lock_guard lg(mutex);
-            if (handle) {
+            if (checkup()) {
                 bool res = handle->valid();
                 if (!res) {
                     last_error = handle->invalid_reason;
@@ -958,14 +941,14 @@ namespace fast_task::networking {
 
         TcpError error() override {
             fast_task::lock_guard lg(mutex);
-            if (handle)
+            if (checkup())
                 return handle->invalid_reason;
             return last_error;
         }
 
         address local_address() override {
             fast_task::lock_guard lg(mutex);
-            if (!handle)
+            if (!checkup())
                 return {};
             universal_address addr;
             int socklen = sizeof(universal_address);
@@ -976,7 +959,7 @@ namespace fast_task::networking {
 
         address remote_address() override {
             fast_task::lock_guard lg(mutex);
-            if (!handle)
+            if (!checkup())
                 return {};
             universal_address addr;
             int socklen = sizeof(universal_address);
@@ -1253,10 +1236,13 @@ namespace fast_task::networking {
             } else if (0 != dwBytesTransferred && !error)
                 data.handle(_data, dwBytesTransferred, &data);
             else {
+                {
+                    fast_task::lock_guard lock(*data.cv_mutex);
+                    data.self->invalid_reason = TcpError::remote_close;
+                    data.cv.notify_all();
+                }
                 if (!data.close_flag)
                     data.self->connection_reset();
-                fast_task::lock_guard lock(*data.cv_mutex);
-                data.cv.notify_all();
             }
         }
 
@@ -2340,7 +2326,7 @@ namespace fast_task::networking {
             : handle(handle), last_error(TcpError::none) {}
 
         ~TcpNetworkStreamImpl() {
-            if (handle) {
+            if (checkup()) {
                 fast_task::lock_guard lg(mutex);
                 handle->close();
                 delete handle;
@@ -2381,14 +2367,14 @@ namespace fast_task::networking {
 
         bool data_available() override {
             fast_task::lock_guard lg(mutex);
-            if (handle)
+            if (checkup())
                 return handle->data_available();
             return false;
         }
 
         void write(const char* data, size_t size) override {
             fast_task::lock_guard lg(mutex);
-            if (handle) {
+            if (checkup()) {
                 handle->send_data(data, size);
                 while (!handle->data_available()) {
                     if (!handle->send_queue_item())
@@ -2400,7 +2386,7 @@ namespace fast_task::networking {
 
         bool write_file(char* path, size_t path_len, uint64_t data_len, uint64_t offset, uint32_t chunks_size) override {
             fast_task::lock_guard lg(mutex);
-            if (handle) {
+            if (checkup()) {
                 while (handle->valid())
                     if (!handle->send_queue_item())
                         break;
@@ -2415,7 +2401,7 @@ namespace fast_task::networking {
 
         bool write_file(int fhandle, uint64_t data_len, uint64_t offset, uint32_t chunks_size) override {
             fast_task::lock_guard lg(mutex);
-            if (handle) {
+            if (checkup()) {
                 while (handle->valid())
                     if (!handle->send_queue_item())
                         break;
@@ -2429,7 +2415,7 @@ namespace fast_task::networking {
         //write all data from write_queue
         void force_write() override {
             fast_task::lock_guard lg(mutex);
-            if (handle) {
+            if (checkup()) {
                 while (handle->valid())
                     if (!handle->send_queue_item())
                         break;
@@ -2439,7 +2425,7 @@ namespace fast_task::networking {
 
         void force_write_and_close(const char* data, size_t size) override {
             fast_task::lock_guard lg(mutex);
-            if (handle) {
+            if (checkup()) {
                 handle->send_and_close(data, size);
                 last_error = handle->invalid_reason;
                 delete handle;
@@ -2449,7 +2435,7 @@ namespace fast_task::networking {
 
         void close() override {
             fast_task::lock_guard lg(mutex);
-            if (handle) {
+            if (checkup()) {
                 handle->close();
                 last_error = handle->invalid_reason;
                 delete handle;
@@ -2459,7 +2445,7 @@ namespace fast_task::networking {
 
         void reset() override {
             fast_task::lock_guard lg(mutex);
-            if (handle) {
+            if (checkup()) {
                 handle->reset();
                 last_error = handle->invalid_reason;
                 delete handle;
@@ -2469,13 +2455,13 @@ namespace fast_task::networking {
 
         void rebuffer(int32_t new_size) override {
             fast_task::lock_guard lg(mutex);
-            if (handle)
+            if (checkup())
                 handle->rebuffer(new_size);
         }
 
         bool is_closed() override {
             fast_task::lock_guard lg(mutex);
-            if (handle) {
+            if (checkup()) {
                 bool res = handle->valid();
                 if (!res) {
                     delete handle;
@@ -2488,14 +2474,14 @@ namespace fast_task::networking {
 
         TcpError error() override {
             fast_task::lock_guard lg(mutex);
-            if (handle)
+            if (checkup())
                 return handle->invalid_reason;
             return last_error;
         }
 
         address local_address() override {
             fast_task::lock_guard lg(mutex);
-            if (!handle)
+            if (!checkup())
                 return {};
             universal_address addr;
             socklen_t socklen = sizeof(universal_address);
@@ -2506,7 +2492,7 @@ namespace fast_task::networking {
 
         address remote_address() override {
             fast_task::lock_guard lg(mutex);
-            if (!handle)
+            if (!checkup())
                 return {};
             universal_address addr;
             socklen_t socklen = sizeof(universal_address);
@@ -2551,9 +2537,7 @@ namespace fast_task::networking {
 
         std::vector<char> read(uint32_t len) override {
             fast_task::lock_guard lg(mutex);
-            if (handle) {
-                if (!checkup())
-                    return {};
+            if (checkup()) {
                 std::vector<char> buf;
                 buf.resize(len);
                 handle->read_force(len, buf.data());
@@ -2568,44 +2552,36 @@ namespace fast_task::networking {
 
         uint32_t available_bytes() override {
             fast_task::lock_guard lg(mutex);
-            if (handle)
+            if (checkup())
                 return handle->available_bytes();
             return (uint32_t)0;
         }
 
         int64_t write(const char* data, uint32_t len) override {
             fast_task::lock_guard lg(mutex);
-            if (handle) {
-                if (!checkup())
-                    return nullptr;
+            if (checkup()) {
                 return handle->write_force(data, len);
             }
-            return nullptr;
+            return 0;
         }
 
         bool write_file(char* path, size_t len, uint64_t data_len, uint64_t offset, uint32_t block_size) override {
             fast_task::lock_guard lg(mutex);
-            if (handle) {
-                if (!checkup())
-                    return false;
+            if (checkup())
                 return handle->send_file(path, len, data_len, offset, block_size);
-            }
             return false;
         }
 
         bool write_file(int fhandle, uint64_t data_len, uint64_t offset, uint32_t block_size) override {
             fast_task::lock_guard lg(mutex);
-            if (handle) {
-                if (!checkup())
-                    return false;
+            if (checkup())
                 return handle->send_file(fhandle, data_len, offset, block_size);
-            }
             return false;
         }
 
         void close() override {
             fast_task::lock_guard lg(mutex);
-            if (handle) {
+            if (checkup()) {
                 handle->close();
                 last_error = handle->invalid_reason;
                 delete handle;
@@ -2615,7 +2591,7 @@ namespace fast_task::networking {
 
         void reset() override {
             fast_task::lock_guard lg(mutex);
-            if (handle) {
+            if (checkup()) {
                 handle->reset();
                 last_error = handle->invalid_reason;
                 delete handle;
@@ -2625,13 +2601,13 @@ namespace fast_task::networking {
 
         void rebuffer(size_t new_size) override {
             fast_task::lock_guard lg(mutex);
-            if (handle)
+            if (checkup())
                 handle->rebuffer(new_size);
         }
 
         bool is_closed() override {
             fast_task::lock_guard lg(mutex);
-            if (handle) {
+            if (checkup()) {
                 bool res = handle->valid();
                 if (!res) {
                     last_error = handle->invalid_reason;
@@ -2645,14 +2621,14 @@ namespace fast_task::networking {
 
         TcpError error() override {
             fast_task::lock_guard lg(mutex);
-            if (handle)
+            if (checkup())
                 return handle->invalid_reason;
             return last_error;
         }
 
         address local_address() override {
             fast_task::lock_guard lg(mutex);
-            if (!handle)
+            if (!checkup())
                 return {};
             universal_address addr;
             socklen_t socklen = sizeof(universal_address);
@@ -2663,7 +2639,7 @@ namespace fast_task::networking {
 
         address remote_address() override {
             fast_task::lock_guard lg(mutex);
-            if (!handle)
+            if (!checkup())
                 return {};
             universal_address addr;
             socklen_t socklen = sizeof(universal_address);

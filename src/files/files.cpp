@@ -427,7 +427,6 @@ namespace fast_task::files {
             default:
                 throw std::invalid_argument("Invalid on open action, excepted open, always_new, create_new, open_exists or truncate_exists, but got " + std::to_string((int)open));
             }
-
             _handle = CreateFileW(wpath.c_str(), wopen, wshare_mode, NULL, creation_mode, wflags, NULL);
             if (_handle == INVALID_HANDLE_VALUE) {
                 _handle = nullptr;
@@ -452,6 +451,8 @@ namespace fast_task::files {
                 }
             }
             util::native_workers_singleton::register_handle(_handle, this);
+            if (flags.at_end)
+                seek_pos(0, pointer_offset::end);
         }
 
         ~FileManager() {
@@ -1093,6 +1094,8 @@ namespace fast_task::files {
                     throw std::runtime_error("FileException, Unknown error");
                 }
             }
+            if (flags.at_end)
+                seek_pos(0, pointer_offset::end);
         }
 
         ~FileManager() {
@@ -1388,6 +1391,7 @@ namespace fast_task::files {
         sync_flags.posix_semantics = flags.posix_semantics;
         sync_flags.random_access = flags.random_access;
         sync_flags.sequential_scan = flags.sequential_scan;
+        sync_flags.at_end = flags.at_end;
         handle = nullptr;
         try {
             handle = new FileManager(path, path_len, open, action, share, sync_flags, pointer_mode);
@@ -1411,7 +1415,8 @@ namespace fast_task::files {
     }
 
     FileHandle::~FileHandle() {
-        delete handle;
+        if (handle)
+            delete handle;
     }
 
     future_ptr<std::vector<uint8_t>> FileHandle::read(uint32_t size) {
@@ -1659,16 +1664,20 @@ namespace fast_task::files {
     on_open_action to_open_action(std::ios_base::openmode mode) {
         if (mode & std::ios_base::trunc) {
             return on_open_action::truncate_exists;
+        } else if (mode & std::ios_base::app) {
+            return on_open_action::open;
+#if ((defined(_MSVC_LANG) && _MSVC_LANG >= 202302L) || __cplusplus >= 202302L)
+        } else if (mode & std::ios_base::noreplace) {
+            return on_open_action::create_new;
+#endif
         } else if (mode & std::ios_base::ate) {
             return on_open_action::open_exists;
-        } else if (mode & std::ios_base::app) {
-            return on_open_action::always_new;
         } else {
             return on_open_action::open;
         }
     }
 
-    static share_mode to_protection_mode(std::ios_base::openmode op_mod, int mode) {
+    share_mode to_protection_mode(std::ios_base::openmode op_mod, int mode) {
         share_mode protection_mode;
         if (mode & _SH_DENYRW) {
             protection_mode.read = false;
@@ -1693,6 +1702,14 @@ namespace fast_task::files {
             protection_mode.write = true;
         }
         return protection_mode;
+    }
+
+    _sync_flags to_flags(std::ios_base::openmode op_mod) {
+        _sync_flags flags{};
+        if (op_mod & std::ios_base::ate)
+            flags.at_end = true;
+
+        return flags;
     }
 
     async_iofstream::async_iofstream(
@@ -1729,10 +1746,15 @@ namespace fast_task::files {
         int prot
     ) : std::iostream(nullptr) {
         try {
-            handle = new FileHandle(path.string(), to_open_mode(mode), to_open_action(mode), _sync_flags{}, to_protection_mode(mode, prot));
+            handle = nullptr;
+            handle = new FileHandle(path.string(), to_open_mode(mode), to_open_action(mode), to_flags(mode), to_protection_mode(mode, prot));
             set_rdbuf(new async_filebuf(*handle));
             clear();
         } catch (...) {
+            if (handle) {
+                delete handle;
+                handle = nullptr;
+            }
             setstate(std::ios_base::badbit);
         }
     }
@@ -1746,10 +1768,15 @@ namespace fast_task::files {
         pointer_mode pointer_mode
     ) : std::iostream(nullptr) {
         try {
+            handle = nullptr;
             handle = new FileHandle(path.string(), open, action, flags, share, pointer_mode);
             set_rdbuf(new async_filebuf(*handle));
             clear();
         } catch (...) {
+            if (handle) {
+                delete handle;
+                handle = nullptr;
+            }
             setstate(std::ios_base::badbit);
         }
     }
