@@ -386,8 +386,12 @@ namespace fast_task {
 
             if (end_in_task_out)
                 return true;
-            else
+            else {
+                if (!(glob.tasks.size() || glob.cold_tasks.size() || glob.timed_tasks.size() || glob.cold_timed_tasks.size() || glob.tasks_in_swap || glob.in_run_tasks))
+                    glob.no_tasks_execute_notifier.notify_all();
+
                 glob.tasks_notifier.wait(guard);
+            }
         }
         loc.is_task_thread = true;
         return false;
@@ -422,8 +426,6 @@ namespace fast_task {
             guard.lock();
         }
         --glob.executors;
-        if (!glob.in_run_tasks && glob.tasks.empty() && glob.timed_tasks.empty())
-            glob.no_tasks_execute_notifier.notify_all();
         glob.executor_shutdown_notifier.notify_all();
         if (!prevent_naming)
             _set_name_thread_dbg(old_name);
