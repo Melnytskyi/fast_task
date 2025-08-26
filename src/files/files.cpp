@@ -16,7 +16,7 @@ namespace fast_task::files {
     class File_;
 
     struct completion_struct {
-        File_* handle;
+        File_* handle = nullptr;
         size_t completed_bytes = 0;
         char* data = nullptr;
         io_errors error = io_errors::no_error;
@@ -1422,11 +1422,11 @@ namespace fast_task::files {
     future_ptr<std::vector<uint8_t>> FileHandle::read(uint32_t size) {
         if (mimic_non_async.has_value()) {
             fast_task::lock_guard<task_mutex> lock(*mimic_non_async);
-            auto res = handle->read(size, true);
+            auto res = handle->read(size, false);
             res->wait();
             return res;
         } else
-            return handle->read(size, true);
+            return handle->read(size, false);
     }
 
     uint32_t FileHandle::read(uint8_t* data, uint32_t size) {

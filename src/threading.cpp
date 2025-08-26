@@ -4,6 +4,7 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
+#include <cassert>
 #include <tasks/util/cpu.hpp>
 #include <tasks/util/interrupt.hpp>
 #include <threading.hpp>
@@ -26,6 +27,7 @@ void (*thread_interrupter_asm_ptr)() = []() {
 #ifdef _WIN32
     #define NOMINMAX
     #include <Windows.h>
+    #include <process.h>
 #else
     #include <pthread.h>
     #include <ucontext.h>
@@ -101,8 +103,7 @@ namespace fast_task {
     timed_mutex::timed_mutex() = default;
 
     timed_mutex::~timed_mutex() noexcept(false) {
-        if (locked != 0)
-            throw std::logic_error("Try destroy locked mutex");
+        assert(locked == 0 && "Tried to destroy locked mutex");
     }
 
     void timed_mutex::lock() {
@@ -196,7 +197,7 @@ namespace fast_task {
     void condition_variable::wait(recursive_mutex& mtx) {
         interrupt::interrupt_unsafe_region region;
         auto state = mtx.relock_begin();
-        if (SleepConditionVariableSRW((PCONDITION_VARIABLE)&_cond, (PSRWLOCK)&mtx.actual_mutex, INFINITE, 0)) {
+        if (SleepConditionVariableSRW((PCONDITION_VARIABLE)&_cond, (PSRWLOCK)&mtx.actual_mutex._mutex, INFINITE, 0)) {
             mtx.relock_end(state);
             DWORD err = GetLastError();
             if (err)
@@ -219,7 +220,7 @@ namespace fast_task {
                 return cv_status::timeout;
             DWORD wait_time = sleep_ms.count() > 0x7FFFFFFF ? 0x7FFFFFFF : (DWORD)sleep_ms.count();
             interrupt::interrupt_unsafe_region region;
-            bool res = SleepConditionVariableSRW((PCONDITION_VARIABLE)&_cond, (PSRWLOCK)&mtx.actual_mutex, wait_time, 0);
+            bool res = SleepConditionVariableSRW((PCONDITION_VARIABLE)&_cond, (PSRWLOCK)&mtx.actual_mutex._mutex, wait_time, 0);
             cv_status status = cv_status::no_timeout;
             mtx.relock_end(state);
             if (res) {
@@ -241,11 +242,12 @@ namespace fast_task {
 
     void* thread::create(void (*function)(void*), void* arg, unsigned long& id, size_t stack_size, bool stack_reservation, int& error_code) {
         error_code = 0;
-        void* handle = CreateThread(nullptr, stack_size, (LPTHREAD_START_ROUTINE)function, arg, stack_reservation ? STACK_SIZE_PARAM_IS_A_RESERVATION : 0, (LPDWORD)&id);
+        void* handle = (void*)_beginthreadex(nullptr, stack_size, (_beginthreadex_proc_type)function, arg, CREATE_SUSPENDED | (stack_reservation ? STACK_SIZE_PARAM_IS_A_RESERVATION : 0), (unsigned int*)&id);
         if (!handle) {
             error_code = GetLastError();
             return nullptr;
         }
+        ResumeThread(handle);
         return handle;
     }
 
@@ -375,10 +377,14 @@ namespace fast_task {
 
     mutex::~mutex() noexcept(false) {
         int res = pthread_mutex_destroy(_mutex);
-        if (res == EBUSY)
-            throw std::logic_error("Try destroy locked mutex");
-        if (res == EINVAL)
-            throw std::logic_error("Try destroy invalid mutex");
+        if (res == EBUSY) {
+            assert(false && "Tried to destroy locked mutex");
+            std::terminate();
+        }
+        if (res == EINVAL) {
+            assert(false && "Tried to destroy locked mutex");
+            std::terminate();
+        }
         delete _mutex;
     }
 
@@ -417,10 +423,15 @@ namespace fast_task {
 
     rw_mutex::~rw_mutex() noexcept(false) {
         int res = pthread_rwlock_destroy(_mutex);
-        if (res == EBUSY)
-            throw std::logic_error("Try destroy locked mutex");
-        if (res == EINVAL)
-            throw std::logic_error("Try destroy invalid mutex");
+
+        if (res == EBUSY) {
+            assert(false && "Tried to destroy locked mutex");
+            std::terminate();
+        }
+        if (res == EINVAL) {
+            assert(false && "Tried to destroy locked mutex");
+            std::terminate();
+        }
         delete _mutex;
     }
 
@@ -467,10 +478,14 @@ namespace fast_task {
 
     timed_mutex::~timed_mutex() noexcept(false) {
         int res = pthread_mutex_destroy(_mutex);
-        if (res == EBUSY)
-            throw std::logic_error("Try destroy locked mutex");
-        if (res == EINVAL)
-            throw std::logic_error("Try destroy invalid mutex");
+        if (res == EBUSY) {
+            assert(false && "Tried to destroy locked mutex");
+            std::terminate();
+        }
+        if (res == EINVAL) {
+            assert(false && "Tried to destroy locked mutex");
+            std::terminate();
+        }
         delete _mutex;
     }
 
@@ -823,8 +838,10 @@ namespace fast_task {
     }
 
     recursive_mutex::~recursive_mutex() noexcept(false) {
-        if (owner != fast_task::thread::id())
-            throw std::logic_error("Recursive mutex destroyed while locked");
+        if (owner != fast_task::thread::id()) {
+            assert(false && "Recursive mutex destroyed while locked");
+            std::terminate();
+        }
     }
 
     void recursive_mutex::lock() {

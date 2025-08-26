@@ -15,7 +15,12 @@ namespace fast_task {
 
     task_semaphore::task_semaphore() {}
 
-    task_semaphore::~task_semaphore() {}
+    task_semaphore::~task_semaphore() {
+        if (allow_threshold != max_threshold) {
+            assert(false && "Semaphore destroyed while locked");
+            std::terminate();
+        }
+    }
 
 
     void task_semaphore::setMaxThreshold(size_t val) {

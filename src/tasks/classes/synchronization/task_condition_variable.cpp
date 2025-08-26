@@ -11,15 +11,18 @@
 namespace fast_task {
     struct task_condition_variable::resume_task {
         std::shared_ptr<task> task;
-        uint16_t awake_check;
+        uint16_t awake_check = 0;
         fast_task::condition_variable_any* native_cv = nullptr;
-        bool* native_check;
+        bool* native_check = nullptr;
     };
 
     task_condition_variable::task_condition_variable() {}
 
     task_condition_variable::~task_condition_variable() {
-        notify_all();
+        if (!resume_task.empty()) {
+            assert(false && "Condition_variable destroyed while waited");
+            std::terminate();
+        }
     }
 
     void task_condition_variable::wait(fast_task::unique_lock<mutex_unify>& mut) {
@@ -37,13 +40,13 @@ namespace fast_task {
             bool has_res = false;
             if (*mut.mutex() == no_race) {
                 resume_task.emplace_back(nullptr, 0, &cd, &has_res);
-                while (!has_res)
+                while (!has_res) //-V654
                     cd.wait(mut);
             } else {
                 fast_task::unique_lock no_race_guard(no_race);
                 resume_task.emplace_back(nullptr, 0, &cd, &has_res);
                 no_race_guard.unlock();
-                while (!has_res)
+                while (!has_res) //-V654
                     cd.wait(mut);
             }
         }
@@ -69,7 +72,7 @@ namespace fast_task {
             bool has_res = false;
             if (*mut.mutex() == no_race) {
                 auto& rs_task = resume_task.emplace_back(nullptr, 0, &cd, &has_res);
-                while (!has_res) {
+                while (!has_res) { //-V654
                     if (cd.wait_until(mut, time_point) == cv_status::timeout) {
                         rs_task.native_cv = nullptr;
                         return false;
@@ -79,7 +82,7 @@ namespace fast_task {
                 fast_task::unique_lock no_race_guard(no_race);
                 auto& rs_task = resume_task.emplace_back(nullptr, 0, &cd, &has_res);
                 no_race_guard.unlock();
-                while (!has_res) {
+                while (!has_res) { //-V654
                     if (cd.wait_until(mut, time_point) == cv_status::timeout) {
                         no_race_guard.lock();
                         rs_task.native_cv = nullptr;
@@ -106,13 +109,13 @@ namespace fast_task {
             bool has_res = false;
             if (*mut.mutex() == no_race) {
                 resume_task.emplace_back(nullptr, 0, &cd, &has_res);
-                while (!has_res)
+                while (!has_res) //-V654
                     cd.wait(mut);
             } else {
                 fast_task::unique_lock no_race_guard(no_race);
                 resume_task.emplace_back(nullptr, 0, &cd, &has_res);
                 no_race_guard.unlock();
-                while (!has_res)
+                while (!has_res) //-V654
                     cd.wait(mut);
             }
         }
@@ -138,7 +141,7 @@ namespace fast_task {
             bool has_res = false;
             if (*mut.mutex() == no_race) {
                 auto& rs_task = resume_task.emplace_back(nullptr, 0, &cd, &has_res);
-                while (!has_res) {
+                while (!has_res) { //-V654
                     if (cd.wait_until(mut, time_point) == cv_status::timeout) {
                         rs_task.native_cv = nullptr;
                         return false;
@@ -148,7 +151,7 @@ namespace fast_task {
                 fast_task::unique_lock no_race_guard(no_race);
                 auto& rs_task = resume_task.emplace_back(nullptr, 0, &cd, &has_res);
                 no_race_guard.unlock();
-                while (!has_res) {
+                while (!has_res) { //-V654
                     if (cd.wait_until(mut, time_point) == cv_status::timeout) {
                         no_race_guard.lock();
                         rs_task.native_cv = nullptr;
@@ -209,9 +212,9 @@ namespace fast_task {
                     }
                     continue;
                 }
-                get_data(cur).no_race.lock();
+                fast_task::unique_lock ul(get_data(cur).no_race);
                 if (get_data(cur).time_end_flag || get_data(cur).awake_check != awake_check) {
-                    get_data(cur).no_race.unlock();
+                    ul.unlock();
                     resume_task.pop_back();
                 } else {
                     tsk = cur;

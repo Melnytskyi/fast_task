@@ -24,7 +24,7 @@ static double calculate_cpu_load(fast_task::util::cpu::usage_prev_stat& prev_sta
     #include <windows.h>
 
 namespace fast_task::util::cpu {
-    static uint64_t file_time_to_int64(const FILETIME& ft) {
+    static uint64_t file_time_to_int64(FILETIME ft) {
         return (((uint64_t)(ft.dwHighDateTime)) << 32) | ((uint64_t)ft.dwLowDateTime);
     }
 

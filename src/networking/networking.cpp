@@ -362,11 +362,11 @@ namespace fast_task::networking {
             bool accept_flag = false;
             bool close_flag = false;
 
-            operation(tcp_handle_2* self, const std::shared_ptr<task_mutex>& lock, util::native_worker_manager* manager) : util::native_worker_handle(manager), cv_mutex(lock), self(self) {}
+            operation(tcp_handle_2* self, const std::shared_ptr<task_mutex>& lock, util::native_worker_manager* manager) : util::native_worker_handle(manager), cv_mutex(lock), self(self), buffer{} {}
 
-            void handle(void* _, unsigned long dwBytesTransferred, util::native_worker_handle* overlapped) {
+            void handle(void* _, unsigned long dwBytesTransferred, util::native_worker_handle* overlap) {
                 fast_task::unique_lock lock(*cv_mutex);
-                auto res = static_cast<operation*>(overlapped);
+                auto res = static_cast<operation*>(overlap);
                 res->transferred = dwBytesTransferred;
                 res->cv.notify_all();
             }
@@ -634,24 +634,24 @@ namespace fast_task::networking {
             socket = INVALID_SOCKET;
         }
 
-        bool handle_error(fast_task::unique_lock<mutex_unify>& lock, TcpError& invalid_reason) {
+        bool handle_error(fast_task::unique_lock<mutex_unify>& lock, TcpError& reason) {
             auto error = WSAGetLastError();
             if (WSA_IO_PENDING == error)
                 return true;
             else {
                 switch (error) {
                 case WSAECONNRESET:
-                    invalid_reason = TcpError::remote_close;
+                    reason = TcpError::remote_close;
                     break;
                 case WSAECONNABORTED:
                 case WSA_OPERATION_ABORTED:
                 case WSAENETRESET:
-                    invalid_reason = TcpError::local_close;
+                    reason = TcpError::local_close;
                     break;
                 case WSAEWOULDBLOCK:
                     return false; //try later
                 default:
-                    invalid_reason = TcpError::undefined_error;
+                    reason = TcpError::undefined_error;
                     break;
                 }
                 close(lock);
@@ -668,8 +668,9 @@ namespace fast_task::networking {
             if (!valid())
                 return false;
             bool res = _TransmitFile(sock, FILE, block, chunks_size, &op->overlapped, NULL, TF_USE_KERNEL_APC | TF_WRITE_BEHIND);
-            if (!res && WSAGetLastError() != WSA_IO_PENDING)
-                res = false;
+            if (!res)
+                if (!handle_error(lock, invalid_reason))
+                    return false;
             if (res)
                 op->cv.wait(lock);
             return res;
@@ -736,7 +737,8 @@ namespace fast_task::networking {
             read_lock lock(mutex);
             if (checkup()) {
                 handle->send(data, size);
-                checkup();
+                if (!handle->valid())
+                    last_error = handle->invalid_reason;
             }
         }
 
@@ -983,7 +985,7 @@ namespace fast_task::networking {
 
     private:
         bool allow_new_connections = false;
-        bool disabled = true;
+        std::atomic_bool disabled = true;
         bool corrupted = false;
         size_t acceptors;
         task_condition_variable state_changed_cv;
@@ -1023,7 +1025,7 @@ namespace fast_task::networking {
                 );
             }
             util::native_workers_singleton::register_handle((HANDLE)new_sock, nullptr);
-            if (success != TRUE) {
+            if (success == FALSE) {
                 auto err = WSAGetLastError();
                 if (err == WSA_IO_PENDING)
                     return op;
@@ -1040,7 +1042,7 @@ namespace fast_task::networking {
 
         void make_acceptEx(void) {
             tcp_handle_2* pClientContext = new tcp_handle_2(0, config.buffer_size, this);
-            make_acceptEx(pClientContext);
+            make_acceptEx(pClientContext); //no memory leak, the tcp_handle_2 destructs itself
         }
 
         void accepted(tcp_handle_2* self, address&& clientAddr, address&& localAddr) {
@@ -1630,7 +1632,7 @@ namespace fast_task::networking {
         task_condition_variable cv;
         SOCKET socket;
         sockaddr_in6 server_address;
-        bool is_complete = false;
+        bool is_complete = true;
 
     public:
         DWORD fullifed_bytes;
@@ -1650,9 +1652,9 @@ namespace fast_task::networking {
             server_address = address;
         }
 
-        void handle(void* data, util::native_worker_handle* overlapped, unsigned long fullifed_bytes) override {
+        void handle(void* data, util::native_worker_handle* overlap, unsigned long fullifed_bytes) override {
             this->fullifed_bytes = fullifed_bytes;
-            last_error = (DWORD)overlapped->overlapped.Internal;
+            last_error = (DWORD)overlap->overlapped.Internal;
             unique_lock lock(mt);
             is_complete = true;
             cv.notify_all();
@@ -1667,6 +1669,8 @@ namespace fast_task::networking {
             DWORD flags = 0;
             mutex_unify u(mt);
             unique_lock lock(u);
+            while (!is_complete)
+                cv.wait(lock);
             is_complete = false;
             if (WSARecvFrom(socket, &buf, 1, nullptr, &flags, (sockaddr*)&sender, &sender_len, (OVERLAPPED*)this, nullptr)) {
                 if (WSAGetLastError() != WSA_IO_PENDING) {
@@ -1675,7 +1679,7 @@ namespace fast_task::networking {
                     return;
                 }
             }
-            while (is_complete)
+            while (!is_complete)
                 cv.wait(lock);
             is_complete = false;
         }
@@ -1686,6 +1690,8 @@ namespace fast_task::networking {
             buf.len = size;
             mutex_unify u(mt);
             unique_lock lock(u);
+            while (!is_complete)
+                cv.wait(lock);
             is_complete = false;
             if (WSASendTo(socket, &buf, 1, nullptr, 0, (sockaddr*)&to, sizeof(to), (OVERLAPPED*)this, nullptr)) {
                 if (WSAGetLastError() != WSA_IO_PENDING) {
@@ -1694,7 +1700,7 @@ namespace fast_task::networking {
                     return;
                 }
             }
-            while (is_complete)
+            while (!is_complete)
                 cv.wait(lock);
             is_complete = false;
         }

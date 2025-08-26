@@ -345,8 +345,8 @@ namespace fast_task {
         return (void*)nmut == (void*)std::addressof(smut);
     }
 
-    bool mutex_unify::operator==(class multiply_mutex& mmut) {
-        return (void*)nmut == (void*)std::addressof(mmut);
+    bool mutex_unify::operator==(class multiply_mutex& mut) {
+        return (void*)nmut == (void*)std::addressof(mut);
     }
 
     bool mutex_unify::operator==(nullptr_t) {

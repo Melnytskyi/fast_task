@@ -35,8 +35,13 @@ namespace fast_task::scheduler {
             startTimeController();
     }
 
-    void start(std::list<std::shared_ptr<task>>& lgr_task) {
-        for (auto& it : lgr_task)
+    void start(std::list<std::shared_ptr<task>>& tasks) {
+        for (auto& it : tasks)
+            start(it);
+    }
+
+    void start(std::vector<std::shared_ptr<task>>& tasks) {
+        for (auto& it : tasks)
             start(it);
     }
 
@@ -66,7 +71,7 @@ namespace fast_task::scheduler {
     uint16_t create_bind_only_executor(uint16_t fixed_count, bool allow_implicit_start) {
         fast_task::lock_guard guard(glob.binded_workers_safety);
         uint16_t try_count = 0;
-        uint16_t id = glob.binded_workers.size();
+        uint16_t id = (uint16_t)glob.binded_workers.size();
     is_not_id:
         while (glob.binded_workers.contains(id)) {
             if (try_count == UINT16_MAX)

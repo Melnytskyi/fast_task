@@ -11,15 +11,14 @@
 namespace fast_task {
     struct task_rw_mutex::resume_task {
         std::shared_ptr<task> task;
-        uint16_t awake_check;
+        uint16_t awake_check = 0;
         fast_task::condition_variable_any* native_cv = nullptr;
-        bool* native_check;
+        bool* native_check = nullptr;
     };
 
     task_rw_mutex::task_rw_mutex() {}
 
     task_rw_mutex::~task_rw_mutex() {
-        fast_task::lock_guard lg(no_race);
         if (current_writer_task || !readers.empty()) {
             assert(false && "Mutex destroyed while locked");
             std::terminate();
@@ -52,7 +51,7 @@ namespace fast_task {
                 fast_task::condition_variable_any cd;
                 bool has_res = false;
                 resume_task.emplace_back(nullptr, 0, &cd, &has_res);
-                while (!has_res)
+                while (!has_res) //-V654
                     cd.wait(ul);
             }
             readers.push_back(self_mask);
@@ -104,7 +103,7 @@ namespace fast_task {
                 fast_task::condition_variable_any cd;
                 bool has_res = false;
                 auto& rs_task = resume_task.emplace_back(nullptr, 0, &cd, &has_res);
-                while (!has_res) {
+                while (!has_res) { //-V654
                     if (cd.wait_until(ul, time_point) == cv_status::timeout) {
                         rs_task.native_cv = nullptr;
                         return false;
@@ -227,14 +226,14 @@ namespace fast_task {
             bool has_res = false;
             while (current_writer_task) {
                 resume_task.emplace_back(nullptr, 0, &cd, &has_res);
-                while (!has_res)
+                while (!has_res) //-V654
                     cd.wait(ul);
             }
             current_writer_task = self_mask;
             has_res = false;
             while (!readers.empty()) {
                 resume_task.emplace_back(nullptr, 0, &cd, &has_res);
-                while (!has_res)
+                while (!has_res) //-V654
                     cd.wait(ul);
             }
         }
@@ -293,7 +292,7 @@ namespace fast_task {
             while (current_writer_task) {
                 has_res = false;
                 auto& rs_task = resume_task.emplace_back(nullptr, 0, &cd, &has_res);
-                while (!has_res) {
+                while (!has_res) { //-V654
                     if (cd.wait_until(ul, time_point) == cv_status::timeout) {
                         rs_task.native_cv = nullptr;
                         return false;
@@ -307,9 +306,8 @@ namespace fast_task {
 
             while (!readers.empty()) {
                 has_res = false;
-                has_res = false;
                 auto& rs_task = resume_task.emplace_back(nullptr, 0, &cd, &has_res);
-                while (!has_res) {
+                while (!has_res) { //-V654
                     if (cd.wait_until(ul, time_point) == cv_status::timeout) {
                         rs_task.native_cv = nullptr;
                         current_writer_task = nullptr;

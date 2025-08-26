@@ -17,7 +17,7 @@ namespace fast_task {
     struct future {
         task_mutex task_mt;
         task_condition_variable task_cv;
-        T result;
+        std::optional<T> result;
         bool _is_ready = false;
         std::exception_ptr ex_ptr;
 
@@ -25,7 +25,7 @@ namespace fast_task {
             std::shared_ptr<future> future_ = std::make_shared<future>();
             auto task_ = std::make_shared<task>([fn, future_]() {
                 try {
-                    future_->result = fn();
+                    future_->result = std::make_optional<T>(fn());
                 } catch (const task_cancellation&) {
                     fast_task::lock_guard guard(future_->task_mt);
                     future_->_is_ready = true;
@@ -46,14 +46,14 @@ namespace fast_task {
 
         static std::shared_ptr<future> make_ready(const T& value) {
             std::shared_ptr<future> future_ = std::make_shared<future>();
-            future_->result = value;
+            future_->result = std::make_optional<T>(value);
             future_->_is_ready = true;
             return future_;
         }
 
         static std::shared_ptr<future> make_ready(T&& value) {
             std::shared_ptr<future> future_ = std::make_shared<future>();
-            future_->result = std::move(value);
+            future_->result = std::make_optional<T>(std::move(value));
             future_->_is_ready = true;
             return future_;
         }
@@ -65,7 +65,7 @@ namespace fast_task {
                 task_cv.wait(lock);
             if (ex_ptr)
                 std::rethrow_exception(ex_ptr);
-            return result;
+            return *result;
         }
 
         T take() {
@@ -75,14 +75,15 @@ namespace fast_task {
                 task_cv.wait(lock);
             if (ex_ptr)
                 std::rethrow_exception(ex_ptr);
-            return std::move(result);
+            return std::move(*result);
         }
 
         void when_ready(const std::function<void(T)>& fn) {
             mutex_unify um(task_mt);
             fast_task::unique_lock lock(um);
             if (_is_ready) {
-                fn(result);
+                lock.unlock();
+                fn(*result);
             } else {
                 task_cv.callback(
                     lock,
@@ -212,12 +213,7 @@ namespace fast_task {
         }
 
         void get() {
-            mutex_unify um(task_mt);
-            fast_task::unique_lock lock(um);
-            while (!_is_ready)
-                task_cv.wait(lock);
-            if (ex_ptr)
-                std::rethrow_exception(ex_ptr);
+            wait();
         }
 
         void take() {
@@ -228,6 +224,7 @@ namespace fast_task {
             mutex_unify um(task_mt);
             fast_task::unique_lock lock(um);
             if (_is_ready) {
+                lock.unlock();
                 fn();
             } else {
                 task_cv.callback(
@@ -324,7 +321,7 @@ namespace fast_task {
             std::shared_ptr<cancelable_future> future_ = std::make_shared<cancelable_future>();
             future_->task_ = std::make_shared<task>([fn, future_]() {
                 try {
-                    future_->result = fn();
+                    future_->result = std::make_optional<T>(fn());
                 } catch (const task_cancellation&) {
                     fast_task::lock_guard guard(future_->task_mt);
                     future_->_is_ready = true;
@@ -345,14 +342,14 @@ namespace fast_task {
 
         static std::shared_ptr<cancelable_future> make_ready(const T& value) {
             std::shared_ptr<cancelable_future> future_ = std::make_shared<cancelable_future>();
-            future_->result = value;
+            future_->result = std::make_optional<T>(value);
             future_->_is_ready = true;
             return future_;
         }
 
         static std::shared_ptr<cancelable_future> make_ready(T&& value) {
             std::shared_ptr<cancelable_future> future_ = std::make_shared<cancelable_future>();
-            future_->result = std::move(value);
+            future_->result = std::make_optional<T>(std::move(value));
             future_->_is_ready = true;
             return future_;
         }
@@ -367,7 +364,7 @@ namespace fast_task {
             if (task_)
                 if (task_->is_cancellation_requested())
                     throw std::runtime_error("Task has been canceled. Can not receive result.");
-            return future<T>::result;
+            return *future<T>::result;
         }
 
         T take() {
@@ -380,7 +377,7 @@ namespace fast_task {
             if (task_)
                 if (task_->is_cancellation_requested())
                     throw std::runtime_error("Task has been canceled. Can not receive result.");
-            return std::move(future<T>::result);
+            return std::move(*future<T>::result);
         }
 
         void cancel() {
@@ -524,8 +521,13 @@ namespace fast_task {
                     if constexpr (std::is_same_v<Ret, void>)
                         fn(std::move(a));
                     else
-                        new_future->result = fn(std::move(a));
+                        new_future->result = std::make_optional<Ret>(fn(std::move(a)));
                 } catch (...) {
+                    fast_task::lock_guard guard(new_future->task_mt);
+                    future_->ex_ptr = std::current_exception();
+                    new_future->_is_ready = true;
+                    new_future->task_cv.notify_all();
+                    return;
                 };
                 fast_task::lock_guard guard(new_future->task_mt);
                 new_future->_is_ready = true;
@@ -542,8 +544,13 @@ namespace fast_task {
                     if constexpr (std::is_same_v<Ret, void>)
                         fn();
                     else
-                        new_future->result = fn();
+                        new_future->result = std::make_optional<Ret>(fn());
                 } catch (...) {
+                    fast_task::lock_guard guard(new_future->task_mt);
+                    future_->ex_ptr = std::current_exception();
+                    new_future->_is_ready = true;
+                    new_future->task_cv.notify_all();
+                    return;
                 };
                 fast_task::lock_guard guard(new_future->task_mt);
                 new_future->_is_ready = true;
@@ -601,13 +608,6 @@ namespace fast_task {
 
         template <class... Futures>
         void each(Futures&&... futures) {
-            std::vector<future_ptr<void>> fut = {futures...};
-            for (auto& future_ : fut)
-                future_->wait();
-        }
-
-        template <class... Futures>
-        void eachIn(Futures&&... futures) {
             std::vector<future_ptr<void>> fut = {futures...};
             for (auto& future_ : fut)
                 future_->wait();

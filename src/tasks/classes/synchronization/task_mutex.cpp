@@ -10,29 +10,17 @@
 namespace fast_task {
     struct task_mutex::resume_task {
         std::shared_ptr<task> task;
-        uint16_t awake_check;
+        uint16_t awake_check = 0;
         fast_task::condition_variable_any* native_cv = nullptr;
-        bool* native_check;
+        bool* native_check = nullptr;
     };
 
     task_mutex::task_mutex() {}
 
     task_mutex::~task_mutex() {
-        fast_task::lock_guard lg(no_race);
-        while (!resume_task.empty()) {
-            auto [it, awake_check, native_cv, native_flag] = resume_task.back();
-            resume_task.pop_back();
-            if (it == nullptr) {
-                if (native_cv != nullptr) {
-                    *native_flag = true;
-                    native_cv->notify_all();
-                }
-                continue;
-            }
-            it->notify_cancel();
-            current_task = nullptr;
-            task::await_task(it);
-            resume_task.pop_back();
+        if (!resume_task.empty()) {
+            assert(false && "Tried to destroy locked mutex");
+            std::terminate();
         }
     }
 #if defined(__GNUC__) && !defined(__clang__)
@@ -64,7 +52,7 @@ namespace fast_task {
                 fast_task::condition_variable_any cd;
                 bool has_res = false;
                 resume_task.emplace_back(nullptr, 0, &cd, &has_res);
-                while (!has_res)
+                while (!has_res) //-V654
                     cd.wait(ul);
             }
             current_task = reinterpret_cast<fast_task::task*>((size_t)_thread_id() | native_thread_flag);
@@ -120,7 +108,7 @@ namespace fast_task {
             while (current_task) {
                 has_res = false;
                 auto rs_task = resume_task.emplace_back(nullptr, 0, &cd, &has_res);
-                while (!has_res) {
+                while (!has_res) { //-V654
                     if (cd.wait_until(ul, time_point) == cv_status::timeout) {
                         rs_task.native_cv = nullptr;
                         return false;

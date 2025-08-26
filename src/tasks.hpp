@@ -147,6 +147,8 @@ namespace fast_task {
         protected_value(protected_value&& move)
             : value(std::move(move.value)) {}
 
+        protected_value& operator=(protected_value&& move) = delete;
+
         template <class _Accessor>
         decltype(auto) get(_Accessor&& accessor) const {
             read_lock lock(const_cast<task_rw_mutex&>(mutex));
@@ -308,7 +310,7 @@ namespace fast_task {
                     std::function<void(const std::exception_ptr&)> ex_handle;
                     std::function<void()> func;
 
-                    ~normal_mode_t() {}
+                    ~normal_mode_t() = default;
                 } normal_mode;
 
                 struct extended_mode_t {
@@ -320,7 +322,7 @@ namespace fast_task {
                     void (*on_cancel)(void*);
                     void (*on_destruct)(void*);
 
-                    ~extended_mode_t() {}
+                    ~extended_mode_t() = default;
                 } extended_mode;
 
                 callbacks_data() : normal_mode() {}
@@ -356,6 +358,8 @@ namespace fast_task {
                         normal_mode.func = nullptr;
                     }
                 }
+
+                callbacks_data& operator=(callbacks_data&&) = delete;
             } callbacks;
 
             task_condition_variable result_notify;
@@ -398,6 +402,8 @@ namespace fast_task {
 
         task(task&& mov) noexcept;
         ~task();
+        task& operator=(task&&) = delete;
+
         void set_auto_bind_worker(bool enable = true) noexcept;
         void set_worker_id(uint16_t id) noexcept;
         void set_priority(task_priority) noexcept;
@@ -437,6 +443,7 @@ namespace fast_task {
 
         static void await_task(const std::shared_ptr<task>& lgr_task, bool make_start = true);
         static void await_multiple(std::list<std::shared_ptr<task>>& tasks, bool pre_started = false, bool release = false);
+        static void await_multiple(std::vector<std::shared_ptr<task>>& tasks, bool pre_started = false, bool release = false);
         static void await_multiple(std::shared_ptr<task>* tasks, size_t len, bool pre_started = false, bool release = false);
 
         static std::shared_ptr<task> callback_dummy(void* dummy_data, void (*on_start)(void*), void (*on_await)(void*), void (*on_cancel)(void*), void (*on_destruct)(void*), bool is_coroutine = false);
@@ -474,6 +481,7 @@ namespace fast_task {
         void schedule_until(const std::shared_ptr<task>& task, std::chrono::high_resolution_clock::time_point time_point);
         void start(std::shared_ptr<task>&& lgr_task);
         void start(std::list<std::shared_ptr<task>>& lgr_task);
+        void start(std::vector<std::shared_ptr<task>>& lgr_task);
         void start(const std::shared_ptr<task>& lgr_task);
 
         uint16_t create_bind_only_executor(uint16_t fixed_count, bool allow_implicit_start);
@@ -592,8 +600,9 @@ namespace fast_task {
         deadline_timer(std::chrono::high_resolution_clock::duration);
         deadline_timer(std::chrono::high_resolution_clock::time_point);
         deadline_timer(deadline_timer&&);
-
         ~deadline_timer();
+
+        deadline_timer& operator=(deadline_timer&&) = delete;
 
         size_t cancel();
         bool cancel_one();

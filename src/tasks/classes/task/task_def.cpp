@@ -113,7 +113,7 @@ namespace fast_task {
             data_.callbacks.extended_mode.on_await(data_.callbacks.extended_mode.data);
             if (!data_.callbacks.extended_mode.on_start)
                 return;
-            if (!data_.started)
+            if (!data_.started) //started could change after `on_await`, better to be safe than oops
                 return;
         }
         mutex_unify uni(data_.no_race);
@@ -147,7 +147,7 @@ namespace fast_task {
     }
 
     std::shared_ptr<task> task::run(std::function<void()>&& func) {
-        auto r = std::shared_ptr<task>(new task(std::move(func)));
+        auto r = std::make_shared<task>(std::move(func));
         scheduler::start(r);
         return r;
     }
@@ -172,6 +172,21 @@ namespace fast_task {
     }
 
     void task::await_multiple(std::list<std::shared_ptr<task>>& tasks, bool pre_started, bool release) {
+        if (!pre_started) {
+            for (auto& it : tasks)
+                scheduler::start(it);
+        }
+        if (release) {
+            for (auto& it : tasks) {
+                await_task(it, false);
+                it = nullptr;
+            }
+        } else
+            for (auto& it : tasks)
+                await_task(it, false);
+    }
+
+    void task::await_multiple(std::vector<std::shared_ptr<task>>& tasks, bool pre_started, bool release) {
         if (!pre_started) {
             for (auto& it : tasks)
                 scheduler::start(it);

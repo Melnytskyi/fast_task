@@ -87,3 +87,7 @@ Contributions to `fast_task` are welcome. Whether it's bug fixes, new features, 
 ## License
 
 This project is licensed under the **Boost Software License - Version 1.0**. For more details, please see the [LICENSE](https://github.com/Melnytskyi/fast_task/blob/main/LICENSE) file. 
+
+## SAST Tools
+
+[PVS-Studio](https://pvs-studio.com/en/pvs-studio/?utm_source=website&utm_medium=github&utm_campaign=open_source) - static analyzer for C, C++, C#, and Java code.

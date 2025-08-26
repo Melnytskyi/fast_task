@@ -11,7 +11,10 @@ namespace fast_task {
     task_recursive_mutex::task_recursive_mutex() {}
 
     task_recursive_mutex::~task_recursive_mutex() {
-        assert(recursive_count == 0 && "Mutex destroyed while locked");
+        if (recursive_count != 0) {
+            assert(false && "Mutex destroyed while locked");
+            std::terminate();
+        }
     }
 
     void task_recursive_mutex::lock() {

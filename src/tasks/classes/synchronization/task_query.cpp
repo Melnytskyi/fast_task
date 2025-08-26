@@ -5,6 +5,7 @@
 // http://www.boost.org/LICENSE_1_0.txt)
 
 #include <tasks.hpp>
+#include <tasks/_internal.hpp>
 
 namespace fast_task {
     struct task_query_handle {                  //144 [sizeof]
@@ -26,8 +27,10 @@ namespace fast_task {
     void __TaskQuery_add_task_leave(task_query_handle* tqh) {
         fast_task::lock_guard lock(tqh->no_race);
         if (tqh->destructed) {
-            if (tqh->at_execution_max == 0)
+            if (tqh->at_execution_max == 0) {
                 delete tqh;
+                return;
+            }
         }
 
         if (!tqh->tasks.empty() && tqh->is_running) {

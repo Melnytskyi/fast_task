@@ -15,7 +15,12 @@ namespace fast_task {
 
     task_limiter::task_limiter() {}
 
-    task_limiter::~task_limiter() {}
+    task_limiter::~task_limiter() {
+        if (locked) {
+            assert(false && "Tried to destroy locked limiter");
+            std::terminate();
+        }
+    }
 
     void task_limiter::set_max_threshold(size_t val) {
         fast_task::lock_guard guard(no_race);
@@ -71,7 +76,7 @@ namespace fast_task {
     bool task_limiter::try_lock() {
         if (!no_race.try_lock())
             return false;
-        if (!locked) {
+        if (locked) {
             no_race.unlock();
             return false;
         } else if (--allow_threshold <= 0)

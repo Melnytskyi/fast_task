@@ -51,9 +51,10 @@ namespace fast_task {
         if (!hh)
             return 0;
         fast_task::unique_lock lock(hh->no_race);
-        if (hh->time_point < std::chrono::high_resolution_clock::now() && !hh->scheduled_tasks.empty()) {
-            hh->canceled_tasks.insert(hh->scheduled_tasks.front());
-            hh->scheduled_tasks.pop_front();
+        auto& st = hh->scheduled_tasks;
+        if (hh->time_point < std::chrono::high_resolution_clock::now() && !st.empty()) {
+            hh->canceled_tasks.insert(st.front());
+            st.pop_front();
             return true;
         } else
             return 0;
@@ -70,11 +71,12 @@ namespace fast_task {
             scheduler::schedule_until(
                 std::make_shared<task>([hh = hh, t, timeout_time = hh->time_point]() mutable {
                     fast_task::unique_lock lock(hh->no_race);
-                    if (hh->canceled_tasks.find(t.get()) == hh->canceled_tasks.end()) {
+                    auto& ct = hh->canceled_tasks;
+                    if (ct.find(t.get()) == ct.end()) {
                         if (hh->time_point == timeout_time)
                             scheduler::start(t);
                     } else
-                        hh->canceled_tasks.erase(t.get());
+                        ct.erase(t.get());
                 }),
                 hh->time_point
             );
@@ -149,11 +151,12 @@ namespace fast_task {
             lock.unlock();
             this_task::sleep_until(hh->time_point);
             lock.lock();
-            if (hh->canceled_tasks.find(loc.curr_task.get()) == hh->canceled_tasks.end()) {
+            auto& ct = hh->canceled_tasks;
+            if (ct.find(loc.curr_task.get()) == ct.end()) {
                 if (hh->time_point == timeout_time)
                     return status::timeouted;
             } else
-                hh->canceled_tasks.erase(loc.curr_task.get());
+                ct.erase(loc.curr_task.get());
             return status::canceled;
         }
     }

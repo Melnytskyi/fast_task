@@ -8,18 +8,10 @@ set(fast_task_src_INCLUDE_DIR "src")
 set(fast_task_INCLUDE_DIR ${fast_task_src_INCLUDE_DIR})
 
 if(MSVC)
-  add_definitions(/MP)
-  add_definitions(/Zc:preprocessor)
+  string(APPEND CMAKE_CXX_FLAGS " /MP /Zc:preprocessor /EHa /permissive-")
   enable_language(ASM_MASM)
-  string(REPLACE "/MD" "/MT" CMAKE_CXX_FLAGS ${CMAKE_CXX_FLAGS})
-  string(REPLACE "/MD" "/MT" CMAKE_CXX_FLAGS_DEBUG ${CMAKE_CXX_FLAGS_DEBUG})
-  string(REPLACE "/MD" "/MT" CMAKE_CXX_FLAGS_RELEASE ${CMAKE_CXX_FLAGS_RELEASE})
-  string(REPLACE "/Gv" "/Gr" CMAKE_CXX_FLAGS ${CMAKE_CXX_FLAGS_RELEASE})
-  string(REPLACE "/Gv" "/Gr" CMAKE_CXX_FLAGS_DEBUG ${CMAKE_CXX_FLAGS_DEBUG})
-  string(REPLACE "/Gv" "/Gr" CMAKE_CXX_FLAGS_RELEASE ${CMAKE_CXX_FLAGS_RELEASE})
 else(MSVC)
-  add_compile_options(-m64)
-  add_compile_options(-g)
+  add_definitions(-m64 -g -Wall -Wextra -pedantic)
   set(Boost_USE_STATIC_LIBS ON)
   set(Boost_USE_STATIC_RUNTIME ON)
 endif(MSVC)
@@ -32,11 +24,6 @@ FILE(GLOB SRCFILES
         src/*/*/*.cpp
         src/*/*/*/*.cpp
 )
-
-
-IF(MSVC)
-  SET(CMAKE_CXX_FLAGS "/EHa")
-ENDIF(MSVC)
 
 find_package(Boost REQUIRED COMPONENTS context)
 include_directories(${Boost_INCLUDE_DIRS} ${fast_task_INCLUDE_DIR})
