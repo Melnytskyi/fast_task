@@ -32,6 +32,10 @@ void (*thread_interrupter_asm_ptr)() = []() {
     #include <pthread.h>
     #include <ucontext.h>
 #endif
+
+#if defined(__x86_x64__) || defined(__i386__) || defined(_M_IX86) || defined(_M_X64)
+    #define __IS_X86_OR_X64
+#endif
 namespace fast_task {
 #ifdef _WIN32
     mutex::mutex() {
@@ -141,6 +145,22 @@ namespace fast_task {
                 return false;
         locked = UINT_MAX;
         return true;
+    }
+
+    void spin_lock::lock() {
+        while (locked.test_and_set(std::memory_order_acquire)) {
+    #ifdef __IS_X86_OR_X64
+            _mm_pause();
+    #endif
+        }
+    }
+
+    bool spin_lock::try_lock() {
+        return locked.test_and_set(std::memory_order_acquire);
+    }
+
+    void spin_lock::unlock() {
+        locked.clear(std::memory_order_release);
     }
 
     condition_variable::condition_variable() {
@@ -535,6 +555,22 @@ namespace fast_task {
             if (err != ETIMEDOUT)
                 throw std::system_error(err, std::system_category());
         }
+    }
+
+    void spin_lock::lock() {
+        while (locked.test_and_set(std::memory_order_acquire)) {
+    #if (defined(__GNUC__) || defined(__clang__)) && __IS_X86_OR_X64
+            _builtin_ia32_pause();
+    #endif
+        }
+    }
+
+    bool spin_lock::try_lock() {
+        return locked.test_and_set(std::memory_order_acquire);
+    }
+
+    void spin_lock::unlock() {
+        locked.clear(std::memory_order_release);
     }
 
     condition_variable::condition_variable() {

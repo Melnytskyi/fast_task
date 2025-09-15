@@ -44,6 +44,29 @@ namespace fast_task {
             return future_;
         }
 
+        static std::shared_ptr<future> start(fast_task::task_query& query, const std::function<T()>& fn, uint16_t bind_id = (uint16_t)-1) {
+            std::shared_ptr<future> future_ = std::make_shared<future>();
+            auto task_ = std::make_shared<task>([fn, future_]() {
+                try {
+                    future_->result = std::make_optional<T>(fn());
+                } catch (const task_cancellation&) {
+                    fast_task::lock_guard guard(future_->task_mt);
+                    future_->_is_ready = true;
+                    future_->task_cv.notify_all();
+                    throw;
+                } catch (...) {
+                    future_->ex_ptr = std::current_exception();
+                }
+                fast_task::lock_guard guard(future_->task_mt);
+                future_->_is_ready = true;
+                future_->task_cv.notify_all();
+            });
+            if (bind_id != (uint16_t)-1)
+                task_->set_worker_id(bind_id);
+            query.add(task_);
+            return future_;
+        }
+
         static std::shared_ptr<future> make_ready(const T& value) {
             std::shared_ptr<future> future_ = std::make_shared<future>();
             future_->result = std::make_optional<T>(value);
@@ -206,6 +229,29 @@ namespace fast_task {
             return future_;
         }
 
+        static std::shared_ptr<future> start(fast_task::task_query& query, const std::function<void()>& fn, uint16_t bind_id = (uint16_t)-1) {
+            std::shared_ptr<future> future_ = std::make_shared<future>();
+            auto task_ = std::make_shared<task>([fn, future_]() {
+                try {
+                    fn();
+                } catch (const task_cancellation&) {
+                    fast_task::lock_guard guard(future_->task_mt);
+                    future_->_is_ready = true;
+                    future_->task_cv.notify_all();
+                    throw;
+                } catch (...) {
+                    future_->ex_ptr = std::current_exception();
+                }
+                fast_task::lock_guard guard(future_->task_mt);
+                future_->_is_ready = true;
+                future_->task_cv.notify_all();
+            });
+            if (bind_id != (uint16_t)-1)
+                task_->set_worker_id(bind_id);
+            query.add(task_);
+            return future_;
+        }
+
         static std::shared_ptr<future> make_ready() {
             std::shared_ptr<future> future_ = std::make_shared<future>();
             future_->_is_ready = true;
@@ -340,6 +386,29 @@ namespace fast_task {
             return future_;
         }
 
+        static std::shared_ptr<cancelable_future> start(fast_task::task_query& query, const std::function<T()>& fn, uint16_t bind_id = (uint16_t)-1) {
+            std::shared_ptr<cancelable_future> future_ = std::make_shared<cancelable_future>();
+            future_->task_ = std::make_shared<task>([fn, future_]() {
+                try {
+                    future_->result = std::make_optional<T>(fn());
+                } catch (const task_cancellation&) {
+                    fast_task::lock_guard guard(future_->task_mt);
+                    future_->_is_ready = true;
+                    future_->task_cv.notify_all();
+                    throw;
+                } catch (...) {
+                    future_->ex_ptr = std::current_exception();
+                }
+                fast_task::lock_guard guard(future_->task_mt);
+                future_->_is_ready = true;
+                future_->task_cv.notify_all();
+            });
+            if (bind_id != (uint16_t)-1)
+                future_->task_->set_worker_id(bind_id);
+            query.add(future_->task_);
+            return future_;
+        }
+
         static std::shared_ptr<cancelable_future> make_ready(const T& value) {
             std::shared_ptr<cancelable_future> future_ = std::make_shared<cancelable_future>();
             future_->result = std::make_optional<T>(value);
@@ -412,6 +481,29 @@ namespace fast_task {
             return future_;
         }
 
+        static std::shared_ptr<cancelable_future> start(fast_task::task_query& query, const std::function<void()>& fn, uint16_t bind_id = (uint16_t)-1) {
+            std::shared_ptr<cancelable_future> future_ = std::make_shared<cancelable_future>();
+            future_->task_ = std::make_shared<task>([fn, future_]() {
+                try {
+                    fn();
+                } catch (const task_cancellation&) {
+                    fast_task::lock_guard guard(future_->task_mt);
+                    future_->_is_ready = true;
+                    future_->task_cv.notify_all();
+                    throw;
+                } catch (...) {
+                    future_->ex_ptr = std::current_exception();
+                }
+                fast_task::lock_guard guard(future_->task_mt);
+                future_->_is_ready = true;
+                future_->task_cv.notify_all();
+            });
+            if (bind_id != (uint16_t)-1)
+                future_->task_->set_worker_id(bind_id);
+            query.add(future_->task_);
+            return future_;
+        }
+
         static std::shared_ptr<cancelable_future> make_ready() {
             std::shared_ptr<cancelable_future> future_ = std::make_shared<cancelable_future>();
             future_->_is_ready = true;
@@ -446,6 +538,27 @@ namespace fast_task {
     using cancelable_future_ptr = std::shared_ptr<cancelable_future<T>>;
 
     namespace future_tool {
+        template <class T, class FN>
+        future_ptr<void> forEach(T& container,fast_task::task_query& query, FN&& fn) {
+            if (container.empty())
+                return future<void>::make_ready();
+            std::vector<cancelable_future_ptr<void>> futures;
+            futures.reserve(container.size());
+            for (auto& item : container)
+                futures.push_back(cancelable_future<void>::start(query, [item, fn]() { fn(item); }));
+
+            return future<void>::start([fut = std::move(futures)] {
+                try {
+                    for (auto& future_ : fut)
+                        future_->wait();
+                } catch (...) {
+                    for (auto& future_ : fut)
+                        future_->cancel();
+                    throw;
+                }
+            });
+        }
+
         template <class T, class FN>
         future_ptr<void> forEach(T& container, FN&& fn) {
             if (container.empty())
@@ -489,6 +602,28 @@ namespace fast_task {
                 }
             });
         }
+        template <class T, class FN>
+        future_ptr<void> forEachMove(T&& container, fast_task::task_query& query, FN&& fn) {
+            if (container.empty())
+                return future<void>::make_ready();
+            std::vector<cancelable_future_ptr<void>> futures;
+            futures.reserve(container.size());
+            for (auto&& item : container)
+                futures.push_back(cancelable_future<void>::start(query, [it = std::move(item), fn]() mutable {
+                    fn(std::move(it));
+                }));
+
+            return future<void>::start([fut = std::move(futures)] {
+                try {
+                    for (auto& future_ : fut)
+                        future_->wait();
+                } catch (...) {
+                    for (auto& future_ : fut)
+                        future_->cancel();
+                    throw;
+                }
+            });
+        }
 
         template <class Result, class T, class FN>
         std::vector<Result> process(const std::vector<T>& container, FN&& fn) {
@@ -499,6 +634,28 @@ namespace fast_task {
             futures.reserve(container.size());
             for (auto& item : container)
                 futures.push_back(cancelable_future<Result>::start([item, fn = fn]() mutable { return fn(item); }));
+
+            std::vector<Result> res;
+            res.reserve(container.size());
+            try {
+                for (auto& future_ : futures)
+                    res.push_back(future_->take());
+            } catch (...) {
+                for (auto& future_ : futures)
+                    future_->cancel();
+                throw;
+            }
+            return res;
+        }
+        template <class Result, class T, class FN>
+        std::vector<Result> process(const std::vector<T>& container,fast_task::task_query& query, FN&& fn) {
+            if (container.empty())
+                return {};
+
+            std::vector<cancelable_future_ptr<Result>> futures;
+            futures.reserve(container.size());
+            for (auto& item : container)
+                futures.push_back(cancelable_future<Result>::start(query, [item, fn = fn]() mutable { return fn(item); }));
 
             std::vector<Result> res;
             res.reserve(container.size());
@@ -572,12 +729,39 @@ namespace fast_task {
                 return res;
             });
         }
+        template <class Ret>
+        future_ptr<std::vector<Ret>> accumulate(fast_task::task_query& query, const std::vector<future_ptr<Ret>>& futures) {
+            if (futures.empty())
+                return future<std::vector<Ret>>::make_ready({});
+            return future<std::vector<Ret>>::start(query, [fut = futures] {
+                std::vector<Ret> res;
+                res.resize(fut.size());
+                fut.for_each([&](size_t pos, auto& it) {
+                    res[pos] = it.take();
+                });
+                return res;
+            });
+        }
 
         template <class Ret>
         future_ptr<std::vector<Ret>> accumulate(std::vector<future_ptr<Ret>>&& futures) {
             if (futures.empty())
                 return future<std::vector<Ret>>::make_ready({});
             return future<std::vector<Ret>>::start([fut = std::move(futures)] {
+                std::vector<Ret> res;
+                res.resize(fut.size());
+                fut.for_each([&](size_t pos, auto& it) {
+                    res[pos] = it.take();
+                });
+                return res;
+            });
+        }
+
+        template <class Ret>
+        future_ptr<std::vector<Ret>> accumulate(fast_task::task_query& query, std::vector<future_ptr<Ret>>&& futures) {
+            if (futures.empty())
+                return future<std::vector<Ret>>::make_ready({});
+            return future<std::vector<Ret>>::start(query, [fut = std::move(futures)] {
                 std::vector<Ret> res;
                 res.resize(fut.size());
                 fut.for_each([&](size_t pos, auto& it) {
@@ -596,11 +780,29 @@ namespace fast_task {
                     future_->wait();
             });
         }
+        static future_ptr<void> combineAll(fast_task::task_query& query, const std::vector<future_ptr<void>>& futures) {
+            if (futures.empty())
+                return future<void>::make_ready();
+            std::vector<future_ptr<void>> fut = {futures.begin(), futures.end()};
+            return future<void>::start(query, [fut = std::move(fut)] {
+                for (auto& future_ : fut)
+                    future_->wait();
+            });
+        }
 
         static future_ptr<void> combineAll(std::vector<future_ptr<void>>&& futures) {
             if (futures.empty())
                 return future<void>::make_ready();
             return future<void>::start([fut = std::move(futures)] {
+                for (auto& future_ : fut)
+                    future_->wait();
+            });
+        }
+
+        static future_ptr<void> combineAll(fast_task::task_query& query, std::vector<future_ptr<void>>&& futures) {
+            if (futures.empty())
+                return future<void>::make_ready();
+            return future<void>::start(query, [fut = std::move(futures)] {
                 for (auto& future_ : fut)
                     future_->wait();
             });

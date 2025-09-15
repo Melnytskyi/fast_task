@@ -9,6 +9,7 @@
 #include <chrono>
 #include <tuple>
 #include <type_traits>
+#include <atomic>
 
 namespace fast_task {
     struct adopt_lock_t {};
@@ -458,6 +459,22 @@ namespace fast_task {
         bool try_lock();
         bool try_lock_for(std::chrono::milliseconds ms);
         bool try_lock_until(std::chrono::high_resolution_clock::time_point time);
+    };
+
+    class spin_lock {
+        std::atomic_flag locked = ATOMIC_FLAG_INIT;
+
+    public:
+        spin_lock() = default;
+        spin_lock(const spin_lock& other) = delete;
+        spin_lock(spin_lock&& other) = delete;
+        spin_lock& operator=(const spin_lock& other) = delete;
+        spin_lock& operator=(spin_lock&& other) = delete;
+        ~spin_lock() = default;
+
+        void lock();
+        bool try_lock();
+        void unlock();
     };
 
     template <class M>
