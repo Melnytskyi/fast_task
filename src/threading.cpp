@@ -42,7 +42,7 @@ namespace fast_task {
         _mutex = SRWLOCK_INIT;
     }
 
-    mutex::~mutex() noexcept(false) = default;
+    mutex::~mutex() noexcept = default;
 
     void mutex::lock() {
         interrupt::interrupt_unsafe_region::lock();
@@ -66,7 +66,7 @@ namespace fast_task {
         _mutex = SRWLOCK_INIT;
     }
 
-    rw_mutex::~rw_mutex() noexcept(false) = default;
+    rw_mutex::~rw_mutex() noexcept = default;
 
     void rw_mutex::lock() {
         interrupt::interrupt_unsafe_region::lock();
@@ -106,8 +106,8 @@ namespace fast_task {
 
     timed_mutex::timed_mutex() = default;
 
-    timed_mutex::~timed_mutex() noexcept(false) {
-        assert(locked == 0 && "Tried to destroy locked mutex");
+    timed_mutex::~timed_mutex() noexcept {
+        assert(locked == 0 && "Thread tried to destroy locked mutex");
     }
 
     void timed_mutex::lock() {
@@ -115,12 +115,14 @@ namespace fast_task {
         while (locked != 0)
             _cond.wait(_mutex);
         locked = UINT_MAX;
+        interrupt::interrupt_unsafe_region::lock();
     }
 
     void timed_mutex::unlock() {
         {
             fast_task::lock_guard<mutex> lock(_mutex);
             locked = 0;
+            interrupt::interrupt_unsafe_region::unlock();
         }
         _cond.notify_one();
     }
@@ -129,6 +131,7 @@ namespace fast_task {
         fast_task::lock_guard<mutex> lock(_mutex);
         if (locked == 0) {
             locked = UINT_MAX;
+            interrupt::interrupt_unsafe_region::lock();
             return true;
         } else
             return false;
@@ -144,11 +147,28 @@ namespace fast_task {
             if (_cond.wait_until(_mutex, time) == cv_status::timeout)
                 return false;
         locked = UINT_MAX;
+        interrupt::interrupt_unsafe_region::lock();
         return true;
     }
 
+    spin_lock::spin_lock() {
+        struct fake_construct {
+            std::atomic_flag flag = ATOMIC_FLAG_INIT;
+        };
+
+        new (locked_storage) fake_construct{};
+    }
+
+    spin_lock::~spin_lock() {
+        reinterpret_cast<std::atomic_flag*>(locked_storage)->~atomic_flag();
+    }
+
     void spin_lock::lock() {
-        while (locked.test_and_set(std::memory_order_acquire)) {
+        interrupt::interrupt_unsafe_region::lock();
+        while (
+            reinterpret_cast<std::atomic_flag*>(locked_storage)
+                ->test_and_set(std::memory_order_acquire)
+        ) {
     #ifdef __IS_X86_OR_X64
             _mm_pause();
     #endif
@@ -156,18 +176,25 @@ namespace fast_task {
     }
 
     bool spin_lock::try_lock() {
-        return locked.test_and_set(std::memory_order_acquire);
+        interrupt::interrupt_unsafe_region::lock();
+        bool res = reinterpret_cast<std::atomic_flag*>(locked_storage)
+                       ->test_and_set(std::memory_order_acquire);
+        if (!res)
+            interrupt::interrupt_unsafe_region::unlock();
+        return res;
     }
 
     void spin_lock::unlock() {
-        locked.clear(std::memory_order_release);
+        reinterpret_cast<std::atomic_flag*>(locked_storage)
+            ->clear(std::memory_order_release);
+        interrupt::interrupt_unsafe_region::unlock();
     }
 
     condition_variable::condition_variable() {
         _cond = CONDITION_VARIABLE_INIT;
     }
 
-    condition_variable::~condition_variable() noexcept(false) = default;
+    condition_variable::~condition_variable() noexcept = default;
 
     void condition_variable::notify_one() {
         interrupt::interrupt_unsafe_region region;
@@ -218,6 +245,7 @@ namespace fast_task {
         interrupt::interrupt_unsafe_region region;
         auto state = mtx.relock_begin();
         if (SleepConditionVariableSRW((PCONDITION_VARIABLE)&_cond, (PSRWLOCK)&mtx.actual_mutex._mutex, INFINITE, 0)) {
+            mtx.lock();
             mtx.relock_end(state);
             DWORD err = GetLastError();
             if (err)
@@ -233,15 +261,16 @@ namespace fast_task {
     }
 
     cv_status condition_variable::wait_until(recursive_mutex& mtx, std::chrono::high_resolution_clock::time_point time) {
+        interrupt::interrupt_unsafe_region region;
         auto state = mtx.relock_begin();
         while (true) {
             auto sleep_ms = std::chrono::duration_cast<std::chrono::milliseconds>(time - std::chrono::high_resolution_clock::now());
             if (sleep_ms.count() <= 0)
                 return cv_status::timeout;
             DWORD wait_time = sleep_ms.count() > 0x7FFFFFFF ? 0x7FFFFFFF : (DWORD)sleep_ms.count();
-            interrupt::interrupt_unsafe_region region;
             bool res = SleepConditionVariableSRW((PCONDITION_VARIABLE)&_cond, (PSRWLOCK)&mtx.actual_mutex._mutex, wait_time, 0);
             cv_status status = cv_status::no_timeout;
+            mtx.lock();
             mtx.relock_end(state);
             if (res) {
                 auto err = GetLastError();
@@ -262,7 +291,8 @@ namespace fast_task {
 
     void* thread::create(void (*function)(void*), void* arg, unsigned long& id, size_t stack_size, bool stack_reservation, int& error_code) {
         error_code = 0;
-        void* handle = (void*)_beginthreadex(nullptr, stack_size, (_beginthreadex_proc_type)function, arg, CREATE_SUSPENDED | (stack_reservation ? STACK_SIZE_PARAM_IS_A_RESERVATION : 0), (unsigned int*)&id);
+        interrupt::interrupt_unsafe_region region;
+        void* handle = (void*)_beginthreadex(nullptr, (uint32_t)std::min<size_t>(stack_size, UINT32_MAX), (_beginthreadex_proc_type)function, arg, CREATE_SUSPENDED | (stack_reservation ? STACK_SIZE_PARAM_IS_A_RESERVATION : 0), (unsigned int*)&id);
         if (!handle) {
             error_code = GetLastError();
             return nullptr;
@@ -272,6 +302,7 @@ namespace fast_task {
     }
 
     [[nodiscard]] unsigned int thread::hardware_concurrency() noexcept {
+        interrupt::interrupt_unsafe_region region;
         SYSTEM_INFO sysinfo;
         GetSystemInfo(&sysinfo);
         int numCPU = sysinfo.dwNumberOfProcessors;
@@ -291,6 +322,7 @@ namespace fast_task {
 
     void thread::detach() {
         if (_thread) {
+            interrupt::interrupt_unsafe_region region;
             CloseHandle(_thread);
             _thread = nullptr;
         }
@@ -315,13 +347,16 @@ namespace fast_task {
             : handle(handle) {}
 
         ~HANDLE_CLOSER() {
-            if (handle != nullptr)
+            if (handle != nullptr) {
+                interrupt::interrupt_unsafe_region region;
                 CloseHandle(handle);
+            }
             handle = nullptr;
         }
     };
 
     bool thread::suspend(id id) {
+        interrupt::interrupt_unsafe_region region;
         HANDLE_CLOSER thread_handle(OpenThread(THREAD_SUSPEND_RESUME | THREAD_QUERY_INFORMATION, false, id._id));
         if (SuspendThread(thread_handle.handle) == -1)
             return false;
@@ -329,6 +364,7 @@ namespace fast_task {
     }
 
     bool thread::resume(id id) {
+        interrupt::interrupt_unsafe_region region;
         HANDLE_CLOSER thread_handle(OpenThread(THREAD_SUSPEND_RESUME | THREAD_QUERY_INFORMATION, false, id._id));
         if (ResumeThread(thread_handle.handle) == -1)
             return false;
@@ -336,6 +372,7 @@ namespace fast_task {
     }
 
     bool thread::insert_context(id id, void (*inserted_context)(void*), void* arg) {
+        interrupt::interrupt_unsafe_region region;
         HANDLE_CLOSER thread_handle(OpenThread(THREAD_SUSPEND_RESUME | THREAD_QUERY_INFORMATION | THREAD_GET_CONTEXT | THREAD_SET_CONTEXT, false, id._id));
         if (SuspendThread(thread_handle.handle) == -1)
             return false;
@@ -367,10 +404,12 @@ namespace fast_task {
 
     namespace this_thread {
         thread::id get_id() noexcept {
+            interrupt::interrupt_unsafe_region region;
             return thread::id(GetCurrentThreadId());
         }
 
         void yield() noexcept {
+            interrupt::interrupt_unsafe_region region;
             SwitchToThread();
         }
 
@@ -380,9 +419,9 @@ namespace fast_task {
         }
 
         void sleep_until(std::chrono::high_resolution_clock::time_point time) {
+            interrupt::interrupt_unsafe_region region;
             auto diff = time - std::chrono::high_resolution_clock::now();
             while (diff.count() > 0) {
-                interrupt::interrupt_unsafe_region region;
                 std::chrono::milliseconds ms = std::chrono::duration_cast<std::chrono::milliseconds>(diff);
                 Sleep((DWORD)ms.count());
                 diff = time - std::chrono::high_resolution_clock::now();
@@ -392,43 +431,49 @@ namespace fast_task {
 #else
     mutex::mutex() {
         _mutex = new pthread_mutex_t;
+        interrupt::interrupt_unsafe_region region;
         pthread_mutex_init(_mutex, nullptr);
     }
 
-    mutex::~mutex() noexcept(false) {
+    mutex::~mutex() noexcept {
+        interrupt::interrupt_unsafe_region region;
         int res = pthread_mutex_destroy(_mutex);
         if (res == EBUSY) {
-            assert(false && "Tried to destroy locked mutex");
+            assert(false && "Thread tried todestroy locked mutex");
             std::terminate();
         }
         if (res == EINVAL) {
-            assert(false && "Tried to destroy locked mutex");
+            assert(false && "Thread tried todestroy locked mutex");
             std::terminate();
         }
         delete _mutex;
     }
 
     void mutex::lock() {
+        interrupt::interrupt_unsafe_region::lock();
         int err = pthread_mutex_lock(_mutex);
         if (err) {
             if (err == EDEADLK)
-                throw std::logic_error("Try lock already owned mutex");
+                throw std::logic_error("Thread tried to lock already owned mutex");
             throw std::system_error(err, std::system_category());
         }
     }
 
     void mutex::unlock() {
         int err = pthread_mutex_unlock(_mutex);
+        interrupt::interrupt_unsafe_region::unlock();
         if (err) {
             if (err == EPERM)
-                throw std::logic_error("Try unlock non-owned mutex");
+                throw std::logic_error("Thread tried to unlock non-owned mutex");
             throw std::system_error(err, std::system_category());
         }
     }
 
     bool mutex::try_lock() {
+        interrupt::interrupt_unsafe_region::lock();
         int err = pthread_mutex_trylock(_mutex);
         if (err) {
+            interrupt::interrupt_unsafe_region::unlock();
             if (err == EBUSY)
                 return false;
             throw std::system_error(err, std::system_category());
@@ -437,19 +482,21 @@ namespace fast_task {
     }
 
     rw_mutex::rw_mutex() {
+        interrupt::interrupt_unsafe_region region;
         _mutex = new pthread_rwlock_t;
         pthread_rwlock_init(_mutex, nullptr);
     }
 
-    rw_mutex::~rw_mutex() noexcept(false) {
+    rw_mutex::~rw_mutex() noexcept {
+        interrupt::interrupt_unsafe_region region;
         int res = pthread_rwlock_destroy(_mutex);
 
         if (res == EBUSY) {
-            assert(false && "Tried to destroy locked mutex");
+            assert(false && "Thread tried to destroy locked mutex");
             std::terminate();
         }
         if (res == EINVAL) {
-            assert(false && "Tried to destroy locked mutex");
+            assert(false && "Thread tried to destroy locked mutex");
             std::terminate();
         }
         delete _mutex;
@@ -492,44 +539,50 @@ namespace fast_task {
     }
 
     timed_mutex::timed_mutex() {
+        interrupt::interrupt_unsafe_region region;
         _mutex = new pthread_mutex_t;
         pthread_mutex_init(_mutex, nullptr);
     }
 
-    timed_mutex::~timed_mutex() noexcept(false) {
+    timed_mutex::~timed_mutex() noexcept {
+        interrupt::interrupt_unsafe_region region;
         int res = pthread_mutex_destroy(_mutex);
         if (res == EBUSY) {
-            assert(false && "Tried to destroy locked mutex");
+            assert(false && "Thread tried to destroy locked mutex");
             std::terminate();
         }
         if (res == EINVAL) {
-            assert(false && "Tried to destroy locked mutex");
+            assert(false && "Thread tried to destroy locked mutex");
             std::terminate();
         }
         delete _mutex;
     }
 
     void timed_mutex::lock() {
+        interrupt::interrupt_unsafe_region::lock();
         int err = pthread_mutex_lock(_mutex);
         if (err) {
             if (err == EDEADLK)
-                throw std::logic_error("Try lock already owned mutex");
+                throw std::logic_error("Thread tried to lock already owned mutex");
             throw std::system_error(err, std::system_category());
         }
     }
 
     void timed_mutex::unlock() {
         int err = pthread_mutex_unlock(_mutex);
+        interrupt::interrupt_unsafe_region::unlock();
         if (err) {
             if (err == EPERM)
-                throw std::logic_error("Try unlock non-owned mutex");
+                throw std::logic_error("Thread tried to unlock non-owned mutex");
             throw std::system_error(err, std::system_category());
         }
     }
 
     bool timed_mutex::try_lock() {
+        interrupt::interrupt_unsafe_region::lock();
         int err = pthread_mutex_trylock(_mutex);
         if (err) {
+            interrupt::interrupt_unsafe_region::unlock();
             if (err == EBUSY)
                 return false;
             throw std::system_error(err, std::system_category());
@@ -542,6 +595,7 @@ namespace fast_task {
     }
 
     bool timed_mutex::try_lock_until(std::chrono::high_resolution_clock::time_point time) {
+        interrupt::interrupt_unsafe_region region;
         while (true) {
             auto sleep_ms = std::chrono::duration_cast<std::chrono::milliseconds>(time - std::chrono::high_resolution_clock::now());
             if (sleep_ms.count() <= 0)
@@ -550,15 +604,33 @@ namespace fast_task {
             ts.tv_sec = sleep_ms.count() / 1000000000;
             ts.tv_nsec = sleep_ms.count() % 1000000000;
             int err = pthread_mutex_timedlock(_mutex, &ts);
-            if (err == 0)
+            if (err == 0) {
+                interrupt::interrupt_unsafe_region::lock();
                 return true;
+            }
             if (err != ETIMEDOUT)
                 throw std::system_error(err, std::system_category());
         }
     }
 
+    spin_lock::spin_lock() {
+        struct fake_construct {
+            std::atomic_flag flag = ATOMIC_FLAG_INIT;
+        };
+
+        new (locked_storage) fake_construct{};
+    }
+
+    spin_lock::~spin_lock() {
+        reinterpret_cast<std::atomic_flag*>(locked_storage)->~atomic_flag();
+    }
+
     void spin_lock::lock() {
-        while (locked.test_and_set(std::memory_order_acquire)) {
+        interrupt::interrupt_unsafe_region::lock();
+        while (
+            reinterpret_cast<std::atomic_flag*>(locked_storage)
+                ->test_and_set(std::memory_order_acquire)
+        ) {
     #if (defined(__GNUC__) || defined(__clang__)) && __IS_X86_OR_X64
             _builtin_ia32_pause();
     #endif
@@ -566,40 +638,52 @@ namespace fast_task {
     }
 
     bool spin_lock::try_lock() {
-        return locked.test_and_set(std::memory_order_acquire);
+        interrupt::interrupt_unsafe_region::lock();
+        auto res = reinterpret_cast<std::atomic_flag*>(locked_storage)
+                       ->test_and_set(std::memory_order_acquire);
+        if (!res)
+            interrupt::interrupt_unsafe_region::unlock();
+        return res;
     }
 
     void spin_lock::unlock() {
-        locked.clear(std::memory_order_release);
+        reinterpret_cast<std::atomic_flag*>(locked_storage)
+            ->clear(std::memory_order_release);
+        interrupt::interrupt_unsafe_region::unlock();
     }
 
     condition_variable::condition_variable() {
+        interrupt::interrupt_unsafe_region region;
         _cond = new pthread_cond_t;
         pthread_cond_init(_cond, nullptr);
     }
 
-    condition_variable::~condition_variable() noexcept(false) {
+    condition_variable::~condition_variable() noexcept {
+        interrupt::interrupt_unsafe_region region;
         int res = pthread_cond_destroy(_cond);
         if (res == EBUSY)
-            throw std::logic_error("Try destroy used condition variable(ie. some thread is waiting on it)");
+            assert(false && "Thread tried to destroy used condition variable(ie. some thread is waiting on it)");
         if (res == EINVAL)
-            throw std::logic_error("Try destroy invalid condition variable");
+            assert(false && "Thread tried to destroy invalid condition variable");
         delete _cond;
     }
 
     void condition_variable::notify_one() {
+        interrupt::interrupt_unsafe_region region;
         int err = pthread_cond_signal(_cond);
         if (err)
             throw std::system_error(err, std::system_category());
     }
 
     void condition_variable::notify_all() {
+        interrupt::interrupt_unsafe_region region;
         int err = pthread_cond_broadcast(_cond);
         if (err)
             throw std::system_error(err, std::system_category());
     }
 
     void condition_variable::wait(mutex& mtx) {
+        interrupt::interrupt_unsafe_region region;
         int err = pthread_cond_wait(_cond, mtx._mutex);
         if (err)
             throw std::system_error(err, std::system_category());
@@ -610,6 +694,7 @@ namespace fast_task {
     }
 
     cv_status condition_variable::wait_until(mutex& mtx, std::chrono::high_resolution_clock::time_point time) {
+        interrupt::interrupt_unsafe_region region;
         while (true) {
             auto sleep_ms = std::chrono::duration_cast<std::chrono::milliseconds>(time - std::chrono::high_resolution_clock::now());
             if (sleep_ms.count() <= 0) {
@@ -626,6 +711,7 @@ namespace fast_task {
     }
 
     void condition_variable::wait(recursive_mutex& mtx) {
+        interrupt::interrupt_unsafe_region region;
         int err = pthread_cond_wait(_cond, mtx.actual_mutex._mutex);
         if (err)
             throw std::system_error(err, std::system_category());
@@ -636,6 +722,7 @@ namespace fast_task {
     }
 
     cv_status condition_variable::wait_until(recursive_mutex& mtx, std::chrono::high_resolution_clock::time_point time) {
+        interrupt::interrupt_unsafe_region region;
         while (true) {
             auto sleep_ms = std::chrono::duration_cast<std::chrono::milliseconds>(time - std::chrono::high_resolution_clock::now());
             if (sleep_ms.count() <= 0) {
@@ -653,6 +740,7 @@ namespace fast_task {
     }
 
     void* thread::create(void (*function)(void*), void* arg, unsigned long& id, size_t stack_size, bool stack_reservation, int& error_code) {
+        interrupt::interrupt_unsafe_region region;
         error_code = 0;
         pthread_attr_t attr;
         if (int err = pthread_attr_init(&attr); err) {
@@ -683,10 +771,12 @@ namespace fast_task {
     }
 
     [[nodiscard]] unsigned int thread::hardware_concurrency() noexcept {
+        interrupt::interrupt_unsafe_region region;
         return sysconf(_SC_NPROCESSORS_ONLN);
     }
 
     void thread::join() {
+        interrupt::interrupt_unsafe_region region;
         if (_thread) {
             if (int err = pthread_join((pthread_t)_thread, nullptr); err) {
                 switch (err) {
@@ -706,6 +796,7 @@ namespace fast_task {
     }
 
     void thread::detach() {
+        interrupt::interrupt_unsafe_region region;
         if (_thread) {
             if (int err = pthread_detach((pthread_t)_thread); err) {
                 switch (err) {
@@ -722,18 +813,22 @@ namespace fast_task {
     }
 
     bool thread::suspend() {
+        interrupt::interrupt_unsafe_region region;
         return suspend(_id);
     }
 
     bool thread::resume() {
+        interrupt::interrupt_unsafe_region region;
         return resume(_id);
     }
 
     void thread::insert_context(void (*inserted_context)(void*), void* arg) {
+        interrupt::interrupt_unsafe_region region;
         insert_context(_id, inserted_context, arg);
     }
 
     thread_local size_t locked_current = 0;
+
     struct {
         void (*inserted_context)(void*);
         void* arg;
@@ -747,12 +842,14 @@ namespace fast_task {
     #define SIGNAL_INSERT_THREAD (SIGRTMIN + 2)
 
     void pthread_pause_yield() {
+        interrupt::interrupt_unsafe_region region;
         sem_wait(&pthread_pause_sem);
         sem_post(&pthread_pause_sem);
         pthread_yield();
     }
 
     void pthread_pause_handler(int signal, siginfo_t*, ucontext_t* context) {
+        interrupt::interrupt_unsafe_region region;
         sem_post(&pthread_pause_sem);
         switch (signal) {
         case SIGNAL_STOP_THREAD:
@@ -790,6 +887,7 @@ namespace fast_task {
     }
 
     void pthread_pause_enable() {
+        interrupt::interrupt_unsafe_region region;
         sigset_t sigset;
         sigemptyset(&sigset);
         sigaddset(&sigset, SIGNAL_STOP_THREAD);
@@ -808,6 +906,7 @@ namespace fast_task {
     }
 
     void pthread_pause_disable() {
+        interrupt::interrupt_unsafe_region region;
         sem_wait(&pthread_pause_sem);
         sigset_t sigset;
         sigemptyset(&sigset);
@@ -820,6 +919,7 @@ namespace fast_task {
     }
 
     bool thread::suspend(id id) {
+        interrupt::interrupt_unsafe_region region;
         sem_wait(&pthread_pause_sem);
         while (pthread_kill(thread, SIGNAL_CONTINUE_THREAD) == EAGAIN)
             usleep(1000);
@@ -828,6 +928,7 @@ namespace fast_task {
     }
 
     bool thread::resume(id id) {
+        interrupt::interrupt_unsafe_region region;
         sem_wait(&pthread_pause_sem);
         while (pthread_kill(thread, SIGNAL_STOP_THREAD) == EAGAIN)
             usleep(1000);
@@ -836,8 +937,9 @@ namespace fast_task {
     }
 
     bool thread::insert_context(id id, void (*inserted_context)(void*), void* arg) {
+        interrupt::interrupt_unsafe_region region;
         sem_wait(&pthread_pause_sem);
-        
+
         while (pthread_kill(thread, SIGNAL_INSERT_THREAD) == EAGAIN)
             usleep(1000);
         return res;
@@ -845,18 +947,22 @@ namespace fast_task {
 
     namespace this_thread {
         thread::id get_id() noexcept {
+            interrupt::interrupt_unsafe_region region;
             return thread::id(pthread_self());
         }
 
         void yield() noexcept {
+            interrupt::interrupt_unsafe_region region;
             sched_yield();
         }
 
         void sleep_for(std::chrono::milliseconds ms) {
+            interrupt::interrupt_unsafe_region region;
             sleep_until(std::chrono::high_resolution_clock::now() + ms);
         }
 
         void sleep_until(std::chrono::high_resolution_clock::time_point time) {
+            interrupt::interrupt_unsafe_region region;
             auto diff = time - std::chrono::high_resolution_clock::now();
             while (diff.count() > 0) {
                 timespec ts;
@@ -873,7 +979,7 @@ namespace fast_task {
         owner = fast_task::thread::id();
     }
 
-    recursive_mutex::~recursive_mutex() noexcept(false) {
+    recursive_mutex::~recursive_mutex() noexcept {
         if (owner != fast_task::thread::id()) {
             assert(false && "Recursive mutex destroyed while locked");
             std::terminate();
@@ -881,6 +987,7 @@ namespace fast_task {
     }
 
     void recursive_mutex::lock() {
+        interrupt::interrupt_unsafe_region region;
         if (owner == fast_task::this_thread::get_id()) {
             count++;
             if (count == 0) {
@@ -895,8 +1002,9 @@ namespace fast_task {
     }
 
     void recursive_mutex::unlock() {
+        interrupt::interrupt_unsafe_region region;
         if (owner != fast_task::this_thread::get_id()) {
-            throw std::logic_error("Try unlock non-owned mutex");
+            throw std::logic_error("Thread tried to unlock non-owned mutex");
         }
         count--;
         if (count == 0) {
@@ -906,6 +1014,7 @@ namespace fast_task {
     }
 
     bool recursive_mutex::try_lock() {
+        interrupt::interrupt_unsafe_region region;
         if (owner == fast_task::this_thread::get_id()) {
             count++;
             return true;
@@ -920,25 +1029,27 @@ namespace fast_task {
 
     relock_state recursive_mutex::relock_begin() {
         if (owner != fast_task::this_thread::get_id())
-            throw std::logic_error("Try relock non-owned mutex");
-        unsigned int _count = count;
+            throw std::logic_error("Thread tried to relock non-owned mutex");
+        size_t _count = count;
         count = 1;
         return relock_state(_count);
     }
 
     void recursive_mutex::relock_end(relock_state state) {
         if (owner != fast_task::this_thread::get_id())
-            throw std::logic_error("Try relock non-owned mutex");
+            throw std::logic_error("Thread tried to relock non-owned mutex");
         count = state._state;
         owner = fast_task::this_thread::get_id();
     }
 
     void condition_variable_any::notify_one() {
+        interrupt::interrupt_unsafe_region region;
         fast_task::lock_guard<mutex> lock(_mutex);
         _cond.notify_one();
     }
 
     void condition_variable_any::notify_all() {
+        interrupt::interrupt_unsafe_region region;
         fast_task::lock_guard<mutex> lock(_mutex);
         _cond.notify_all();
     }

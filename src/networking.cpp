@@ -24,10 +24,10 @@
 #endif
 
 #include <condition_variable>
-#include <files/files.hpp>
+#include <files.hpp>
 #include <filesystem>
 #include <functional>
-#include <networking/networking.hpp>
+#include <networking.hpp>
 #include <tasks/util/native_workers_singleton.hpp>
 #include <variant>
 
@@ -325,8 +325,8 @@ namespace fast_task::networking {
     ::WSADATA wsaData;
 
     void init_win_fns(SOCKET sock) {
-        static bool inited = false;
-        if (inited)
+        static bool win_fns_inited = false;
+        if (win_fns_inited)
             return;
         ::GUID GuidAcceptEx = WSAID_ACCEPTEX;
         ::GUID GuidGetAcceptExSockaddrs = WSAID_GETACCEPTEXSOCKADDRS;
@@ -347,7 +347,7 @@ namespace fast_task::networking {
             throw std::runtime_error("WSAIoctl failed get DisconnectEx");
 
 
-        inited = true;
+        win_fns_inited = true;
     }
 
     #pragma region TCP
@@ -377,7 +377,7 @@ namespace fast_task::networking {
         ::SOCKET socket;
         int32_t buffer_size = 0x1000;
         std::vector<char>* temp_read_buffer = nullptr;
-        TcpError invalid_reason = TcpError::none;
+        tcp_error invalid_reason = tcp_error::none;
         bool bound = false;
         bool delayed_buffer_clean = false;
 
@@ -394,7 +394,7 @@ namespace fast_task::networking {
         uint32_t bytes_available_count() {
             fast_task::unique_lock lock(*cv_mutex);
             if (temp_read_buffer)
-                return std::min<size_t>(temp_read_buffer->size(), UINT32_MAX);
+                return (uint32_t)std::min<size_t>(temp_read_buffer->size(), UINT32_MAX);
             DWORD value = 0;
             int result = ::ioctlsocket(socket, FIONREAD, &value);
             if (result == SOCKET_ERROR)
@@ -442,7 +442,7 @@ namespace fast_task::networking {
                 if (!delayed_buffer_clean) {
                     auto to_read = std::min<size_t>(temp_read_buffer->size(), buffer_len);
                     std::memcpy(extern_buffer, temp_read_buffer->data(), to_read);
-                    readed = to_read;
+                    readed = (int)to_read;
                     temp_read_buffer->erase(temp_read_buffer->begin(), temp_read_buffer->begin() + to_read);
                     if (temp_read_buffer->empty()) {
                         delete temp_read_buffer;
@@ -481,7 +481,7 @@ namespace fast_task::networking {
             fast_task::unique_lock lock(*cv_mutex);
             if (temp_read_buffer) {
                 if (!delayed_buffer_clean) {
-                    readed = temp_read_buffer->size();
+                    readed = (uint32_t)std::min<size_t>(temp_read_buffer->size(), UINT32_MAX);
                     delayed_buffer_clean = true;
                     return temp_read_buffer->data();
                 } else {
@@ -499,7 +499,7 @@ namespace fast_task::networking {
                 buf = std::vector<char>(buffer_size);
             lock.unlock();
             int _readed = 0;
-            read(buf.data(), buf.size(), _readed);
+            read(buf.data(), (int)buf.size(), _readed);
             if (_readed) {
                 buf.resize(_readed);
                 readed = _readed;
@@ -513,14 +513,14 @@ namespace fast_task::networking {
             }
         }
 
-        void close(fast_task::unique_lock<mutex_unify>& lock, TcpError err = TcpError::local_close) {
+        void close(fast_task::unique_lock<mutex_unify>& lock, tcp_error err = tcp_error::local_close) {
             if (!valid())
                 return;
             invalid_reason = err;
             internal_close(lock);
         }
 
-        void close(TcpError err = TcpError::local_close) {
+        void close(tcp_error err = tcp_error::local_close) {
             mutex_unify mutex(*cv_mutex);
             fast_task::unique_lock lock(mutex);
             close(lock, err);
@@ -550,7 +550,7 @@ namespace fast_task::networking {
                 //send file in chunks using TransmitFile
                 uint64_t sended = 0;
                 uint64_t blocks = data_len / 0x7FFFFFFE;
-                uint64_t last_block = data_len % blocks;
+                uint32_t last_block = data_len % 0x7FFFFFFE;
 
                 while (blocks--)
                     if (!transfer_file(socket, file, 0x7FFFFFFE, chunks_size, sended + offset))
@@ -563,7 +563,7 @@ namespace fast_task::networking {
                     if (!transfer_file(socket, file, last_block, chunks_size, sended + offset))
                         return false;
             } else {
-                if (!transfer_file(socket, file, data_len, chunks_size, offset))
+                if (!transfer_file(socket, file, (uint32_t)data_len, chunks_size, offset))
                     return false;
             }
             return true;
@@ -588,7 +588,7 @@ namespace fast_task::networking {
         }
 
         bool valid() {
-            return socket != INVALID_SOCKET && invalid_reason == TcpError::none;
+            return socket != INVALID_SOCKET && invalid_reason == tcp_error::none;
         }
 
         void reset() {
@@ -596,14 +596,14 @@ namespace fast_task::networking {
             fast_task::unique_lock lock(mutex);
             if (!valid())
                 return;
-            invalid_reason = TcpError::local_reset;
+            invalid_reason = tcp_error::local_reset;
             closesocket(socket); //with iocp socket not send everything and cancel all operations
         }
 
         void connection_reset() {
             mutex_unify mutex(*cv_mutex);
             fast_task::unique_lock lock(mutex);
-            invalid_reason = TcpError::remote_close;
+            invalid_reason = tcp_error::remote_close;
             internal_close(lock);
         }
 
@@ -627,31 +627,31 @@ namespace fast_task::networking {
             shutdown(socket, SD_BOTH);
             if (!_DisconnectEx(socket, &op->overlapped, TF_REUSE_SOCKET, 0)) {
                 if (WSAGetLastError() != ERROR_IO_PENDING)
-                    invalid_reason = TcpError::local_close;
+                    invalid_reason = tcp_error::local_close;
                 op->cv.wait(lock);
             }
             closesocket(socket);
             socket = INVALID_SOCKET;
         }
 
-        bool handle_error(fast_task::unique_lock<mutex_unify>& lock, TcpError& reason) {
+        bool handle_error(fast_task::unique_lock<mutex_unify>& lock, tcp_error& reason) {
             auto error = WSAGetLastError();
             if (WSA_IO_PENDING == error)
                 return true;
             else {
                 switch (error) {
                 case WSAECONNRESET:
-                    reason = TcpError::remote_close;
+                    reason = tcp_error::remote_close;
                     break;
                 case WSAECONNABORTED:
                 case WSA_OPERATION_ABORTED:
                 case WSAENETRESET:
-                    reason = TcpError::local_close;
+                    reason = tcp_error::local_close;
                     break;
                 case WSAEWOULDBLOCK:
                     return false; //try later
                 default:
-                    reason = TcpError::undefined_error;
+                    reason = tcp_error::undefined_error;
                     break;
                 }
                 close(lock);
@@ -677,13 +677,13 @@ namespace fast_task::networking {
         }
     };
 
-    #pragma region TcpNetworkStream
+    #pragma region tcp_network_stream
 
-    class TcpNetworkStreamImpl : public TcpNetworkStream {
-        friend class TcpNetworkManager;
+    class tcp_network_streamImpl : public tcp_network_stream {
+        friend class tcp_network_manager;
         struct tcp_handle_2* handle;
         task_rw_mutex mutex;
-        TcpError last_error;
+        tcp_error last_error;
 
         bool checkup() {
             if (!handle)
@@ -696,10 +696,10 @@ namespace fast_task::networking {
         }
 
     public:
-        TcpNetworkStreamImpl(tcp_handle_2* handle)
-            : handle(handle), last_error(TcpError::none) {}
+        tcp_network_streamImpl(tcp_handle_2* handle)
+            : handle(handle), last_error(tcp_error::none) {}
 
-        ~TcpNetworkStreamImpl() override {
+        ~tcp_network_streamImpl() override {
             if (checkup()) {
                 write_lock lg(mutex);
                 handle->close();
@@ -736,9 +736,14 @@ namespace fast_task::networking {
         void write(const char* data, size_t size) override {
             read_lock lock(mutex);
             if (checkup()) {
-                handle->send(data, size);
-                if (!handle->valid())
-                    last_error = handle->invalid_reason;
+                while (size && handle->valid()) {
+                    auto to_send = (int32_t)std::min<size_t>(size, INT32_MAX);
+                    handle->send(data, to_send);
+                    size -= to_send;
+                    data += to_send;
+                    if (!handle->valid())
+                        last_error = handle->invalid_reason;
+                }
             }
         }
 
@@ -763,7 +768,17 @@ namespace fast_task::networking {
         void force_write_and_close(const char* data, size_t size) override {
             read_lock lock(mutex);
             if (checkup()) {
-                handle->send_and_close(data, size);
+                while (size && handle->valid()) {
+                    auto to_send = (int32_t)std::min<size_t>(size, INT32_MAX);
+                    if (to_send == size)
+                        handle->send_and_close(data, to_send);
+                    else
+                        handle->send(data, to_send);
+                    size -= to_send;
+                    data += to_send;
+                    if (!handle->valid())
+                        last_error = handle->invalid_reason;
+                }
                 last_error = handle->invalid_reason;
             }
         }
@@ -795,7 +810,7 @@ namespace fast_task::networking {
             return handle ? !handle->valid() : true;
         }
 
-        TcpError error() override {
+        tcp_error error() override {
             read_lock lock(mutex);
             if (checkup())
                 return handle->invalid_reason;
@@ -827,13 +842,13 @@ namespace fast_task::networking {
 
     #pragma endregion
 
-    #pragma region TcpNetworkBlocking
+    #pragma region tcp_network_blocking
 
-    class TcpNetworkBlockingImpl : public TcpNetworkBlocking {
-        friend class TcpNetworkManager;
+    class tcp_network_blockingImpl : public tcp_network_blocking {
+        friend class tcp_network_manager;
         tcp_handle_2* handle;
         task_mutex mutex;
-        TcpError last_error;
+        tcp_error last_error;
 
         bool checkup() {
             if (!handle)
@@ -848,10 +863,10 @@ namespace fast_task::networking {
         }
 
     public:
-        TcpNetworkBlockingImpl(tcp_handle_2* handle)
-            : handle(handle), last_error(TcpError::none) {}
+        tcp_network_blockingImpl(tcp_handle_2* handle)
+            : handle(handle), last_error(tcp_error::none) {}
 
-        ~TcpNetworkBlockingImpl() override {
+        ~tcp_network_blockingImpl() override {
             fast_task::lock_guard lg(mutex);
             if (handle)
                 delete handle;
@@ -921,7 +936,7 @@ namespace fast_task::networking {
             }
         }
 
-        void rebuffer(size_t new_size) override {
+        void rebuffer(int32_t new_size) override {
             fast_task::lock_guard lg(mutex);
             if (checkup())
                 handle->rebuffer(new_size);
@@ -941,7 +956,7 @@ namespace fast_task::networking {
             return true;
         }
 
-        TcpError error() override {
+        tcp_error error() override {
             fast_task::lock_guard lg(mutex);
             if (checkup())
                 return handle->invalid_reason;
@@ -973,15 +988,15 @@ namespace fast_task::networking {
 
     #pragma endregion
 
-    class TcpNetworkManager : public util::native_worker_manager {
+    class tcp_network_manager : public util::native_worker_manager {
         task_mutex safety;
-        std::variant<std::function<void(TcpNetworkBlocking&)>, std::function<void(TcpNetworkStream&)>> handler_fn;
+        std::variant<std::function<void(tcp_network_blocking&)>, std::function<void(tcp_network_stream&)>> handler_fn;
         std::function<bool(address& client, address& server)> accept_filter;
         address _address;
         SOCKET main_socket;
 
     public:
-        TcpConfiguration config;
+        tcp_configuration config;
 
     private:
         bool allow_new_connections = false;
@@ -1055,11 +1070,11 @@ namespace fast_task::networking {
                 std::visit(
                     [&](auto&& f) {
                         using T = std::decay_t<decltype(f)>;
-                        if constexpr (std::is_same_v<T, std::function<void(TcpNetworkBlocking&)>>) {
-                            TcpNetworkBlockingImpl rr(self);
+                        if constexpr (std::is_same_v<T, std::function<void(tcp_network_blocking&)>>) {
+                            tcp_network_blockingImpl rr(self);
                             f(rr);
                         } else {
-                            TcpNetworkStreamImpl rr(self);
+                            tcp_network_streamImpl rr(self);
                             f(rr);
                         }
                     },
@@ -1174,7 +1189,7 @@ namespace fast_task::networking {
                 return;
             }
             if (config.enable_keep_alive) {
-                int cfg = config.keep_alive_settings.idle_ms;
+                cfg = config.keep_alive_settings.idle_ms;
                 if (setsockopt(main_socket, IPPROTO_TCP, TCP_KEEPIDLE, (char*)&cfg, sizeof(cfg)) == -1) {
                     corrupted = true;
                     return;
@@ -1205,7 +1220,7 @@ namespace fast_task::networking {
             }
 
             init_win_fns(main_socket);
-            if (bind(main_socket, (sockaddr*)_address.get_data(), _address.data_size()) == SOCKET_ERROR) {
+            if (bind(main_socket, (sockaddr*)_address.get_data(), (int)_address.data_size()) == SOCKET_ERROR) {
                 corrupted = true;
                 return;
             }
@@ -1220,11 +1235,11 @@ namespace fast_task::networking {
         }
 
     public:
-        TcpNetworkManager(const address& ip_port, size_t acceptors, const TcpConfiguration& config)
+        tcp_network_manager(const address& ip_port, size_t acceptors, const tcp_configuration& config)
             : _address(ip_port), main_socket(INVALID_SOCKET), config(config), acceptors(acceptors) {
         }
 
-        ~TcpNetworkManager() override {
+        ~tcp_network_manager() override {
             if (!corrupted)
                 shutdown();
         }
@@ -1240,7 +1255,7 @@ namespace fast_task::networking {
             else {
                 {
                     fast_task::lock_guard lock(*data.cv_mutex);
-                    data.self->invalid_reason = TcpError::remote_close;
+                    data.self->invalid_reason = tcp_error::remote_close;
                     data.cv.notify_all();
                 }
                 if (!data.close_flag)
@@ -1248,30 +1263,30 @@ namespace fast_task::networking {
             }
         }
 
-        void set_configuration(const TcpConfiguration& tcp) {
+        void set_configuration(const tcp_configuration& tcp) {
             if (corrupted)
-                throw std::runtime_error("TcpNetworkManager is corrupted");
+                throw std::runtime_error("tcp_network_manager is corrupted");
             fast_task::lock_guard lock(safety);
             config = tcp;
         }
 
-        void set_on_connect(std::function<void(TcpNetworkStream&)> handler_fn) {
+        void set_on_connect(std::function<void(tcp_network_stream&)> handler_fn_) {
             if (corrupted)
-                throw std::runtime_error("TcpNetworkManager is corrupted");
+                throw std::runtime_error("tcp_network_manager is corrupted");
             fast_task::lock_guard lock(safety);
-            this->handler_fn = handler_fn;
+            handler_fn = handler_fn_;
         }
 
-        void set_on_connect(std::function<void(TcpNetworkBlocking&)> handler_fn) {
+        void set_on_connect(std::function<void(tcp_network_blocking&)> handler_fn_) {
             if (corrupted)
-                throw std::runtime_error("TcpNetworkManager is corrupted");
+                throw std::runtime_error("tcp_network_manager is corrupted");
             fast_task::lock_guard lock(safety);
-            this->handler_fn = handler_fn;
+            handler_fn = handler_fn_;
         }
 
         void shutdown() {
             if (corrupted)
-                throw std::runtime_error("TcpNetworkManager is corrupted");
+                throw std::runtime_error("tcp_network_manager is corrupted");
             fast_task::lock_guard lock(safety);
             if (disabled)
                 return;
@@ -1284,19 +1299,19 @@ namespace fast_task::networking {
 
         void pause() {
             if (corrupted)
-                throw std::runtime_error("TcpNetworkManager is corrupted");
+                throw std::runtime_error("tcp_network_manager is corrupted");
             allow_new_connections = false;
         }
 
         void resume() {
             if (corrupted)
-                throw std::runtime_error("TcpNetworkManager is corrupted");
+                throw std::runtime_error("tcp_network_manager is corrupted");
             allow_new_connections = true;
         }
 
         void start() {
             if (corrupted)
-                throw std::runtime_error("TcpNetworkManager is corrupted");
+                throw std::runtime_error("tcp_network_manager is corrupted");
             fast_task::lock_guard lock(safety);
             allow_new_connections = true;
             if (!disabled)
@@ -1312,13 +1327,13 @@ namespace fast_task::networking {
 
         tcp_handle_2* base_accept(bool ignore_acceptors) {
             if (!ignore_acceptors && acceptors)
-                throw std::runtime_error("Tried to accept connection with enabled acceptors and ignore_acceptors = false");
+                throw std::runtime_error("Thread tried to accept connection with enabled acceptors and ignore_acceptors = false");
             if (corrupted)
-                throw std::runtime_error("TcpNetworkManager is corrupted");
+                throw std::runtime_error("tcp_network_manager is corrupted");
             if (disabled)
-                throw std::runtime_error("TcpNetworkManager is disabled");
+                throw std::runtime_error("tcp_network_manager is disabled");
             if (!allow_new_connections)
-                throw std::runtime_error("TcpNetworkManager is paused");
+                throw std::runtime_error("tcp_network_manager is paused");
             tcp_handle_2* data = new tcp_handle_2(0, config.buffer_size, this);
             mutex_unify um(*data->cv_mutex);
             fast_task::unique_lock lock(um);
@@ -1328,26 +1343,26 @@ namespace fast_task::networking {
             return data;
         }
 
-        TcpNetworkBlocking* accept_blocking(bool ignore_acceptors = false) {
-            return new TcpNetworkBlockingImpl(base_accept(ignore_acceptors));
+        tcp_network_blocking* accept_blocking(bool ignore_acceptors = false) {
+            return new tcp_network_blockingImpl(base_accept(ignore_acceptors));
         }
 
-        TcpNetworkStream* accept_stream(bool ignore_acceptors = false) {
-            return new TcpNetworkStreamImpl(base_accept(ignore_acceptors));
+        tcp_network_stream* accept_stream(bool ignore_acceptors = false) {
+            return new tcp_network_streamImpl(base_accept(ignore_acceptors));
         }
 
         void _await() {
             mutex_unify um(safety);
             fast_task::unique_lock lock(um);
             if (corrupted)
-                throw std::runtime_error("TcpNetworkManager is corrupted");
+                throw std::runtime_error("tcp_network_manager is corrupted");
             while (!disabled)
                 state_changed_cv.wait(lock);
         }
 
         void set_accept_filter(std::function<bool(address&, address&)>&& filter) {
             if (corrupted)
-                throw std::runtime_error("TcpNetworkManager is corrupted");
+                throw std::runtime_error("tcp_network_manager is corrupted");
             fast_task::lock_guard lock(safety);
             this->accept_filter = std::move(filter);
         }
@@ -1358,7 +1373,7 @@ namespace fast_task::networking {
 
         uint16_t port() {
             if (corrupted)
-                throw std::runtime_error("TcpNetworkManager is corrupted");
+                throw std::runtime_error("tcp_network_manager is corrupted");
             return _address.port();
         }
 
@@ -1368,7 +1383,7 @@ namespace fast_task::networking {
 
         address get_address() {
             if (corrupted)
-                throw std::runtime_error("TcpNetworkManager is corrupted");
+                throw std::runtime_error("tcp_network_manager is corrupted");
 
             return _address;
         }
@@ -1382,13 +1397,13 @@ namespace fast_task::networking {
         }
     };
 
-    class TcpClientManager : public util::native_worker_manager {
+    class tcp_client_manager : public util::native_worker_manager {
         task_mutex mutex;
         sockaddr_in6 connectionAddress;
         tcp_handle_2* _handle;
         bool corrupted = false;
 
-        void set_configuration(SOCKET sock, const TcpConfiguration& config) {
+        void set_configuration(SOCKET sock, const tcp_configuration& config) {
             int cfg = !config.allow_ip4;
 
             if (setsockopt(sock, IPPROTO_IPV6, IPV6_V6ONLY, (char*)&cfg, sizeof(cfg)) == -1) {
@@ -1421,7 +1436,7 @@ namespace fast_task::networking {
                 return;
             }
             if (config.enable_keep_alive) {
-                int cfg = config.keep_alive_settings.idle_ms;
+                cfg = config.keep_alive_settings.idle_ms;
                 if (setsockopt(sock, IPPROTO_TCP, TCP_KEEPIDLE, (char*)&cfg, sizeof(cfg)) == -1) {
                     corrupted = true;
                     return;
@@ -1460,7 +1475,7 @@ namespace fast_task::networking {
     public:
         void handle(void* _data, util::native_worker_handle* overlapped, unsigned long dwBytesTransferred) override {
             auto& data = *(tcp_handle_2::operation*)overlapped;
-            DWORD error = overlapped->overlapped.Internal;
+            auto error = overlapped->overlapped.Internal;
             if (data.accept_flag) {
                 fast_task::lock_guard lock(*data.cv_mutex);
                 data.transferred = dwBytesTransferred;
@@ -1471,7 +1486,7 @@ namespace fast_task::networking {
                 data.self->connection_reset();
         }
 
-        TcpClientManager(sockaddr_in6& _connectionAddress, const TcpConfiguration& config)
+        tcp_client_manager(sockaddr_in6& _connectionAddress, const tcp_configuration& config)
             : connectionAddress(_connectionAddress) {
             SOCKET clientSocket = WSASocketW(AF_INET6, SOCK_STREAM, IPPROTO_TCP, NULL, 0, WSA_FLAG_OVERLAPPED);
             if (clientSocket == INVALID_SOCKET) {
@@ -1508,7 +1523,7 @@ namespace fast_task::networking {
                 op->cv.wait(lock);
         }
 
-        TcpClientManager(sockaddr_in6& _connectionAddress, char* data, uint32_t len, const TcpConfiguration& config)
+        tcp_client_manager(sockaddr_in6& _connectionAddress, char* data, uint32_t len, const tcp_configuration& config)
             : connectionAddress(_connectionAddress), _handle(nullptr) {
             SOCKET clientSocket = WSASocketW(AF_INET6, SOCK_STREAM, IPPROTO_TCP, NULL, 0, WSA_FLAG_OVERLAPPED);
             if (clientSocket == INVALID_SOCKET) {
@@ -1552,25 +1567,25 @@ namespace fast_task::networking {
                 op->cv.wait(lock);
         }
 
-        ~TcpClientManager() override {
+        ~tcp_client_manager() override {
             if (corrupted)
                 return;
             delete _handle;
         }
 
-        void set_configuration(const TcpConfiguration& config) {
+        void set_configuration(const tcp_configuration& config) {
             if (corrupted)
-                throw std::runtime_error("TcpClientManager::read, corrupted");
+                throw std::runtime_error("tcp_client_manager::read, corrupted");
             if (_handle) {
                 set_configuration(_handle->socket, config);
                 if (!corrupted)
-                    _handle->rebuffer(config.buffer_size);
+                    _handle->rebuffer((int32_t)std::min<size_t>(config.buffer_size, INT32_MAX));
             }
         }
 
         int32_t read(char* data, int32_t len) {
             if (corrupted)
-                throw std::runtime_error("TcpClientManager::read, corrupted");
+                throw std::runtime_error("tcp_client_manager::read, corrupted");
             fast_task::lock_guard<task_mutex> lock(mutex);
             int32_t readed = 0;
             _handle->read(data, len, readed);
@@ -1579,7 +1594,7 @@ namespace fast_task::networking {
 
         bool write(const char* data, int32_t len) {
             if (corrupted)
-                throw std::runtime_error("TcpClientManager::write, corrupted");
+                throw std::runtime_error("tcp_client_manager::write, corrupted");
             fast_task::lock_guard<task_mutex> lock(mutex);
             _handle->send(data, len);
             return _handle->valid();
@@ -1587,28 +1602,28 @@ namespace fast_task::networking {
 
         bool write_file(const char* path, size_t len, uint64_t data_len, uint64_t offset, uint32_t chunks_size) {
             if (corrupted)
-                throw std::runtime_error("TcpClientManager::write_file, corrupted");
+                throw std::runtime_error("tcp_client_manager::write_file, corrupted");
             fast_task::lock_guard<task_mutex> lock(mutex);
             return _handle->send_file(path, len, data_len, offset, chunks_size);
         }
 
         bool write_file(void* handle, uint64_t data_len, uint64_t offset, uint32_t chunks_size) {
             if (corrupted)
-                throw std::runtime_error("TcpClientManager::write_file, corrupted");
+                throw std::runtime_error("tcp_client_manager::write_file, corrupted");
             fast_task::lock_guard<task_mutex> lock(mutex);
             return _handle->send_file(handle, data_len, offset, chunks_size);
         }
 
         void close() {
             if (corrupted)
-                throw std::runtime_error("TcpClientManager::close, corrupted");
+                throw std::runtime_error("tcp_client_manager::close, corrupted");
             fast_task::lock_guard<task_mutex> lock(mutex);
             _handle->close();
         }
 
         void reset() {
             if (corrupted)
-                throw std::runtime_error("TcpClientManager::close, corrupted");
+                throw std::runtime_error("tcp_client_manager::close, corrupted");
             fast_task::lock_guard<task_mutex> lock(mutex);
             _handle->reset();
         }
@@ -1617,9 +1632,9 @@ namespace fast_task::networking {
             return corrupted;
         }
 
-        void rebuffer(uint32_t size) {
+        void rebuffer(int32_t size) {
             if (corrupted)
-                throw std::runtime_error("TcpClientManager::rebuffer, corrupted");
+                throw std::runtime_error("tcp_client_manager::rebuffer, corrupted");
             fast_task::lock_guard<task_mutex> lock(mutex);
             _handle->rebuffer(size);
         }
@@ -1652,8 +1667,8 @@ namespace fast_task::networking {
             server_address = address;
         }
 
-        void handle(void* data, util::native_worker_handle* overlap, unsigned long fullifed_bytes) override {
-            this->fullifed_bytes = fullifed_bytes;
+        void handle(void* data, util::native_worker_handle* overlap, unsigned long fullifed_bytes_) override {
+            fullifed_bytes = fullifed_bytes_;
             last_error = (DWORD)overlap->overlapped.Internal;
             unique_lock lock(mt);
             is_complete = true;
@@ -1662,7 +1677,7 @@ namespace fast_task::networking {
 
         void recv(uint8_t* data, uint32_t size, sockaddr_storage& sender, int& sender_len) {
             if (socket == INVALID_SOCKET)
-                throw std::runtime_error("Socket not connected");
+                throw std::runtime_error("Socket is not connected");
             WSABUF buf;
             buf.buf = (char*)data;
             buf.len = size;
@@ -1731,7 +1746,6 @@ namespace fast_task::networking {
                     return 1;
                 case WSAVERNOTSUPPORTED:
                     return 2;
-                    return 3;
                 case WSAEPROCLIM:
                     return 4;
                 case WSAEFAULT:
@@ -1776,7 +1790,7 @@ namespace fast_task::networking {
         bool force_mode;
         bool is_bound = false;
         uint32_t max_read_queue_size;
-        TcpError invalid_reason = TcpError::none;
+        tcp_error invalid_reason = tcp_error::none;
         sockaddr_storage clientAddress;
         socklen_t clientAddressLen = sizeof(sockaddr_storage);
 
@@ -1999,7 +2013,7 @@ namespace fast_task::networking {
             return buffer.buf - readed;
         }
 
-        void close(TcpError err = TcpError::local_close) {
+        void close(tcp_error err = tcp_error::local_close) {
             if (!data)
                 return;
             pre_close(err);
@@ -2020,13 +2034,13 @@ namespace fast_task::networking {
     #if EAGAIN != EWOULDBLOCK
                 case EWOULDBLOCK:
     #endif
-                    pre_close(TcpError::invalid_state, true);
+                    pre_close(tcp_error::invalid_state, true);
                     return;
                 case ECONNRESET:
-                    pre_close(TcpError::remote_close, true);
+                    pre_close(tcp_error::remote_close, true);
                     return;
                 default:
-                    pre_close(TcpError::undefined_error, true);
+                    pre_close(tcp_error::undefined_error, true);
                     return;
                 }
             }
@@ -2066,12 +2080,12 @@ namespace fast_task::networking {
                 }
                 if (!data_available()) {
                     if (read_queue.size() > max_read_queue_size)
-                        close(TcpError::read_queue_overflow);
+                        close(tcp_error::read_queue_overflow);
                     else
                         read();
                 } else {
                     if (write_queue.empty())
-                        close(TcpError::invalid_state);
+                        close(tcp_error::invalid_state);
                     else {
                         auto item = write_queue.front();
                         write_queue.pop_front();
@@ -2120,7 +2134,7 @@ namespace fast_task::networking {
             if (data_len > UINT_MAX) {
                 uint64_t sended = 0;
                 uint64_t blocks = data_len / UINT_MAX;
-                uint64_t last_block = data_len % blocks;
+                uint32_t last_block = data_len % UINT_MAX;
 
                 while (blocks--)
                     if (!transfer_file(socket, file, UINT_MAX, chunks_size, sended + offset))
@@ -2133,7 +2147,7 @@ namespace fast_task::networking {
                     if (!transfer_file(socket, file, last_block, chunks_size, sended + offset))
                         return false;
             } else {
-                if (!transfer_file(socket, file, data_len, chunks_size, offset))
+                if (!transfer_file(socket, file, (uint32_t)data_len, chunks_size, offset))
                     return false;
             }
             return true;
@@ -2169,7 +2183,7 @@ namespace fast_task::networking {
             sl.l_onoff = 1;
             sl.l_linger = 0;
             setsockopt(socket, SOL_SOCKET, SO_LINGER, &sl, sizeof(sl));
-            pre_close(TcpError::local_reset);
+            pre_close(tcp_error::local_reset);
             internal_close();
         }
 
@@ -2178,7 +2192,7 @@ namespace fast_task::networking {
             fast_task::unique_lock<mutex_unify> lock(mutex);
             char* old_data = data;
             data = nullptr;
-            invalid_reason = TcpError::remote_close;
+            invalid_reason = tcp_error::remote_close;
             readed_bytes = 0;
             cv.notify_all();
             delete[] data;
@@ -2213,7 +2227,7 @@ namespace fast_task::networking {
         }
 
     private:
-        void pre_close(TcpError err, bool handle_error = false) {
+        void pre_close(tcp_error err, bool handle_error = false) {
             mutex_unify mutex(cv_mutex);
             fast_task::unique_lock<mutex_unify> lock(mutex);
             opcode = Opcode::INTERNAL_CLOSE;
@@ -2307,13 +2321,13 @@ namespace fast_task::networking {
         }
     };
 
-    #pragma region TcpNetworkStream
+    #pragma region tcp_network_stream
 
-    class TcpNetworkStreamImpl : public TcpNetworkStream {
-        friend class TcpNetworkManager;
+    class tcp_network_streamImpl : public tcp_network_stream {
+        friend class tcp_network_manager;
         struct tcp_handle* handle;
         task_mutex mutex;
-        TcpError last_error;
+        tcp_error last_error;
 
         bool checkup() {
             if (!handle)
@@ -2328,10 +2342,10 @@ namespace fast_task::networking {
         }
 
     public:
-        TcpNetworkStreamImpl(tcp_handle* handle)
-            : handle(handle), last_error(TcpError::none) {}
+        tcp_network_streamImpl(tcp_handle* handle)
+            : handle(handle), last_error(tcp_error::none) {}
 
-        ~TcpNetworkStreamImpl() {
+        ~tcp_network_streamImpl() {
             if (checkup()) {
                 fast_task::lock_guard lg(mutex);
                 handle->close();
@@ -2478,7 +2492,7 @@ namespace fast_task::networking {
             return true;
         }
 
-        TcpError error() override {
+        tcp_error error() override {
             fast_task::lock_guard lg(mutex);
             if (checkup())
                 return handle->invalid_reason;
@@ -2510,13 +2524,13 @@ namespace fast_task::networking {
 
     #pragma endregion
 
-    #pragma region TcpNetworkBlocking
+    #pragma region tcp_network_blocking
 
-    class TcpNetworkBlockingImpl : public TcpNetworkBlocking {
-        friend class TcpNetworkManager;
+    class tcp_network_blockingImpl : public tcp_network_blocking {
+        friend class tcp_network_manager;
         tcp_handle* handle;
         task_mutex mutex;
-        TcpError last_error;
+        tcp_error last_error;
 
         bool checkup() {
             if (!handle)
@@ -2531,10 +2545,10 @@ namespace fast_task::networking {
         }
 
     public:
-        TcpNetworkBlockingImpl(tcp_handle* handle)
-            : handle(handle), last_error(TcpError::none) {}
+        tcp_network_blockingImpl(tcp_handle* handle)
+            : handle(handle), last_error(tcp_error::none) {}
 
-        ~TcpNetworkBlockingImpl() {
+        ~tcp_network_blockingImpl() {
             fast_task::lock_guard lg(mutex);
             if (handle)
                 delete handle;
@@ -2605,7 +2619,7 @@ namespace fast_task::networking {
             }
         }
 
-        void rebuffer(size_t new_size) override {
+        void rebuffer(int32_t new_size) override {
             fast_task::lock_guard lg(mutex);
             if (checkup())
                 handle->rebuffer(new_size);
@@ -2625,7 +2639,7 @@ namespace fast_task::networking {
             return true;
         }
 
-        TcpError error() override {
+        tcp_error error() override {
             fast_task::lock_guard lg(mutex);
             if (checkup())
                 return handle->invalid_reason;
@@ -2657,15 +2671,15 @@ namespace fast_task::networking {
 
     #pragma endregion
 
-    class TcpNetworkManager : public util::native_worker_manager {
+    class tcp_network_manager : public util::native_worker_manager {
         task_mutex safety;
-        std::variant<std::function<void(TcpNetworkBlocking&)>, std::function<void(TcpNetworkStream&)>> handler_fn;
+        std::variant<std::function<void(tcp_network_blocking&)>, std::function<void(tcp_network_stream&)>> handler_fn;
         std::function<bool(address& client, address& server)> accept_filter;
         sockaddr_in6 connectionAddress;
         SOCKET main_socket;
 
     public:
-        TcpConfiguration config;
+        tcp_configuration config;
 
     private:
         bool allow_new_connections = false;
@@ -2694,11 +2708,11 @@ namespace fast_task::networking {
                 std::visit(
                     [&](auto&& f) {
                         using T = std::decay_t<decltype(f)>;
-                        if constexpr (std::is_same_v<T, std::function<void(TcpNetworkBlocking&)>>) {
-                            TcpNetworkBlockingImpl rr(self);
+                        if constexpr (std::is_same_v<T, std::function<void(tcp_network_blocking&)>>) {
+                            tcp_network_blockingImpl rr(self);
                             f(rr);
                         } else {
-                            TcpNetworkStreamImpl rr(self);
+                            tcp_network_streamImpl rr(self);
                             f(rr);
                         }
                     },
@@ -2841,12 +2855,12 @@ namespace fast_task::networking {
         }
 
     public:
-        TcpNetworkManager(universal_address& ip_port, size_t acceptors, TcpNetworkServer::ManageType manage_type, const TcpConfiguration& config)
+        tcp_network_manager(universal_address& ip_port, size_t acceptors, tcp_network_server::ManageType manage_type, const tcp_configuration& config)
             : acceptors(acceptors), manage_type(manage_type), config(config), main_socket(INVALID_SOCKET) {
             memcpy(&connectionAddress, &ip_port, sizeof(sockaddr_in6));
         }
 
-        ~TcpNetworkManager() noexcept(false) {
+        ~tcp_network_manager() noexcept(false) {
             shutdown();
         }
 
@@ -2860,23 +2874,23 @@ namespace fast_task::networking {
                 data.handle(cqe->res < 0 ? 0 : cqe->res, cqe->res < 0 ? -cqe->res : 0);
         }
 
-        void set_on_connect(std::function<void(TcpNetworkStream&)> handler_fn) {
+        void set_on_connect(std::function<void(tcp_network_stream&)> handler_fn) {
             if (corrupted)
-                throw std::runtime_error("TcpNetworkManager is corrupted");
+                throw std::runtime_error("tcp_network_manager is corrupted");
             fast_task::lock_guard lock(safety);
             this->handler_fn = handler_fn;
         }
 
-        void set_on_connect(std::function<void(TcpNetworkBlocking&)> handler_fn) {
+        void set_on_connect(std::function<void(tcp_network_blocking&)> handler_fn) {
             if (corrupted)
-                throw std::runtime_error("TcpNetworkManager is corrupted");
+                throw std::runtime_error("tcp_network_manager is corrupted");
             fast_task::lock_guard lock(safety);
             this->handler_fn = handler_fn;
         }
 
         void shutdown() {
             if (corrupted)
-                throw std::runtime_error("TcpNetworkManager is corrupted");
+                throw std::runtime_error("tcp_network_manager is corrupted");
             fast_task::lock_guard lock(safety);
             if (disabled)
                 return;
@@ -2892,19 +2906,19 @@ namespace fast_task::networking {
 
         void pause() {
             if (corrupted)
-                throw std::runtime_error("TcpNetworkManager is corrupted");
+                throw std::runtime_error("tcp_network_manager is corrupted");
             allow_new_connections = false;
         }
 
         void resume() {
             if (corrupted)
-                throw std::runtime_error("TcpNetworkManager is corrupted");
+                throw std::runtime_error("tcp_network_manager is corrupted");
             allow_new_connections = true;
         }
 
         void start() {
             if (corrupted)
-                throw std::runtime_error("TcpNetworkManager is corrupted");
+                throw std::runtime_error("tcp_network_manager is corrupted");
             fast_task::lock_guard lock(safety);
             allow_new_connections = true;
             if (!disabled)
@@ -2920,13 +2934,13 @@ namespace fast_task::networking {
 
         tcp_handle* base_accept(bool ignore_acceptors) {
             if (!ignore_acceptors && acceptors)
-                throw std::runtime_error("Tried to accept connection with enabled acceptors and ignore_acceptors = false");
+                throw std::runtime_error("Thread tried to accept connection with enabled acceptors and ignore_acceptors = false");
             if (corrupted)
-                throw std::runtime_error("TcpNetworkManager is corrupted");
+                throw std::runtime_error("tcp_network_manager is corrupted");
             if (disabled)
-                throw std::runtime_error("TcpNetworkManager is disabled");
+                throw std::runtime_error("tcp_network_manager is disabled");
             if (!allow_new_connections)
-                throw std::runtime_error("TcpNetworkManager is paused");
+                throw std::runtime_error("tcp_network_manager is paused");
 
             tcp_handle* data = new tcp_handle(0, config.buffer_size, this, 0);
             mutex_unify mutex(data->cv_mutex);
@@ -2938,32 +2952,32 @@ namespace fast_task::networking {
             return data;
         }
 
-        TcpNetworkBlocking* accept_blocking(bool ignore_acceptors = false) {
-            return new TcpNetworkBlockingImpl(base_accept(ignore_acceptors));
+        tcp_network_blocking* accept_blocking(bool ignore_acceptors = false) {
+            return new tcp_network_blockingImpl(base_accept(ignore_acceptors));
         }
 
-        TcpNetworkStream* accept_stream(bool ignore_acceptors = false) {
-            return new TcpNetworkStreamImpl(base_accept(ignore_acceptors));
+        tcp_network_stream* accept_stream(bool ignore_acceptors = false) {
+            return new tcp_network_streamImpl(base_accept(ignore_acceptors));
         }
 
         void _await() {
             mutex_unify um(safety);
             fast_task::unique_lock lock(um);
             if (corrupted)
-                throw std::runtime_error("TcpNetworkManager is corrupted");
+                throw std::runtime_error("tcp_network_manager is corrupted");
             while (!disabled)
                 state_changed_cv.wait(lock);
         }
 
-        void set_configuration(const TcpConfiguration& config) {
+        void set_configuration(const tcp_configuration& config) {
             if (corrupted)
-                throw std::runtime_error("TcpNetworkManager is corrupted");
+                throw std::runtime_error("tcp_network_manager is corrupted");
             this->config = config;
         }
 
         void set_accept_filter(std::function<bool(address&, address&)>&& filter) {
             if (corrupted)
-                throw std::runtime_error("TcpNetworkManager is corrupted");
+                throw std::runtime_error("tcp_network_manager is corrupted");
             fast_task::lock_guard lock(safety);
             this->accept_filter = std::move(filter);
         }
@@ -2974,7 +2988,7 @@ namespace fast_task::networking {
 
         uint16_t port() {
             if (corrupted)
-                throw std::runtime_error("TcpNetworkManager is corrupted");
+                throw std::runtime_error("tcp_network_manager is corrupted");
             return htons(connectionAddress.sin6_port);
         }
 
@@ -2984,7 +2998,7 @@ namespace fast_task::networking {
 
         address get_address() {
             if (corrupted)
-                throw std::runtime_error("TcpNetworkManager is corrupted");
+                throw std::runtime_error("tcp_network_manager is corrupted");
 
             sockaddr_storage addr;
             memset((char*)&addr, 0, sizeof(sockaddr_storage));
@@ -3001,7 +3015,7 @@ namespace fast_task::networking {
         }
     };
 
-    class TcpClientManager : public util::native_worker_manager {
+    class tcp_client_manager : public util::native_worker_manager {
         task_mutex mutex;
         sockaddr_in6 connectionAddress;
         tcp_handle* _handle;
@@ -3019,7 +3033,7 @@ namespace fast_task::networking {
                 handle.handle(cqe->res, cqe->res < 0 ? -cqe->res : 0);
         }
 
-        TcpClientManager(sockaddr_in6& _connectionAddress, const TcpConfiguration& config)
+        tcp_client_manager(sockaddr_in6& _connectionAddress, const tcp_configuration& config)
             : connectionAddress(_connectionAddress) {
             SOCKET clientSocket = socket(AF_INET6, SOCK_STREAM, IPPROTO_TCP);
             if (clientSocket == INVALID_SOCKET) {
@@ -3087,7 +3101,7 @@ namespace fast_task::networking {
             }
         }
 
-        TcpClientManager(sockaddr_in6& _connectionAddress, char* data, uint32_t len, const TcpConfiguration& config)
+        tcp_client_manager(sockaddr_in6& _connectionAddress, char* data, uint32_t len, const tcp_configuration& config)
             : connectionAddress(_connectionAddress), _handle(nullptr) {
             SOCKET clientSocket = socket(AF_INET6, SOCK_STREAM, IPPROTO_TCP);
             if (clientSocket == INVALID_SOCKET) {
@@ -3158,15 +3172,15 @@ namespace fast_task::networking {
             _handle->data = old_buffer;
         }
 
-        ~TcpClientManager() noexcept(false) override {
+        ~tcp_client_manager() noexcept(false) override {
             if (corrupted)
                 return;
             delete _handle;
         }
 
-        void set_configuration(const TcpConfiguration& config) {
+        void set_configuration(const tcp_configuration& config) {
             if (corrupted)
-                throw std::runtime_error("TcpClientManager::set_configuration, corrupted");
+                throw std::runtime_error("tcp_client_manager::set_configuration, corrupted");
             if (_handle) {
                 SOCKET clientSocket = _handle->socket;
                 int cfg = config.recv_timeout_ms;
@@ -3218,7 +3232,7 @@ namespace fast_task::networking {
 
         int32_t read(char* data, int32_t len) {
             if (corrupted)
-                throw std::runtime_error("TcpClientManager::read, corrupted");
+                throw std::runtime_error("tcp_client_manager is corrupted");
             fast_task::lock_guard<task_mutex> lock(mutex);
             int32_t readed = 0;
             while (!_handle->available_bytes())
@@ -3230,7 +3244,7 @@ namespace fast_task::networking {
 
         bool write(const char* data, int32_t len) {
             if (corrupted)
-                throw std::runtime_error("TcpClientManager::write, corrupted");
+                throw std::runtime_error("tcp_client_manager is corrupted");
             fast_task::lock_guard<task_mutex> lock(mutex);
             _handle->send_data(data, len);
             while (!_handle->available_bytes())
@@ -3241,7 +3255,7 @@ namespace fast_task::networking {
 
         bool write_file(const char* path, size_t len, uint64_t data_len, uint64_t offset, uint32_t chunks_size) {
             if (corrupted)
-                throw std::runtime_error("TcpClientManager::write_file, corrupted");
+                throw std::runtime_error("tcp_client_manager is corrupted");
             fast_task::lock_guard<task_mutex> lock(mutex);
             while (!_handle->available_bytes())
                 if (!_handle->send_queue_item())
@@ -3251,7 +3265,7 @@ namespace fast_task::networking {
 
         bool write_file(int handle, uint64_t data_len, uint64_t offset, uint32_t chunks_size) {
             if (corrupted)
-                throw std::runtime_error("TcpClientManager::write_file, corrupted");
+                throw std::runtime_error("tcp_client_manager is corrupted");
             fast_task::lock_guard<task_mutex> lock(mutex);
             while (!_handle->available_bytes())
                 if (!_handle->send_queue_item())
@@ -3261,14 +3275,14 @@ namespace fast_task::networking {
 
         void close() {
             if (corrupted)
-                throw std::runtime_error("TcpClientManager::close, corrupted");
+                throw std::runtime_error("tcp_client_manager is corrupted");
             fast_task::lock_guard<task_mutex> lock(mutex);
             _handle->close();
         }
 
         void reset() {
             if (corrupted)
-                throw std::runtime_error("TcpClientManager::close, corrupted");
+                throw std::runtime_error("tcp_client_manager is corrupted");
             fast_task::lock_guard<task_mutex> lock(mutex);
             _handle->reset();
         }
@@ -3277,9 +3291,9 @@ namespace fast_task::networking {
             return corrupted;
         }
 
-        void rebuffer(uint32_t size) {
+        void rebuffer(int32_t size) {
             if (corrupted)
-                throw std::runtime_error("TcpClientManager::rebuffer, corrupted");
+                throw std::runtime_error("tcp_client_manager is corrupted");
             fast_task::lock_guard<task_mutex> lock(mutex);
             _handle->rebuffer(size);
         }
@@ -3320,7 +3334,7 @@ namespace fast_task::networking {
 
         void recv(uint8_t* data, uint32_t size, sockaddr_storage& sender, int& sender_len) {
             if (socket == INVALID_SOCKET)
-                throw std::runtime_error("Socket not connected");
+                throw std::runtime_error("Socket is not connected");
             mutex_unify u(mt);
             unique_lock lock(u);
             is_complete = false;
@@ -3334,7 +3348,7 @@ namespace fast_task::networking {
 
         void send(uint8_t* data, uint32_t size, sockaddr_storage& to) {
             if (socket == INVALID_SOCKET)
-                throw std::runtime_error("Socket not connected");
+                throw std::runtime_error("Socket is not connected");
             mutex_unify u(mt);
             unique_lock lock(u);
             is_complete = false;
@@ -3373,152 +3387,152 @@ namespace fast_task::networking {
     }
 #endif
 
-    TcpNetworkServer::TcpNetworkServer(std::function<void(TcpNetworkBlocking&)> on_connect, const address& ip_port, size_t acceptors, const TcpConfiguration& config) {
+    tcp_network_server::tcp_network_server(std::function<void(tcp_network_blocking&)> on_connect, const address& ip_port, size_t acceptors, const tcp_configuration& config) {
         if (!inited)
-            throw std::runtime_error("Network module not initialized");
-        handle = new TcpNetworkManager(ip_port, acceptors, config);
+            init_networking();
+        handle = new tcp_network_manager(ip_port, acceptors, config);
         handle->set_on_connect(on_connect);
     }
 
-    TcpNetworkServer::TcpNetworkServer(std::function<void(TcpNetworkStream&)> on_connect, const address& ip_port, size_t acceptors, const TcpConfiguration& config) {
+    tcp_network_server::tcp_network_server(std::function<void(tcp_network_stream&)> on_connect, const address& ip_port, size_t acceptors, const tcp_configuration& config) {
         if (!inited)
-            throw std::runtime_error("Network module not initialized");
-        handle = new TcpNetworkManager(ip_port, acceptors, config);
+            init_networking();
+        handle = new tcp_network_manager(ip_port, acceptors, config);
         handle->set_on_connect(on_connect);
     }
 
-    TcpNetworkServer::~TcpNetworkServer() {
+    tcp_network_server::~tcp_network_server() {
         if (handle)
             delete handle;
         handle = nullptr;
     }
 
-    void TcpNetworkServer::start() {
+    void tcp_network_server::start() {
         handle->start();
     }
 
-    void TcpNetworkServer::pause() {
+    void tcp_network_server::pause() {
         handle->pause();
     }
 
-    void TcpNetworkServer::resume() {
+    void tcp_network_server::resume() {
         handle->resume();
     }
 
-    void TcpNetworkServer::stop() {
+    void tcp_network_server::stop() {
         handle->shutdown();
     }
 
-    bool TcpNetworkServer::is_running() {
+    bool tcp_network_server::is_running() {
         return handle->in_run();
     }
 
-    TcpNetworkBlocking* TcpNetworkServer::accept_blocking(bool ignore_acceptors) {
+    tcp_network_blocking* tcp_network_server::accept_blocking(bool ignore_acceptors) {
         return handle->accept_blocking(ignore_acceptors);
     }
 
-    TcpNetworkStream* TcpNetworkServer::accept_stream(bool ignore_acceptors) {
+    tcp_network_stream* tcp_network_server::accept_stream(bool ignore_acceptors) {
         return handle->accept_stream(ignore_acceptors);
     }
 
-    void TcpNetworkServer::_await() {
+    void tcp_network_server::_await() {
         handle->_await();
     }
 
-    bool TcpNetworkServer::is_corrupted() {
+    bool tcp_network_server::is_corrupted() {
         return handle->is_corrupted();
     }
 
-    uint16_t TcpNetworkServer::server_port() {
+    uint16_t tcp_network_server::server_port() {
         return handle->port();
     }
 
-    std::string TcpNetworkServer::server_ip() {
+    std::string tcp_network_server::server_ip() {
         return handle->ip();
     }
 
-    address TcpNetworkServer::server_address() {
+    address tcp_network_server::server_address() {
         return handle->get_address();
     }
 
-    bool TcpNetworkServer::is_paused() {
+    bool tcp_network_server::is_paused() {
         return handle->is_paused();
     }
 
-    void TcpNetworkServer::set_configuration(const TcpConfiguration& config) {
+    void tcp_network_server::set_configuration(const tcp_configuration& config) {
         if (handle)
             handle->set_configuration(config);
     }
 
-    void TcpNetworkServer::set_accept_filter(std::function<bool(address&, address&)>&& filter) {
+    void tcp_network_server::set_accept_filter(std::function<bool(address&, address&)>&& filter) {
         if (handle)
             handle->set_accept_filter(std::move(filter));
     }
 
-    TcpClientSocket::TcpClientSocket()
+    tcp_client_socket::tcp_client_socket()
         : handle(nullptr) {}
 
-    TcpClientSocket::~TcpClientSocket() {
+    tcp_client_socket::~tcp_client_socket() {
         if (handle)
             delete handle;
         handle = nullptr;
     }
 
-    TcpClientSocket* TcpClientSocket::connect(const address& ip_port, const TcpConfiguration& configuration) {
+    tcp_client_socket* tcp_client_socket::connect(const address& ip_port, const tcp_configuration& configuration) {
         if (!inited)
-            throw std::runtime_error("Network module not initialized");
+            init_networking();
         sockaddr_storage& address = from_address(ip_port);
-        std::unique_ptr<TcpClientSocket> result;
-        result.reset(new TcpClientSocket());
-        result->handle = new TcpClientManager((sockaddr_in6&)address, configuration);
+        std::unique_ptr<tcp_client_socket> result;
+        result.reset(new tcp_client_socket());
+        result->handle = new tcp_client_manager((sockaddr_in6&)address, configuration);
         return result.release();
     }
 
-    TcpClientSocket* TcpClientSocket::connect(const address& ip_port, char* data, uint32_t size, const TcpConfiguration& configuration) {
+    tcp_client_socket* tcp_client_socket::connect(const address& ip_port, char* data, uint32_t size, const tcp_configuration& configuration) {
         if (!inited)
-            throw std::runtime_error("Network module not initialized");
+            init_networking();
         sockaddr_storage& address = from_address(ip_port);
-        std::unique_ptr<TcpClientSocket> result;
-        result.reset(new TcpClientSocket());
-        result->handle = new TcpClientManager((sockaddr_in6&)address, data, size, configuration);
+        std::unique_ptr<tcp_client_socket> result;
+        result.reset(new tcp_client_socket());
+        result->handle = new tcp_client_manager((sockaddr_in6&)address, data, size, configuration);
         return result.release();
     }
 
-    void TcpClientSocket::set_configuration(const TcpConfiguration& config) {
+    void tcp_client_socket::set_configuration(const tcp_configuration& config) {
         if (handle)
             handle->set_configuration(config);
     }
 
-    int32_t TcpClientSocket::recv(uint8_t* data, int32_t size) {
+    int32_t tcp_client_socket::recv(uint8_t* data, int32_t size) {
         if (!inited)
-            throw std::runtime_error("Network module not initialized");
+            init_networking();
 
         if (handle)
             return handle->read((char*)data, size);
         return 0;
     }
 
-    bool TcpClientSocket::send(uint8_t* data, int32_t size) {
+    bool tcp_client_socket::send(uint8_t* data, int32_t size) {
         if (!inited)
-            throw std::runtime_error("Network module not initialized");
+            init_networking();
         if (handle)
             return handle->write((char*)data, size);
         return false;
     }
 
-    bool TcpClientSocket::send_file(const char* file_path, size_t file_path_len, uint64_t data_len, uint64_t offset, uint32_t chunks_size) {
+    bool tcp_client_socket::send_file(const char* file_path, size_t file_path_len, uint64_t data_len, uint64_t offset, uint32_t chunks_size) {
         if (!handle)
-            throw std::runtime_error("Socket not connected");
+            return false;
         return handle->write_file(file_path, file_path_len, data_len, offset, chunks_size);
     }
 
-    bool TcpClientSocket::send_file(class fast_task::files::FileHandle& file, uint64_t data_len, uint64_t offset, uint32_t chunks_size) {
+    bool tcp_client_socket::send_file(class fast_task::files::file_handle& file, uint64_t data_len, uint64_t offset, uint32_t chunks_size) {
         if (!handle)
-            throw std::runtime_error("Socket not connected");
+            return false;
         return handle->write_file(file.internal_get_handle(), data_len, offset, chunks_size);
     }
 
-    void TcpClientSocket::close() {
+    void tcp_client_socket::close() {
         if (handle) {
             handle->close();
             delete handle;
@@ -3526,7 +3540,7 @@ namespace fast_task::networking {
         }
     }
 
-    void TcpClientSocket::reset() {
+    void tcp_client_socket::reset() {
         if (handle) {
             handle->reset();
             delete handle;
@@ -3534,7 +3548,7 @@ namespace fast_task::networking {
         }
     }
 
-    void TcpClientSocket::rebuffer(int32_t size) {
+    void tcp_client_socket::rebuffer(int32_t size) {
         if (handle)
             handle->rebuffer(size);
     }
@@ -3553,7 +3567,7 @@ namespace fast_task::networking {
         int sender_len = sizeof(sender_address);
         handle->recv(data, size, sender_address, sender_len);
         if (handle->fullifed_bytes == 0 && handle->last_error != 0)
-            throw std::runtime_error("Error while receiving data from udp socket with error or status code: " + std::to_string(handle->last_error));
+            throw std::runtime_error("Received error while trying to receive data from udp socket with error or status code: " + std::to_string(handle->last_error));
         return handle->fullifed_bytes;
     }
 
@@ -3561,7 +3575,7 @@ namespace fast_task::networking {
         sockaddr_storage& to_ip_port = from_address(to);
         handle->send(data, size, to_ip_port);
         if (handle->fullifed_bytes == 0 && handle->last_error != 0)
-            throw std::runtime_error("Error while receiving data from udp socket with error or status code: " + std::to_string(handle->last_error));
+            throw std::runtime_error("Received error while trying to receive data from udp socket with error or status code: " + std::to_string(handle->last_error));
         return handle->fullifed_bytes;
     }
 
@@ -3579,7 +3593,7 @@ namespace fast_task::networking {
 
     bool ipv6_supported() {
         if (!inited)
-            throw std::runtime_error("Network module not initialized");
+            init_networking();
         static int ipv6_supported = -1;
         if (ipv6_supported == -1) {
             ipv6_supported = 0;

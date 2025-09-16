@@ -56,9 +56,30 @@ namespace fast_task {
 
 
 #if PLATFORM_WINDOWS
+    std::wstring s2ws(const std::string& str) {
+        int len = MultiByteToWideChar(CP_UTF8, 0, str.c_str(), -1, NULL, 0);
+        if (len == 0)
+            return L"";
+
+        std::vector<wchar_t> wstr(len);
+        MultiByteToWideChar(CP_UTF8, 0, str.c_str(), -1, &wstr[0], len);
+        return std::wstring(wstr.begin(), wstr.end() - 1);
+    }
+
+    std::string ws2s(const std::wstring& wstr) {
+        const CHAR def[] = " ";
+        BOOL used = true;
+        int len = WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), -1, NULL, 0, def, &used);
+        if (len == 0)
+            return "";
+
+        std::vector<char> str(len);
+        WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), -1, str.data(), len, def, &used);
+        return std::string(str.begin(), str.end() - 1);
+    }
+
     bool _set_name_thread_dbg(const std::string& name, unsigned long thread_id) {
-        std::wstring_convert<std::codecvt<wchar_t, char, mbstate_t>> convert;
-        std::wstring wname = convert.from_bytes(name);
+        std::wstring wname = s2ws(name);
         HANDLE thread = OpenThread(THREAD_SET_LIMITED_INFORMATION, false, thread_id);
         if (!thread)
             return false;
@@ -68,8 +89,7 @@ namespace fast_task {
     }
 
     bool _set_name_thread_dbg(const std::string& name) {
-        std::wstring_convert<std::codecvt<wchar_t, char, mbstate_t>> convert;
-        std::wstring wname = convert.from_bytes(name);
+        std::wstring wname = s2ws(name);
         return SUCCEEDED(SetThreadDescription(GetCurrentThread(), wname.c_str()));
     }
 
@@ -79,8 +99,7 @@ namespace fast_task {
             return "";
         WCHAR* res;
         if (SUCCEEDED(GetThreadDescription(thread, &res))) {
-            std::wstring_convert<std::codecvt<wchar_t, char, mbstate_t>> convert;
-            std::string result = convert.to_bytes(res);
+            std::string result = ws2s(res);
             LocalFree(res);
             CloseHandle(thread);
             return result;

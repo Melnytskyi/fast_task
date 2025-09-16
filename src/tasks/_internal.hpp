@@ -28,15 +28,16 @@
     #include <exception>
     #include <queue>
 
-    #include <tasks.hpp>
+    #include <shared.hpp>
+    #include <task.hpp>
 
 namespace fast_task {
 
-    inline auto get_data(std::shared_ptr<task>& task) -> task::data& {
+    inline auto FT_API_LOCAL get_data(std::shared_ptr<task>& task) -> task::data& {
         return task->data_;
     }
 
-    inline auto get_data(const std::shared_ptr<task>& task) -> task::data& {
+    inline auto FT_API_LOCAL get_data(const std::shared_ptr<task>& task) -> task::data& {
         return task->data_;
     }
 
@@ -67,12 +68,12 @@ namespace fast_task {
     //semi_realtime tasks has no limits
     //std::chrono::nanoseconds::min(); means no limit
     //std::chrono::nanoseconds(0); means no quantum, task last time spend more quantum than it has
-    std::chrono::nanoseconds next_quantum(task_priority priority, std::chrono::nanoseconds& current_available_quantum);
-    std::chrono::nanoseconds peek_quantum(task_priority priority, std::chrono::nanoseconds current_available_quantum);
-    void task_switch(task_priority priority, std::chrono::nanoseconds& current_available_quantum, std::chrono::nanoseconds elapsed);
-    std::chrono::nanoseconds init_quantum(task_priority priority);
+    std::chrono::nanoseconds FT_API_LOCAL next_quantum(task_priority priority, std::chrono::nanoseconds& current_available_quantum);
+    std::chrono::nanoseconds FT_API_LOCAL peek_quantum(task_priority priority, std::chrono::nanoseconds current_available_quantum);
+    void FT_API_LOCAL task_switch(task_priority priority, std::chrono::nanoseconds& current_available_quantum, std::chrono::nanoseconds elapsed);
+    std::chrono::nanoseconds FT_API_LOCAL init_quantum(task_priority priority);
 
-    struct executors_local {
+    struct FT_API_LOCAL executors_local {
         std::exception_ptr ex_ptr;
         std::shared_ptr<task> curr_task = nullptr;
         boost::context::continuation* stack_current_context = nullptr;
@@ -81,13 +82,13 @@ namespace fast_task {
         bool context_in_swap : 1 = false;
     };
 
-    struct timing {
+    struct FT_API_LOCAL timing {
         std::chrono::high_resolution_clock::time_point wait_timepoint;
         std::shared_ptr<task> awake_task;
         uint16_t check_id;
     };
 
-    struct binded_context {
+    struct FT_API_LOCAL binded_context {
         std::list<uint32_t> completions;
         std::list<std::shared_ptr<task>> tasks;
         task_condition_variable on_closed_notifier;
@@ -99,7 +100,7 @@ namespace fast_task {
         bool fixed_size : 1 = false;
     };
 
-    struct executor_global {
+    struct FT_API_LOCAL executor_global {
         task_condition_variable no_tasks_notifier;
         task_condition_variable no_tasks_execute_notifier;
 
@@ -129,29 +130,29 @@ namespace fast_task {
         std::unordered_map<uint16_t, binded_context, std::hash<uint16_t>> binded_workers;
     };
 
-    void startTimeController();
-    void swapCtx();
-    bool checkCancellation() noexcept;
-    void swapCtxRelock(const mutex_unify& mut0);
-    void swapCtxRelock(const mutex_unify& mut0, const mutex_unify& mut1, const mutex_unify& mut2);
-    void swapCtxRelock(const mutex_unify& mut0, const mutex_unify& mut1);
-    void transfer_task(std::shared_ptr<task>& task);
-    void makeTimeWait(std::chrono::high_resolution_clock::time_point t);
-    void taskExecutor(bool end_in_task_out = false, bool prevent_naming = false);
-    void bindedTaskExecutor(uint16_t id);
-    void unsafe_put_task_to_timed_queue(std::deque<timing>& queue, std::chrono::high_resolution_clock::time_point t, std::shared_ptr<task>& task);
-    bool can_be_scheduled_task_to_hot();
-    void forceCancelCancellation(const task_cancellation& restart);
+    void FT_API_LOCAL startTimeController();
+    void FT_API_LOCAL swapCtx();
+    bool FT_API_LOCAL checkCancellation() noexcept;
+    void FT_API_LOCAL swapCtxRelock(const mutex_unify& mut0);
+    void FT_API_LOCAL swapCtxRelock(const mutex_unify& mut0, const mutex_unify& mut1, const mutex_unify& mut2);
+    void FT_API_LOCAL swapCtxRelock(const mutex_unify& mut0, const mutex_unify& mut1);
+    void FT_API_LOCAL transfer_task(std::shared_ptr<task>& task);
+    void FT_API_LOCAL makeTimeWait(std::chrono::high_resolution_clock::time_point t);
+    void FT_API_LOCAL taskExecutor(bool end_in_task_out = false, bool prevent_naming = false);
+    void FT_API_LOCAL bindedTaskExecutor(uint16_t id);
+    void FT_API_LOCAL unsafe_put_task_to_timed_queue(std::deque<timing>& queue, std::chrono::high_resolution_clock::time_point t, std::shared_ptr<task>& task);
+    bool FT_API_LOCAL can_be_scheduled_task_to_hot();
+    void FT_API_LOCAL forceCancelCancellation(const task_cancellation& restart);
 
 
-    bool _set_name_thread_dbg(const std::string& name, unsigned long thread_id);
-    bool _set_name_thread_dbg(const std::string& name);
-    std::string _get_name_thread_dbg(unsigned long thread_id);
-    unsigned long _thread_id();
+    bool FT_API_LOCAL _set_name_thread_dbg(const std::string& name, unsigned long thread_id);
+    bool FT_API_LOCAL _set_name_thread_dbg(const std::string& name);
+    std::string FT_API_LOCAL _get_name_thread_dbg(unsigned long thread_id);
+    unsigned long FT_API_LOCAL _thread_id();
 
 
-    extern thread_local executors_local loc;
-    extern executor_global glob;
+    extern thread_local FT_API_LOCAL executors_local loc;
+    extern FT_API_LOCAL executor_global glob;
     constexpr size_t native_thread_flag = size_t(1) << (sizeof(size_t) * 8 - 1);
 }
 

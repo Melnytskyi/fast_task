@@ -4,7 +4,7 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
-#include <tasks.hpp>
+#include <task.hpp>
 
 namespace fast_task {
 
@@ -43,6 +43,9 @@ namespace fast_task {
         case mutex_unify_type::mmut:
             mmut->lock();
             break;
+        case mutex_unify_type::uspin:
+            uspin->lock();
+            break;
         default:
             break;
         }
@@ -70,6 +73,8 @@ namespace fast_task {
             return urwmut->try_read_lock();
         case mutex_unify_type::urwmut_w:
             return urwmut->try_write_lock();
+        case mutex_unify_type::uspin:
+            return uspin->try_lock();
         default:
             return false;
         }
@@ -168,6 +173,9 @@ namespace fast_task {
         case mutex_unify_type::mmut:
             mmut->unlock();
             break;
+        case mutex_unify_type::uspin:
+            uspin->unlock();
+            break;
         default:
             break;
         }
@@ -210,6 +218,11 @@ namespace fast_task {
     mutex_unify::mutex_unify(fast_task::recursive_mutex& smut) {
         type = mutex_unify_type::nrec;
         nrec = std::addressof(smut);
+    }
+
+    mutex_unify::mutex_unify(fast_task::spin_lock& spin) {
+        type = mutex_unify_type::uspin;
+        uspin = std::addressof(spin);
     }
 
     mutex_unify::mutex_unify(task_mutex& smut) {
@@ -282,6 +295,12 @@ namespace fast_task {
         return *this;
     }
 
+    mutex_unify& mutex_unify::operator=(fast_task::spin_lock& spin) {
+        type = mutex_unify_type::uspin;
+        uspin = std::addressof(spin);
+        return *this;
+    }
+
     mutex_unify& mutex_unify::operator=(task_mutex& smut) {
         type = mutex_unify_type::umut;
         umut = std::addressof(smut);
@@ -331,6 +350,10 @@ namespace fast_task {
 
     bool mutex_unify::operator==(fast_task::recursive_mutex& smut) {
         return (void*)nmut == (void*)std::addressof(smut);
+    }
+
+    bool mutex_unify::operator==(fast_task::spin_lock& spin) {
+        return (void*)nmut == (void*)std::addressof(spin);
     }
 
     bool mutex_unify::operator==(task_mutex& smut) {

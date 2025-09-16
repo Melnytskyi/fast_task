@@ -4,7 +4,7 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
-#include <tasks.hpp>
+#include <task.hpp>
 #include <tasks/_internal.hpp>
 #include <tasks/util/interrupt.hpp>
 
@@ -31,8 +31,8 @@ namespace fast_task {
             return false;
         if (get_data(loc.curr_task).make_cancel)
             return true;
-        if (get_data(loc.curr_task).timeout != std::chrono::high_resolution_clock::time_point::min())
-            if (get_data(loc.curr_task).timeout <= std::chrono::high_resolution_clock::now())
+        if (get_data(loc.curr_task).timeout != std::chrono::high_resolution_clock::time_point::min().time_since_epoch().count())
+            if (get_data(loc.curr_task).timeout <= std::chrono::high_resolution_clock::now().time_since_epoch().count())
                 return true;
         return false;
     }

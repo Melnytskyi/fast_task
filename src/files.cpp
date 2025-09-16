@@ -6,18 +6,19 @@
 
 #include <filesystem>
 
-#include <files/files.hpp>
+#include <files.hpp>
 #include <future.hpp>
-#include <tasks.hpp>
+#include <task.hpp>
 #include <tasks/util/native_workers_singleton.hpp>
 #include <vector>
+#include <variant>
 
 namespace fast_task::files {
     class File_;
 
     struct completion_struct {
         File_* handle = nullptr;
-        size_t completed_bytes = 0;
+        uint32_t completed_bytes = 0;
         char* data = nullptr;
         io_errors error = io_errors::no_error;
     };
@@ -42,7 +43,6 @@ namespace fast_task::files {
 }
 #if _WIN64
     #define NOMINMAX
-    #include <Ntstatus.h>
     #include <Windows.h>
     #include <filesystem>
     #include <io.h>
@@ -293,7 +293,7 @@ namespace fast_task::files {
             switch (last_error) {
             case STATUS_PENDING:
                 return false;
-            case STATUS_END_OF_FILE: {
+            case ((NTSTATUS)0xC0000011L): { //STATUS_END_OF_FILE:
                 if (is_read && !required_full) {
                     now_fullifed();
                     return false;
@@ -303,13 +303,13 @@ namespace fast_task::files {
                     return true;
                 }
             }
-            case STATUS_VID_INSUFFICIENT_RESOURCES_RESERVE:
+            case ((NTSTATUS)0xC037002BL)://STATUS_VID_INSUFFICIENT_RESOURCES_RESERVE:
                 exception(io_errors::no_enough_memory);
                 return true;
-            case STATUS_BUFFER_OVERFLOW:
+            case ((NTSTATUS)0x80000005L)://STATUS_BUFFER_OVERFLOW:
                 exception(io_errors::invalid_user_buffer);
                 return true;
-            case STATUS_NO_MEMORY: //yea strange name
+            case ((NTSTATUS)0xC0000017L)://STATUS_NO_MEMORY: //yea strange name
                 exception(io_errors::no_enough_quota);
                 return true;
             default:
@@ -339,10 +339,10 @@ namespace fast_task::files {
         return {res, task::callback_dummy(res, file_overlapped_on_await, file_overlapped_on_cancel, file_overlapped_on_destruct)};
     }
 
-    class FileManager : public util::native_worker_manager {
+    class file_manager : public util::native_worker_manager {
         void* _handle = nullptr;
-        uint64_t write_pointer;
-        uint64_t read_pointer;
+        uint64_t write_pointer = 0;
+        uint64_t read_pointer = 0;
         pointer_mode pointer_mode;
         bool make_append = false;
         friend class File_;
@@ -354,18 +354,22 @@ namespace fast_task::files {
                 if (finfo.EndOfFile.QuadPart > 0)
                     size = finfo.EndOfFile.QuadPart;
                 else
-                    size = -1;
+                    size = (uint64_t)-1;
             } else
-                size = -1;
+                size = (uint64_t)-1;
             return size;
         }
 
+        file_manager() = default;
+
     public:
-        FileManager(const char* path, size_t path_len, open_mode open, on_open_action action, share_mode share, _sync_flags flags, files::pointer_mode pointer_mode) noexcept(false)
-            : pointer_mode(pointer_mode) {
-            read_pointer = 0;
-            write_pointer = 0;
-            auto wpath = std::filesystem::path(path, path + path_len).wstring();
+        std::optional<task_mutex> mimic_non_async;
+
+        static std::variant<file_manager*, std::string> open(const std::filesystem::path& path, open_mode open, on_open_action action, share_mode share, _sync_flags flags, files::pointer_mode pointer_mode){
+            std::unique_ptr<file_manager> ptr;
+            ptr.reset(new file_manager{});
+            ptr->pointer_mode = pointer_mode;
+            auto wpath = path.wstring();
             DWORD wshare_mode = 0;
             if (share.read)
                 wshare_mode |= FILE_SHARE_READ;
@@ -399,13 +403,13 @@ namespace fast_task::files {
                 break;
             case open_mode::append:
                 wopen = GENERIC_WRITE;
-                make_append = true;
+                ptr->make_append = true;
                 break;
             case open_mode::read_write:
                 wopen = GENERIC_READ | GENERIC_WRITE;
                 break;
             default:
-                throw std::invalid_argument("Invalid open mode, excepted read, write, read_write or append, but got " + std::to_string((int)open));
+                return "Invalid open mode, excepted read, write, read_write or append, but got " + std::to_string((int)open);
             }
             DWORD creation_mode = 0;
             switch (action) {
@@ -425,37 +429,38 @@ namespace fast_task::files {
                 creation_mode = TRUNCATE_EXISTING;
                 break;
             default:
-                throw std::invalid_argument("Invalid on open action, excepted open, always_new, create_new, open_exists or truncate_exists, but got " + std::to_string((int)open));
+                return "Invalid open action, excepted open, always_new, create_new, open_exists or truncate_exists, but got " + std::to_string((int)open);
             }
-            _handle = CreateFileW(wpath.c_str(), wopen, wshare_mode, NULL, creation_mode, wflags, NULL);
-            if (_handle == INVALID_HANDLE_VALUE) {
-                _handle = nullptr;
+            ptr->_handle = CreateFileW(wpath.c_str(), wopen, wshare_mode, NULL, creation_mode, wflags, NULL);
+            if (ptr->_handle == INVALID_HANDLE_VALUE) {
+                ptr->_handle = nullptr;
                 switch (GetLastError()) {
                 case ERROR_FILE_NOT_FOUND:
-                    throw std::runtime_error("FileException, File not found");
+                    return "FileException, File not found";
                 case ERROR_ACCESS_DENIED:
-                    throw std::runtime_error("FileException, Access denied");
+                    return "FileException, Access denied";
                 case ERROR_FILE_EXISTS:
                 case ERROR_ALREADY_EXISTS:
-                    throw std::runtime_error("FileException, File exists");
+                    return "FileException, File exists";
                 case ERROR_FILE_INVALID:
-                    throw std::runtime_error("FileException, File invalid");
+                    return "FileException, File invalid";
                 case ERROR_FILE_TOO_LARGE:
-                    throw std::runtime_error("FileException, File too large");
+                    return "FileException, File is too large";
                 case ERROR_INVALID_PARAMETER:
-                    throw std::runtime_error("FileException, Invalid parameter");
+                    return "FileException, Invalid parameter";
                 case ERROR_SHARING_VIOLATION:
-                    throw std::runtime_error("FileException, Sharing violation");
+                    return "FileException, Sharing violation";
                 default:
-                    throw std::runtime_error("FileException, Unknown error");
+                    return "FileException, Unknown error";
                 }
             }
-            util::native_workers_singleton::register_handle(_handle, this);
+            util::native_workers_singleton::register_handle(ptr->_handle, ptr.get());
             if (flags.at_end)
-                seek_pos(0, pointer_offset::end);
+                ptr->seek_pos(0, pointer_offset::end);
+            return ptr.release();
         }
 
-        ~FileManager() {
+        ~file_manager() {
             if (_handle != nullptr)
                 CloseHandle(_handle);
         }
@@ -734,7 +739,7 @@ namespace fast_task::files {
         }
 
         std::string get_path() const {
-            size_t size = GetFinalPathNameByHandleW(_handle, nullptr, 0, FILE_NAME_NORMALIZED);
+            auto size = GetFinalPathNameByHandleW(_handle, nullptr, 0, FILE_NAME_NORMALIZED);
             std::wstring wpath;
             wpath.resize(size);
             if (GetFinalPathNameByHandleW(_handle, (wchar_t*)wpath.c_str(), size, FILE_NAME_NORMALIZED) == 0)
@@ -744,7 +749,7 @@ namespace fast_task::files {
         }
     };
 
-    void* FileHandle::internal_get_handle() const noexcept {
+    void* file_handle::internal_get_handle() const noexcept {
         return handle->get_handle();
     }
 }
@@ -984,15 +989,15 @@ namespace fast_task::files {
         };
     } // namespace name
 
-    class FileManager : public native_worker_manager {
+    class file_manager : public native_worker_manager {
         int _handle = -1;
-        uint64_t write_pointer;
-        uint64_t read_pointer;
+        uint64_t write_pointer = 0;
+        uint64_t read_pointer = 0;
         pointer_mode _pointer_mode;
         friend class File_;
 
 
-        uint16_t uflags;
+        uint16_t uflags = 0
 
         uint64_t _file_size() {
             uint64_t size = 0;
@@ -1003,10 +1008,12 @@ namespace fast_task::files {
         }
 
     public:
-        FileManager(const char* path, size_t path_len, open_mode open, on_open_action action, share_mode share, _sync_flags flags, pointer_mode _pointer_mode) noexcept(false)
-            : _pointer_mode(_pointer_mode), uflags(0) {
-            read_pointer = 0;
-            write_pointer = 0;
+        std::optional<task_mutex> mimic_non_async;
+
+        static std::variant<file_manager*, std::string> open(const std::filesystem::path& path, size_t path_len, open_mode open, on_open_action action, share_mode share, _sync_flags flags, pointer_mode _pointer_mode){
+            std::unique_ptr<file_manager> ptr;
+            ptr.reset(new file_manager{});
+            ptr->pointer_mode = _pointer_mode;
             int mode = O_NONBLOCK;
 
             //if(share.read)
@@ -1046,7 +1053,7 @@ namespace fast_task::files {
                 mode |= O_RDWR;
                 break;
             default:
-                throw std::invalid_argument("Invalid open mode, excepted read, write, read_write or append, but got " + std::to_string((int)open));
+                return "Invalid open mode, excepted read, write, read_write or append, but got " + std::to_string((int)open);
             }
             switch (action) {
             case on_open_action::open:
@@ -1061,44 +1068,45 @@ namespace fast_task::files {
                 break;
             case on_open_action::open_exists:
                 if (!std::filesystem::exists(path))
-                    throw std::runtime_error("FileException, File not found");
+                    return "FileException, File not found";
                 break;
             case on_open_action::truncate_exists:
                 if (!std::filesystem::exists(path))
-                    throw std::runtime_error("FileException, File not found");
+                    return "FileException, File not found";
                 mode |= O_TRUNC;
                 break;
             default:
-                throw std::invalid_argument("Invalid on open action, excepted open, always_new, create_new, open_exists or truncate_exists, but got " + std::to_string((int)open));
+                return "Invalid open action, excepted open, always_new, create_new, open_exists or truncate_exists, but got " + std::to_string((int)open);
             }
-            _handle = open64(path, mode, 0644);
-            if (_handle == -1) {
+            ptr->_handle = open64(path.c_str(), mode, 0644);
+            if (ptr->_handle == -1) {
                 switch (errno) {
                 case ENOENT:
-                    throw std::runtime_error("FileException, File not found");
+                    return "FileException, File not found";
                 case EACCES:
                 case EPERM:
-                    throw std::runtime_error("FileException, Access denied");
+                    return "FileException, Access denied";
                 case EEXIST:
-                    throw std::runtime_error("FileException, File exists");
+                    return "FileException, File exists";
                 case EISDIR:
-                    throw std::runtime_error("FileException, File invalid");
+                    return "FileException, File invalid";
                 case EFBIG:
-                    throw std::runtime_error("FileException, File too large");
+                    return "FileException, File too large";
                 case E2BIG:
                 case EINVAL:
-                    throw std::runtime_error("FileException, Invalid parameter");
+                    return "FileException, Invalid parameter";
                 //case ERROR_SHARING_VIOLATION:
                 //    throw std::runtime_error("FileException, Sharing violation");
                 default:
-                    throw std::runtime_error("FileException, Unknown error");
+                    return "FileException, Unknown error";
                 }
             }
             if (flags.at_end)
                 seek_pos(0, pointer_offset::end);
+            return ptr.release();
         }
 
-        ~FileManager() {
+        ~file_manager() {
             if (_handle != -1)
                 close(_handle);
         }
@@ -1385,43 +1393,94 @@ namespace fast_task::files {
 #endif
 
 namespace fast_task::files {
-    FileHandle::FileHandle(const char* path, size_t path_len, open_mode open, on_open_action action, _async_flags flags, share_mode share, pointer_mode pointer_mode) noexcept(false) {
+
+    file_handle::file_handle() = default;
+
+    file_handle file_handle::open(const std::filesystem::path& path, open_mode open, on_open_action action, _async_flags flags, share_mode share, pointer_mode pointer_mode) {
+        file_handle res;
+        res.handle = nullptr;
         _sync_flags sync_flags;
         sync_flags.delete_on_close = flags.delete_on_close;
         sync_flags.posix_semantics = flags.posix_semantics;
         sync_flags.random_access = flags.random_access;
         sync_flags.sequential_scan = flags.sequential_scan;
         sync_flags.at_end = flags.at_end;
-        handle = nullptr;
-        try {
-            handle = new FileManager(path, path_len, open, action, share, sync_flags, pointer_mode);
-        } catch (...) {
-            if (handle)
-                delete handle;
-            throw;
-        }
+        std::visit(
+            [&res]<class T>(T&& value) {
+                if constexpr(std::is_same_v<file_manager*, T>)
+                    res.handle = value;
+            },
+            file_manager::open(path, open, action, share, sync_flags, pointer_mode)
+        );
+        return res;
     }
 
-    FileHandle::FileHandle(const char* path, size_t path_len, open_mode open, on_open_action action, _sync_flags flags, share_mode share, pointer_mode pointer_mode) noexcept(false) {
-        handle = nullptr;
-        try {
-            handle = new FileManager(path, path_len, open, action, share, flags, pointer_mode);
-            mimic_non_async.emplace();
-        } catch (...) {
-            if (handle)
-                delete handle;
-            throw;
-        }
+    file_handle file_handle::open(const std::filesystem::path& path, open_mode open, on_open_action action, _sync_flags flags, share_mode share, pointer_mode pointer_mode) {
+        file_handle res;
+        res.handle = nullptr;
+        std::visit(
+            [&res]<class T>(T&& value) {
+                if constexpr (std::is_same_v<file_manager*, T>){
+                    res.handle = value;
+                    res.handle->mimic_non_async.emplace();
+                }
+            },
+            file_manager::open(path, open, action, share, flags, pointer_mode)
+        );
+        return res;
     }
 
-    FileHandle::~FileHandle() {
+    file_handle file_handle::open_throws(const std::filesystem::path& path, open_mode open, on_open_action action, _async_flags flags, share_mode share, pointer_mode pointer_mode) {
+        file_handle res;
+        res.handle = nullptr;
+        _sync_flags sync_flags;
+        sync_flags.delete_on_close = flags.delete_on_close;
+        sync_flags.posix_semantics = flags.posix_semantics;
+        sync_flags.random_access = flags.random_access;
+        sync_flags.sequential_scan = flags.sequential_scan;
+        sync_flags.at_end = flags.at_end;
+        std::visit(
+            [&res]<class T>(T&& value) {
+                if constexpr (std::is_same_v<file_manager*, T>)
+                    res.handle = value;
+                else
+                    throw std::runtime_error(std::move(value));
+            },
+            file_manager::open(path, open, action, share, sync_flags, pointer_mode)
+        );
+        return res;
+    }
+
+    file_handle file_handle::open_throws(const std::filesystem::path& path, open_mode open, on_open_action action, _sync_flags flags, share_mode share, pointer_mode pointer_mode) {
+        file_handle res;
+        res.handle = nullptr;
+        std::visit(
+            [&res]<class T>(T&& value) {
+                if constexpr (std::is_same_v<file_manager*, T>) {
+                    res.handle = value;
+                    res.handle->mimic_non_async.emplace();
+                } else
+                    throw std::runtime_error(std::move(value));
+            },
+            file_manager::open(path, open, action, share, flags, pointer_mode)
+        );
+        return res;
+    }
+
+    file_handle::~file_handle() {
         if (handle)
             delete handle;
     }
 
-    future_ptr<std::vector<uint8_t>> FileHandle::read(uint32_t size) {
-        if (mimic_non_async.has_value()) {
-            fast_task::lock_guard<task_mutex> lock(*mimic_non_async);
+    bool file_handle::is_open() const {
+        return handle;
+    }
+
+    future_ptr<std::vector<uint8_t>> file_handle::read(uint32_t size) {
+        if (!handle)
+            throw file_closed();
+        if (handle->mimic_non_async.has_value()) {
+            fast_task::lock_guard<task_mutex> lock(*handle->mimic_non_async);
             auto res = handle->read(size, false);
             res->wait();
             return res;
@@ -1429,17 +1488,21 @@ namespace fast_task::files {
             return handle->read(size, false);
     }
 
-    uint32_t FileHandle::read(uint8_t* data, uint32_t size) {
-        if (mimic_non_async.has_value()) {
-            fast_task::lock_guard<task_mutex> lock(*mimic_non_async);
+    uint32_t file_handle::read(uint8_t* data, uint32_t size) {
+        if (!handle)
+            throw file_closed();
+        if (handle->mimic_non_async.has_value()) {
+            fast_task::lock_guard<task_mutex> lock(*handle->mimic_non_async);
             return handle->read(data, size);
         } else
             return handle->read(data, size);
     }
 
-    future_ptr<std::vector<uint8_t>> FileHandle::read_fixed(uint32_t size) {
-        if (mimic_non_async.has_value()) {
-            fast_task::lock_guard<task_mutex> lock(*mimic_non_async);
+    future_ptr<std::vector<uint8_t>> file_handle::read_fixed(uint32_t size) {
+        if (!handle)
+            throw file_closed();
+        if (handle->mimic_non_async.has_value()) {
+            fast_task::lock_guard<task_mutex> lock(*handle->mimic_non_async);
             auto res = handle->read(size, true);
             res->wait();
             return res;
@@ -1447,17 +1510,21 @@ namespace fast_task::files {
             return handle->read(size, true);
     }
 
-    uint32_t FileHandle::read_fixed(uint8_t* data, uint32_t size) {
-        if (mimic_non_async.has_value()) {
-            fast_task::lock_guard<task_mutex> lock(*mimic_non_async);
+    uint32_t file_handle::read_fixed(uint8_t* data, uint32_t size) {
+        if (!handle)
+            throw file_closed();
+        if (handle->mimic_non_async.has_value()) {
+            fast_task::lock_guard<task_mutex> lock(*handle->mimic_non_async);
             return handle->read(data, size, true);
         } else
             return handle->read(data, size, true);
     }
 
-    future_ptr<void> FileHandle::write(const uint8_t* data, uint32_t size) {
-        if (mimic_non_async.has_value()) {
-            fast_task::lock_guard<task_mutex> lock(*mimic_non_async);
+    future_ptr<void> file_handle::write(const uint8_t* data, uint32_t size) {
+        if (!handle)
+            throw file_closed();
+        if (handle->mimic_non_async.has_value()) {
+            fast_task::lock_guard<task_mutex> lock(*handle->mimic_non_async);
             auto res = handle->write(data, size);
             res->wait();
             return res;
@@ -1465,9 +1532,11 @@ namespace fast_task::files {
             return handle->write(data, size);
     }
 
-    future_ptr<void> FileHandle::append(const uint8_t* data, uint32_t size) {
-        if (mimic_non_async.has_value()) {
-            fast_task::lock_guard<task_mutex> lock(*mimic_non_async);
+    future_ptr<void> file_handle::append(const uint8_t* data, uint32_t size) {
+        if (!handle)
+            throw file_closed();
+        if (handle->mimic_non_async.has_value()) {
+            fast_task::lock_guard<task_mutex> lock(*handle->mimic_non_async);
             auto res = handle->append(data, size);
             res->wait();
             return res;
@@ -1475,323 +1544,79 @@ namespace fast_task::files {
             return handle->append(data, size);
     }
 
-    void FileHandle::write_inline(const uint8_t* data, uint32_t size) {
-        if (mimic_non_async.has_value()) {
-            fast_task::lock_guard<task_mutex> lock(*mimic_non_async);
+    void file_handle::write_inline(const uint8_t* data, uint32_t size) {
+        if (!handle)
+            throw file_closed();
+        if (handle->mimic_non_async.has_value()) {
+            fast_task::lock_guard<task_mutex> lock(*handle->mimic_non_async);
             handle->write_inline(data, size);
         } else
             handle->write_inline(data, size);
     }
 
-    void FileHandle::append_inline(const uint8_t* data, uint32_t size) {
-        if (mimic_non_async.has_value()) {
-            fast_task::lock_guard<task_mutex> lock(*mimic_non_async);
+    void file_handle::append_inline(const uint8_t* data, uint32_t size) {
+        if (!handle)
+            throw file_closed();
+        if (handle->mimic_non_async.has_value()) {
+            fast_task::lock_guard<task_mutex> lock(*handle->mimic_non_async);
             handle->append_inline(data, size);
         } else
             handle->append_inline(data, size);
     }
 
-    bool FileHandle::seek_pos(uint64_t offset, pointer_offset pointer_offset, pointer pointer) {
-        if (mimic_non_async.has_value()) {
-            fast_task::lock_guard<task_mutex> lock(*mimic_non_async);
+    bool file_handle::seek_pos(uint64_t offset, pointer_offset pointer_offset, pointer pointer) {
+        if (!handle)
+            throw file_closed();
+        if (handle->mimic_non_async.has_value()) {
+            fast_task::lock_guard<task_mutex> lock(*handle->mimic_non_async);
             return handle->seek_pos(offset, pointer_offset, pointer);
         } else
             return handle->seek_pos(offset, pointer_offset, pointer);
     }
 
-    bool FileHandle::seek_pos(uint64_t offset, pointer_offset pointer_offset) {
-        if (mimic_non_async.has_value()) {
-            fast_task::lock_guard<task_mutex> lock(*mimic_non_async);
+    bool file_handle::seek_pos(uint64_t offset, pointer_offset pointer_offset) {
+        if (!handle)
+            throw file_closed();
+        if (handle->mimic_non_async.has_value()) {
+            fast_task::lock_guard<task_mutex> lock(*handle->mimic_non_async);
             return handle->seek_pos(offset, pointer_offset);
         } else
             return handle->seek_pos(offset, pointer_offset);
     }
 
-    uint64_t FileHandle::tell_pos(pointer pointer) {
-        if (mimic_non_async.has_value()) {
-            fast_task::lock_guard<task_mutex> lock(*mimic_non_async);
+    uint64_t file_handle::tell_pos(pointer pointer) {
+        if (!handle)
+            throw file_closed();
+        if (handle->mimic_non_async.has_value()) {
+            fast_task::lock_guard<task_mutex> lock(*handle->mimic_non_async);
             return handle->tell_pos(pointer);
         } else
             return handle->tell_pos(pointer);
     }
 
-    bool FileHandle::flush() {
-        if (mimic_non_async.has_value()) {
-            fast_task::lock_guard<task_mutex> lock(*mimic_non_async);
+    bool file_handle::flush() {
+        if (!handle)
+            throw file_closed();
+        if (handle->mimic_non_async.has_value()) {
+            fast_task::lock_guard<task_mutex> lock(*handle->mimic_non_async);
             return handle->flush();
         } else
             return handle->flush();
     }
 
-    uint64_t FileHandle::size() {
-        if (mimic_non_async.has_value()) {
-            fast_task::lock_guard<task_mutex> lock(*mimic_non_async);
+    uint64_t file_handle::size() {
+        if (!handle)
+            throw file_closed();
+        if (handle->mimic_non_async.has_value()) {
+            fast_task::lock_guard<task_mutex> lock(*handle->mimic_non_async);
             return handle->file_size();
         } else
             return handle->file_size();
     }
 
-    std::string FileHandle::get_path() const {
+    std::string file_handle::get_path() const {
+        if (!handle)
+            throw file_closed();
         return handle->get_path();
-    }
-
-    std::streamsize async_filebuf::make_sputn(const char* s, std::streamsize n) {
-        size_t bytes_to_write = std::min(static_cast<size_t>(n), size_t(epptr() - pptr()));
-        traits_type::copy(pptr(), s, bytes_to_write);
-        pbump(static_cast<int>(bytes_to_write));
-        if (flush_buffer() == traits_type::eof())
-            return traits_type::eof();
-        return static_cast<std::streamsize>(bytes_to_write);
-    }
-
-    std::streamsize async_filebuf::xsgetn(char* s, std::streamsize n) {
-        if (gptr() == egptr()) {
-            uint32_t bytes_read = file_handle.read(reinterpret_cast<uint8_t*>(buffer.data()), buffer_size);
-            if (bytes_read == 0)
-                return traits_type::eof();
-            setg(buffer.data(), buffer.data(), buffer.data() + bytes_read);
-        }
-        size_t bytes_to_copy = std::min(static_cast<size_t>(n), size_t(egptr() - gptr()));
-        traits_type::copy(s, gptr(), bytes_to_copy);
-        gbump(static_cast<int>(bytes_to_copy));
-        return static_cast<std::streamsize>(bytes_to_copy);
-    }
-
-    std::streamsize async_filebuf::xsputn(const char* s, std::streamsize n) {
-        auto res = n;
-        while (n > 0) {
-            size_t available_space = pptr() < epptr() ? epptr() - pptr() : 0;
-            if (available_space == 0) {
-                if (flush_buffer() == traits_type::eof())
-                    return traits_type::eof();
-                available_space = epptr() - pptr();
-            }
-            size_t bytes_to_write = std::min(static_cast<size_t>(n), available_space);
-            auto sput_res = make_sputn(s, static_cast<std::streamsize>(bytes_to_write));
-            if (sput_res == traits_type::eof())
-                return traits_type::eof();
-            s += bytes_to_write;
-            n -= static_cast<std::streamsize>(bytes_to_write);
-        }
-        return res;
-    }
-
-    async_filebuf::int_type async_filebuf::underflow() {
-        if (gptr() == egptr()) {
-            uint32_t bytes_read = file_handle.read(reinterpret_cast<uint8_t*>(buffer.data()), buffer_size);
-            if (bytes_read == 0)
-                return traits_type::eof();
-            setg(buffer.data(), buffer.data(), buffer.data() + bytes_read);
-        }
-        return traits_type::to_int_type(*gptr());
-    }
-
-    async_filebuf::int_type async_filebuf::overflow(int_type ch) {
-        if (ch != traits_type::eof()) {
-            *pptr() = traits_type::to_char_type(ch);
-            pbump(1);
-        }
-        if (flush_buffer() == traits_type::eof())
-            return traits_type::eof();
-        return traits_type::not_eof(ch);
-    }
-
-    int async_filebuf::flush_buffer() {
-        size_t size = pptr() - pbase();
-        if (size > 0) {
-            file_handle.write_inline(reinterpret_cast<const uint8_t*>(pbase()), static_cast<uint32_t>(size));
-            setp(buffer.data(), buffer.data() + buffer_size);
-        }
-        return 0;
-    }
-
-    int async_filebuf::sync() {
-        return flush_buffer() == traits_type::eof() ? -1 : 0;
-    }
-
-    std::streampos async_filebuf::seekoff(std::streamoff off, std::ios_base::seekdir dir, std::ios_base::openmode which) {
-        pointer_offset offset_mode;
-        switch (dir) {
-        case std::ios_base::beg:
-            offset_mode = pointer_offset::begin;
-            break;
-        case std::ios_base::cur:
-            offset_mode = pointer_offset::current;
-            break;
-        case std::ios_base::end:
-            offset_mode = pointer_offset::end;
-            break;
-        default:
-            return std::streampos(std::streamoff(-1));
-        }
-
-        pointer pointer_type = (which & std::ios_base::out) ? pointer::write : pointer::read;
-
-        if (!file_handle.seek_pos(static_cast<uint64_t>(off), offset_mode, pointer_type))
-            return std::streampos(std::streamoff(-1));
-
-        return std::streampos(static_cast<std::streamoff>(file_handle.tell_pos(pointer_type)));
-    }
-
-    std::streampos async_filebuf::seekpos(std::streampos pos, std::ios_base::openmode which) {
-        return seekoff(static_cast<std::streamoff>(pos), std::ios_base::beg, which);
-    }
-
-    async_filebuf::async_filebuf(FileHandle& fh)
-        : file_handle(fh), buffer(buffer_size) {
-        setg(buffer.data(), buffer.data(), buffer.data());
-        setp(buffer.data(), buffer.data() + buffer_size);
-    }
-
-    async_filebuf::~async_filebuf() {
-        flush_buffer();
-    }
-
-    FileHandle* handle;
-
-    open_mode to_open_mode(std::ios_base::openmode mode) {
-        if (mode & std::ios_base::in) {
-            return open_mode::read;
-        } else if (mode & std::ios_base::out) {
-            return open_mode::write;
-        } else if (mode & std::ios_base::app) {
-            return open_mode::append;
-        } else {
-            return open_mode::read_write;
-        }
-    }
-
-    on_open_action to_open_action(std::ios_base::openmode mode) {
-        if (mode & std::ios_base::trunc) {
-            return on_open_action::truncate_exists;
-        } else if (mode & std::ios_base::app) {
-            return on_open_action::open;
-#if ((defined(_MSVC_LANG) && _MSVC_LANG >= 202302L) || __cplusplus >= 202302L)
-        } else if (mode & std::ios_base::noreplace) {
-            return on_open_action::create_new;
-#endif
-        } else if (mode & std::ios_base::ate) {
-            return on_open_action::open_exists;
-        } else {
-            return on_open_action::open;
-        }
-    }
-
-    share_mode to_protection_mode(std::ios_base::openmode op_mod, int mode) {
-        share_mode protection_mode;
-        if (mode & _SH_DENYRW) {
-            protection_mode.read = false;
-            protection_mode.write = false;
-        } else if (mode & _SH_DENYWR) {
-            protection_mode.read = true;
-            protection_mode.write = false;
-        } else if (mode & _SH_DENYRD) {
-            protection_mode.read = false;
-            protection_mode.write = true;
-        } else if (mode & _SH_DENYNO) {
-            protection_mode.read = true;
-            protection_mode.write = true;
-        } else if (mode & _SH_SECURE) {
-            if (op_mod & std::ios_base::in)
-                protection_mode.read = true;
-            else
-                protection_mode.read = false;
-            protection_mode.write = false;
-        } else {
-            protection_mode.read = true;
-            protection_mode.write = true;
-        }
-        return protection_mode;
-    }
-
-    _sync_flags to_flags(std::ios_base::openmode op_mod) {
-        _sync_flags flags{};
-        if (op_mod & std::ios_base::ate)
-            flags.at_end = true;
-
-        return flags;
-    }
-
-    async_iofstream::async_iofstream(
-        const char* str,
-        ios_base::openmode mode,
-        int prot
-    )
-        : async_iofstream(std::filesystem::path(str), mode, prot) {}
-
-    async_iofstream::async_iofstream(
-        const std::string& str,
-        ios_base::openmode mode,
-        int prot
-    )
-        : async_iofstream(std::filesystem::path(str), mode, prot) {}
-
-    async_iofstream::async_iofstream(
-        const wchar_t* str,
-        ios_base::openmode mode,
-        int prot
-    )
-        : async_iofstream(std::filesystem::path(str), mode, prot) {}
-
-    async_iofstream::async_iofstream(
-        const std::wstring& str,
-        ios_base::openmode mode,
-        int prot
-    )
-        : async_iofstream(std::filesystem::path(str), mode, prot) {}
-
-    async_iofstream::async_iofstream(
-        const std::filesystem::path& path,
-        ios_base::openmode mode,
-        int prot
-    ) : std::iostream(nullptr) {
-        try {
-            handle = nullptr;
-            handle = new FileHandle(path.string(), to_open_mode(mode), to_open_action(mode), to_flags(mode), to_protection_mode(mode, prot));
-            set_rdbuf(new async_filebuf(*handle));
-            clear();
-        } catch (...) {
-            if (handle) {
-                delete handle;
-                handle = nullptr;
-            }
-            setstate(std::ios_base::badbit);
-        }
-    }
-
-    async_iofstream::async_iofstream(
-        const std::filesystem::path& path,
-        open_mode open,
-        on_open_action action,
-        _sync_flags flags,
-        share_mode share,
-        pointer_mode pointer_mode
-    ) : std::iostream(nullptr) {
-        try {
-            handle = nullptr;
-            handle = new FileHandle(path.string(), open, action, flags, share, pointer_mode);
-            set_rdbuf(new async_filebuf(*handle));
-            clear();
-        } catch (...) {
-            if (handle) {
-                delete handle;
-                handle = nullptr;
-            }
-            setstate(std::ios_base::badbit);
-        }
-    }
-
-    async_iofstream::~async_iofstream() {
-        if (handle) {
-            if (rdbuf()) {
-                flush();
-                delete rdbuf();
-            }
-            delete handle;
-        }
-    }
-
-    bool async_iofstream::is_open() const {
-        return handle != nullptr;
     }
 }

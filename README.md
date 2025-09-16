@@ -5,7 +5,9 @@
 
 **Fast task** is a modern, stack-based green thread implementation for C++ designed to be a simple, fast, and powerful tool for concurrent programming. It offers a lightweight alternative to `std::thread`, focusing on high-performance asynchronous operations and efficient task management.
 
-The library is built with a C++20 compiler and is designed for Windows and Linux platforms. 
+The library is built with a C++23 compiler and is designed for Windows and Linux platforms. 
+
+_the library technically could be used by client code with C++20 if the coroutines not used_
 
 ## Core Features
 

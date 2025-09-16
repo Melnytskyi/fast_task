@@ -12,22 +12,22 @@
     #include <chrono>
     #include <list>
     #include <mutex>
+    #include <shared.hpp>
     #include <thread>
     #include <vector>
-
     #ifdef _WIN64
         #define WIN32_LEAN_AND_MEAN
         #define NOMINMAX
         #include <Windows.h>
 
 namespace fast_task::util {
-    class native_worker_manager {
+    class FT_API_LOCAL native_worker_manager {
     public:
         virtual void handle(void* data, class native_worker_handle* overlapped, unsigned long dwBytesTransferred) = 0;
         virtual ~native_worker_manager() noexcept(false) = default;
     };
 
-    class native_worker_handle {
+    class FT_API_LOCAL native_worker_handle {
         friend class native_workers_singleton;
 
     public:
@@ -49,7 +49,7 @@ namespace fast_task::util {
         native_worker_handle& operator=(native_worker_handle&&) = delete;
     };
 
-    class native_workers_singleton {
+    class FT_API_LOCAL native_workers_singleton {
         static inline native_workers_singleton* instance = nullptr;
         static inline fast_task::mutex instance_mutex;
         std::shared_ptr<void> m_hCompletionPort;
@@ -64,10 +64,10 @@ namespace fast_task::util {
         void dispatch() {
             SetThreadDescription(GetCurrentThread(), L"native_dispatcher");
             std::vector<OVERLAPPED_ENTRY> entries;
-            entries.resize(fast_task::thread::hardware_concurrency());
+            entries.resize(std::min<size_t>(fast_task::thread::hardware_concurrency(), INT32_MAX));
             while (true) {
                 ULONG entries_count = 0;
-                auto status = GetQueuedCompletionStatusEx(m_hCompletionPort.get(), entries.data(), entries.size(), &entries_count, INFINITE, false);
+                auto status = GetQueuedCompletionStatusEx(m_hCompletionPort.get(), entries.data(), (ULONG)entries.size(), &entries_count, INFINITE, false);
                 if (!status)
                     return;
 
@@ -120,13 +120,13 @@ namespace fast_task::util {
         #include <liburing.h>
 
 namespace fast_task::util {
-    class native_worker_manager {
+    class FT_API_LOCAL native_worker_manager {
     public:
         virtual void handle(class native_worker_handle* overlapped, io_uring_cqe* cqe) = 0;
         virtual ~native_worker_manager() noexcept(false) = default;
     };
 
-    class native_worker_handle {
+    class FT_API_LOCAL native_worker_handle {
         friend class native_workers_singleton;
 
     private:
@@ -144,7 +144,7 @@ namespace fast_task::util {
     };
 
     //not consume resources if not used
-    class native_workers_singleton {
+    class FT_API_LOCAL native_workers_singleton {
         static inline native_workers_singleton* instance = nullptr;
         static inline fast_task::mutex instance_mutex;
         io_uring m_ring;
@@ -219,7 +219,7 @@ namespace fast_task::util {
                 sqe = io_uring_get_sqe(&self.m_ring);
                 if (sqe != nullptr)
                     return sqe;
-                throw NoMemoryException();
+                throw std::bad_alloc();
             }
             return sqe;
         }

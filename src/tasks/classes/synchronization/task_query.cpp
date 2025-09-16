@@ -4,7 +4,7 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
-#include <tasks.hpp>
+#include <task.hpp>
 #include <tasks/_internal.hpp>
 
 namespace fast_task {

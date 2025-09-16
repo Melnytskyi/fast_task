@@ -4,7 +4,7 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
-#include <tasks.hpp>
+#include <task.hpp>
 #include <tasks/_internal.hpp>
 
 namespace fast_task::scheduler {
@@ -134,7 +134,7 @@ namespace fast_task::scheduler {
             glob.binded_workers.erase(id);
         }
         for (std::shared_ptr<task>& task : transfer_tasks) {
-            get_data(task).bind_to_worker_id = -1;
+            get_data(task).bind_to_worker_id = (uint16_t)-1;
             transfer_task(task);
         }
     }

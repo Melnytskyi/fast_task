@@ -4,14 +4,14 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
-#include <tasks.hpp>
+#include <task.hpp>
 #include <tasks/_internal.hpp>
 
 namespace fast_task {
     bool task::enable_task_naming = false;
 
     task::task(void* data, void (*on_start)(void*), void (*on_await)(void*), void (*on_cancel)(void*), void (*on_destruct)(void*), bool is_coroutine)
-        : data_{.timeout = std::chrono::high_resolution_clock::time_point::min()} {
+        : data_{.timeout = std::chrono::high_resolution_clock::time_point::min().time_since_epoch().count()} {
         data_.callbacks.is_extended_mode = true;
         data_.callbacks.extended_mode.is_coroutine = is_coroutine;
         data_.callbacks.extended_mode.data = data;
@@ -29,7 +29,7 @@ namespace fast_task {
         data_.completed = mov.data_.completed;
     }
 
-    task::task(std::function<void()> func, std::function<void(const std::exception_ptr&)> ex_handle, std::chrono::high_resolution_clock::time_point timeout, task_priority priority) : data_{.timeout = timeout} {
+    task::task(std::function<void()> func, std::function<void(const std::exception_ptr&)> ex_handle, std::chrono::high_resolution_clock::time_point timeout, task_priority priority) : data_{.timeout = timeout.time_since_epoch().count()} {
 #if tasks_enable_preemptive_scheduler_preview
         data_.priority = priority;
 #endif
@@ -53,7 +53,7 @@ namespace fast_task {
     void task::set_auto_bind_worker(bool enable) noexcept {
         data_.auto_bind_worker = enable;
         if (enable)
-            data_.bind_to_worker_id = -1;
+            data_.bind_to_worker_id = (uint16_t)-1;
     }
 
     void task::set_worker_id(uint16_t id) noexcept {
@@ -68,7 +68,7 @@ namespace fast_task {
     }
 
     void task::set_timeout(std::chrono::high_resolution_clock::time_point timeout) noexcept {
-        data_.timeout = timeout;
+        data_.timeout = timeout.time_since_epoch().count();
     }
 
     task_priority task::get_priority() const noexcept {
@@ -92,7 +92,7 @@ namespace fast_task {
     }
 
     std::chrono::high_resolution_clock::time_point task::get_timeout() const noexcept {
-        return data_.timeout;
+        return std::chrono::high_resolution_clock::time_point(std::chrono::high_resolution_clock::duration(data_.timeout));
     }
 
     bool task::is_cancellation_requested() const noexcept {

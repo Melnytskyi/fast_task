@@ -4,7 +4,7 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
-#include <tasks.hpp>
+#include <task.hpp>
 #include <tasks/_internal.hpp>
 
 namespace fast_task {
@@ -18,7 +18,7 @@ namespace fast_task {
     task_mutex::task_mutex() {}
 
     task_mutex::~task_mutex() {
-        if (!resume_task.empty()) {
+        if (!values.resume_task.empty()) {
             assert(false && "Tried to destroy locked mutex");
             std::terminate();
         }
@@ -34,46 +34,46 @@ namespace fast_task {
             get_data(loc.curr_task).awaked = false;
             get_data(loc.curr_task).time_end_flag = false;
 
-            fast_task::lock_guard lg(no_race);
-            if (current_task == &*loc.curr_task)
+            fast_task::lock_guard lg(values.no_race);
+            if (values.current_task == &*loc.curr_task)
                 throw std::logic_error("Tried lock mutex twice");
-            while (current_task) {
-                resume_task.emplace_back(loc.curr_task, get_data(loc.curr_task).awake_check);
-                swapCtxRelock(no_race);
+            while (values.current_task) {
+                values.resume_task.emplace_back(loc.curr_task, get_data(loc.curr_task).awake_check);
+                swapCtxRelock(values.no_race);
             }
-            current_task = &*loc.curr_task;
+            values.current_task = &*loc.curr_task;
         } else {
-            fast_task::unique_lock ul(no_race);
+            fast_task::unique_lock ul(values.no_race);
             std::shared_ptr<task> task;
 
-            if (current_task == reinterpret_cast<fast_task::task*>((size_t)_thread_id() | native_thread_flag))
+            if (values.current_task == reinterpret_cast<fast_task::task*>((size_t)_thread_id() | native_thread_flag))
                 throw std::logic_error("Tried lock mutex twice");
-            while (current_task) {
+            while (values.current_task) {
                 fast_task::condition_variable_any cd;
                 bool has_res = false;
-                resume_task.emplace_back(nullptr, 0, &cd, &has_res);
+                values.resume_task.emplace_back(nullptr, 0, &cd, &has_res);
                 while (!has_res) //-V654
                     cd.wait(ul);
             }
-            current_task = reinterpret_cast<fast_task::task*>((size_t)_thread_id() | native_thread_flag);
+            values.current_task = reinterpret_cast<fast_task::task*>((size_t)_thread_id() | native_thread_flag);
         }
     }
 
     bool task_mutex::try_lock() {
-        if (!no_race.try_lock())
+        if (!values.no_race.try_lock())
             return false;
-        fast_task::unique_lock ul(no_race, fast_task::adopt_lock);
+        fast_task::unique_lock ul(values.no_race, fast_task::adopt_lock);
 
-        if (current_task)
+        if (values.current_task)
             return false;
         else if (loc.is_task_thread || loc.context_in_swap) {
-            if (current_task == &*loc.curr_task)
+            if (values.current_task == &*loc.curr_task)
                 return false;
-            current_task = &*loc.curr_task;
+            values.current_task = &*loc.curr_task;
         } else {
-            if (current_task == reinterpret_cast<task*>((size_t)_thread_id() | native_thread_flag))
+            if (values.current_task == reinterpret_cast<task*>((size_t)_thread_id() | native_thread_flag))
                 return false;
-            current_task = reinterpret_cast<task*>((size_t)_thread_id() | native_thread_flag);
+            values.current_task = reinterpret_cast<task*>((size_t)_thread_id() | native_thread_flag);
         }
         return true;
     }
@@ -83,31 +83,31 @@ namespace fast_task {
     }
 
     bool task_mutex::try_lock_until(std::chrono::high_resolution_clock::time_point time_point) {
-        if (!no_race.try_lock_until(time_point))
+        if (!values.no_race.try_lock_until(time_point))
             return false;
-        fast_task::unique_lock ul(no_race, fast_task::adopt_lock);
+        fast_task::unique_lock ul(values.no_race, fast_task::adopt_lock);
 
         if (loc.is_task_thread && !loc.context_in_swap) {
-            if (current_task == &*loc.curr_task)
+            if (values.current_task == &*loc.curr_task)
                 return false;
-            while (current_task) {
+            while (values.current_task) {
                 fast_task::lock_guard guard(get_data(loc.curr_task).no_race);
                 makeTimeWait(time_point);
-                resume_task.emplace_back(loc.curr_task, get_data(loc.curr_task).awake_check);
-                swapCtxRelock(get_data(loc.curr_task).no_race, no_race);
+                values.resume_task.emplace_back(loc.curr_task, get_data(loc.curr_task).awake_check);
+                swapCtxRelock(get_data(loc.curr_task).no_race, values.no_race);
                 if (!get_data(loc.curr_task).awaked)
                     return false;
             }
-            current_task = &*loc.curr_task;
+            values.current_task = &*loc.curr_task;
             return true;
         } else {
-            if (current_task == reinterpret_cast<task*>((size_t)_thread_id() | native_thread_flag))
+            if (values.current_task == reinterpret_cast<task*>((size_t)_thread_id() | native_thread_flag))
                 return false;
             bool has_res;
             fast_task::condition_variable_any cd;
-            while (current_task) {
+            while (values.current_task) {
                 has_res = false;
-                auto rs_task = resume_task.emplace_back(nullptr, 0, &cd, &has_res);
+                auto rs_task = values.resume_task.emplace_back(nullptr, 0, &cd, &has_res);
                 while (!has_res) { //-V654
                     if (cd.wait_until(ul, time_point) == cv_status::timeout) {
                         rs_task.native_cv = nullptr;
@@ -116,9 +116,9 @@ namespace fast_task {
                 }
             }
             if (!loc.context_in_swap)
-                current_task = reinterpret_cast<task*>((size_t)_thread_id() | native_thread_flag);
+                values.current_task = reinterpret_cast<task*>((size_t)_thread_id() | native_thread_flag);
             else
-                current_task = &*loc.curr_task;
+                values.current_task = &*loc.curr_task;
             return true;
         }
     }
@@ -129,17 +129,17 @@ namespace fast_task {
 #endif
 
     void task_mutex::unlock() {
-        fast_task::lock_guard lg0(no_race);
+        fast_task::lock_guard lg0(values.no_race);
         if (loc.is_task_thread) {
-            if (current_task != &*loc.curr_task)
+            if (values.current_task != &*loc.curr_task)
                 throw std::logic_error("Tried unlock non owned mutex");
-        } else if (current_task != reinterpret_cast<task*>((size_t)_thread_id() | native_thread_flag))
+        } else if (values.current_task != reinterpret_cast<task*>((size_t)_thread_id() | native_thread_flag))
             throw std::logic_error("Tried unlock non owned mutex");
 
-        current_task = nullptr;
-        while (resume_task.size()) {
-            auto [it, awake_check, native_cv, native_flag] = resume_task.front();
-            resume_task.pop_front();
+        values.current_task = nullptr;
+        while (values.resume_task.size()) {
+            auto [it, awake_check, native_cv, native_flag] = values.resume_task.front();
+            values.resume_task.pop_front();
             if (it == nullptr) {
                 if (native_cv != nullptr) {
                     *native_flag = true;
@@ -168,11 +168,11 @@ namespace fast_task {
     }
 
     bool task_mutex::is_own() {
-        fast_task::lock_guard lg0(no_race);
+        fast_task::lock_guard lg0(values.no_race);
         if (loc.is_task_thread) {
-            if (current_task != &*loc.curr_task)
+            if (values.current_task != &*loc.curr_task)
                 return false;
-        } else if (current_task != reinterpret_cast<task*>((size_t)_thread_id() | native_thread_flag))
+        } else if (values.current_task != reinterpret_cast<task*>((size_t)_thread_id() | native_thread_flag))
             return false;
         return true;
     }

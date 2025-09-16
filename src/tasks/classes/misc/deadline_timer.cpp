@@ -1,19 +1,51 @@
 
-#include <tasks.hpp>
+#include <task.hpp>
 #include <tasks/_internal.hpp>
 #include <unordered_set>
 
 namespace fast_task {
 
     struct deadline_timer::handle {
+        std::atomic_size_t usage_count{1}; // The reference counter
         task_mutex no_race;
         std::chrono::high_resolution_clock::time_point time_point;
         std::unordered_set<void*> canceled_tasks;
         std::list<void*> scheduled_tasks;
         bool shutdown = false;
+
+        static handle* create() {
+            return new handle{};
+        }
+
+        handle* acquire() {
+            usage_count.fetch_add(1, std::memory_order_relaxed);
+            return this;
+        }
+
+        void release() {
+            if (usage_count.fetch_sub(1, std::memory_order_release) == 1) {
+                std::atomic_thread_fence(std::memory_order_acquire);
+                delete this;
+            }
+        }
     };
 
-    deadline_timer::deadline_timer() : hh(std::make_shared<handle>()) {}
+    template <class T>
+    struct holder {
+        T* res;
+
+        holder(T* res) : res(res->acquire()) {}
+
+        ~holder() {
+            res->release();
+        }
+
+        T* operator->() {
+            return res;
+        }
+    };
+
+    deadline_timer::deadline_timer() : hh(handle::create()) {}
 
     deadline_timer::deadline_timer(std::chrono::high_resolution_clock::duration dur) : deadline_timer() {
         expires_from_now(dur);
@@ -69,7 +101,7 @@ namespace fast_task {
         else {
             hh->scheduled_tasks.push_back(t.get());
             scheduler::schedule_until(
-                std::make_shared<task>([hh = hh, t, timeout_time = hh->time_point]() mutable {
+                std::make_shared<task>([hh = holder(hh), t, timeout_time = hh->time_point]() mutable {
                     fast_task::unique_lock lock(hh->no_race);
                     auto& ct = hh->canceled_tasks;
                     if (ct.find(t.get()) == ct.end()) {
@@ -92,7 +124,7 @@ namespace fast_task {
             callback(status::timeouted);
         else {
             scheduler::schedule_until(
-                std::make_shared<task>([hh = hh, callback = std::move(callback), timeout_time = hh->time_point]() mutable {
+                std::make_shared<task>([hh = holder(hh), callback = std::move(callback), timeout_time = hh->time_point]() mutable {
                     if (hh->shutdown){
                         callback(status::shutdown);
                         return;

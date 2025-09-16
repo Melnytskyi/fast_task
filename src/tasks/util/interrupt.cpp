@@ -163,8 +163,8 @@ namespace fast_task::interrupt {
         auto cur_id = fast_task::this_thread::get_id();
         std::erase_if(
             fast_task::interrupt::timer.handle->await_timers,
-            [cur_id](fast_task::interrupt::timer_handle* timer) {
-                return timer->thread_id == cur_id;
+            [cur_id](fast_task::interrupt::timer_handle* _timer) {
+                return _timer->thread_id == cur_id;
             }
         );
     }
@@ -192,29 +192,3 @@ namespace fast_task::interrupt {
 }
 
 #endif
-
-void* operator new(std::size_t n) noexcept(false) {
-    fast_task::interrupt::interrupt_unsafe_region region;
-    void* ptr = malloc(n);
-    if (ptr == nullptr)
-        throw std::bad_alloc();
-    return ptr;
-}
-
-void operator delete(void* p) noexcept {
-    fast_task::interrupt::interrupt_unsafe_region region;
-    free(p);
-}
-
-void* operator new[](std::size_t s) noexcept(false) {
-    fast_task::interrupt::interrupt_unsafe_region region;
-    void* ptr = malloc(s);
-    if (ptr == nullptr)
-        throw std::bad_alloc();
-    return ptr;
-}
-
-void operator delete[](void* p) noexcept {
-    fast_task::interrupt::interrupt_unsafe_region region;
-    free(p);
-}

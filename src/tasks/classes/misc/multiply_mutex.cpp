@@ -4,21 +4,21 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
-#include <tasks.hpp>
+#include <task.hpp>
 
 namespace fast_task {
     multiply_mutex::multiply_mutex(const std::initializer_list<mutex_unify>& muts)
-        : mu(muts) {}
+        : value{muts} {}
 
     void multiply_mutex::lock() {
-        for (auto& mut : mu)
+        for (auto& mut : value.mu)
             mut.lock();
     }
 
     bool multiply_mutex::try_lock() {
         std::vector<mutex_unify> locked;
-        locked.reserve(mu.size());
-        for (auto& mut : mu) {
+        locked.reserve(value.mu.size());
+        for (auto& mut : value.mu) {
             if (mut.try_lock())
                 locked.push_back(mut);
             else
@@ -36,7 +36,7 @@ namespace fast_task {
 
     bool multiply_mutex::try_lock_for(size_t milliseconds) {
         std::vector<mutex_unify> locked;
-        for (auto& mut : mu) {
+        for (auto& mut : value.mu) {
             if (mut.try_lock_for(milliseconds))
                 locked.push_back(mut);
             else
@@ -54,7 +54,7 @@ namespace fast_task {
 
     bool multiply_mutex::try_lock_until(std::chrono::high_resolution_clock::time_point time_point) {
         std::vector<mutex_unify> locked;
-        for (auto& mut : mu) {
+        for (auto& mut : value.mu) {
             if (mut.try_lock_until(time_point))
                 locked.push_back(mut);
             else
@@ -71,9 +71,9 @@ namespace fast_task {
     }
 
     void multiply_mutex::unlock() {
-        size_t i = mu.size();
+        size_t i = value.mu.size();
         while (i != 0) {
-            mu[i - 1].unlock();
+            value.mu[i - 1].unlock();
             --i;
         }
     }

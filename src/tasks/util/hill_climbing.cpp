@@ -13,10 +13,10 @@
 #include <tasks/util/cpu_usage.hpp>
 
 namespace fast_task::util {
-    std::complex<double> hill_climb::get_wave_component(std::vector<double>& samples, uint32_t num_samples, double period) {
+    std::complex<double> hill_climb::get_wave_component(std::vector<double>& new_samples, size_t num_samples, double period) {
         assert(num_samples >= period);         // can't measure a wave that doesn't fit
         assert(period >= 2);                   // can't measure above the Nyquist frequency
-        assert(num_samples <= samples.size()); // can't measure more samples than we have
+        assert(num_samples <= new_samples.size()); // can't measure more samples than we have
         //
         // Calculate the sinusoid with the given period
         // Goertzel algorithm http://en.wikipedia.org/wiki/Goertzel_algorithm
@@ -25,12 +25,12 @@ namespace fast_task::util {
         double cos = std::cos(w);
         double coeff = 2 * cos;
         double q0, q1 = 0, q2 = 0;
-        for (uint32_t i = 0; i < num_samples; ++i) {
-            q0 = coeff * q1 - q2 + samples[(total_samples - num_samples + i) % samples_to_measure];
+        for (size_t i = 0; i < num_samples; ++i) {
+            q0 = coeff * q1 - q2 + new_samples[(total_samples - num_samples + i) % samples_to_measure];
             q2 = q1;
             q1 = q0;
         }
-        return std::complex<double>(q1 - q2 * cos, q2 * std::sin(w)) /= num_samples;
+        return std::complex<double>(q1 - q2 * cos, q2 * std::sin(w)) /= (double)num_samples;
     }
 
     void hill_climb::set_thread_count(uint32_t thread_count) {
@@ -99,7 +99,7 @@ namespace fast_task::util {
         //
         double throughput = num_completions / sample_duration_seconds;
 
-        uint32_t sample_index = (uint32_t)(total_samples % samples_to_measure);
+        size_t sample_index = total_samples % samples_to_measure;
         samples[sample_index] = throughput;
         thread_counts[sample_index] = current_thread_count;
         total_samples++;
@@ -118,8 +118,8 @@ namespace fast_task::util {
         // multiple of the primary wave's period; otherwise the frequency we're looking for will fall between two  frequency bands
         // in the fourier analysis, and we won't be able to measure it accurately.
         //
-        uint32_t sample_count =
-            std::min(total_samples - 1, (uint64_t)samples_to_measure) / wave_period * wave_period;
+        size_t sample_count =
+            std::min(total_samples - 1, samples_to_measure) / size_t(wave_period) * wave_period;
 
         if (sample_count > wave_period) {
             //
@@ -148,13 +148,13 @@ namespace fast_task::util {
                 // frequency band we're really interested in) is the average of the adjacent bands.
                 //
                 throughput_wave_component =
-                    get_wave_component(samples, sample_count, wave_period) / average_throughput;
+                    get_wave_component(samples, sample_count, (double)wave_period) / average_throughput;
                 throughput_error_estimate =
-                    std::abs(get_wave_component(samples, sample_count, adjacent_period1) / average_throughput);
+                    std::abs(get_wave_component(samples, sample_count, (double)adjacent_period1) / average_throughput);
                 if (adjacent_period2 <= sample_count) {
                     throughput_error_estimate = std::max(
                         throughput_error_estimate,
-                        std::abs(get_wave_component(samples, sample_count, adjacent_period2) / average_throughput)
+                        std::abs(get_wave_component(samples, sample_count, (double)adjacent_period2) / average_throughput)
                     );
                 }
 
@@ -163,7 +163,7 @@ namespace fast_task::util {
                 // noise, because there is none; these are exact measurements.
                 //
                 thread_wave_component =
-                    get_wave_component(thread_counts, sample_count, wave_period) / average_thread_count;
+                    get_wave_component(thread_counts, sample_count, (double)wave_period) / average_thread_count;
 
                 //
                 // update our moving average of the throughput noise.  we'll use this later as feedback to

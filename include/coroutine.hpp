@@ -1,14 +1,21 @@
+// Copyright Danyil Melnytskyi 2025-Present
+//
+// Distributed under the Boost Software License, Version 1.0.
+// (See accompanying file LICENSE or copy at
+// http://www.boost.org/LICENSE_1_0.txt)
+
 #ifndef FAST_TASK_COROUTINE
 #define FAST_TASK_COROUTINE
-#include "tasks.hpp"
+#include "shared.hpp"
+#include "task.hpp"
 #include <coroutine>
 #include <exception>
 #include <type_traits>
 #include <variant>
 
 namespace fast_task {
-    struct promise_base {
-        struct initial_start {
+    struct FT_API promise_base {
+        struct FT_API initial_start {
             bool await_ready() const noexcept {
                 return false;
             }
@@ -96,7 +103,7 @@ namespace fast_task {
         }
 
     private:
-        struct no_result {};
+        struct FT_API no_result {};
 
         std::variant<T, std::exception_ptr, no_result> results = no_result{};
     };
@@ -135,13 +142,13 @@ namespace fast_task {
         }
 
     private:
-        struct no_result {};
+        struct FT_API no_result {};
 
         std::variant<T, std::exception_ptr, no_result> results = no_result{};
     };
 
     template <>
-    struct coro_promise<void> final : public promise_base {
+    struct FT_API coro_promise<void> final : public promise_base {
         coro_promise() noexcept {}
 
         ~coro_promise() {}
@@ -172,9 +179,9 @@ namespace fast_task {
         }
 
     private:
-        struct has_result {};
+        struct FT_API has_result {};
 
-        struct no_result {};
+        struct FT_API no_result {};
 
         std::variant<has_result, std::exception_ptr, no_result> results = no_result{};
     };
@@ -215,7 +222,7 @@ namespace fast_task {
         }
 
         auto operator co_await() const& noexcept {
-            struct aw : awaitable {
+            struct FT_API aw : awaitable {
                 using awaitable::awaitable;
 
                 decltype(auto) await_resume() {
@@ -229,7 +236,7 @@ namespace fast_task {
         }
 
         auto operator co_await() const&& noexcept {
-            struct aw : awaitable {
+            struct FT_API aw : awaitable {
                 using awaitable::awaitable;
 
                 decltype(auto) await_resume() {
@@ -243,7 +250,7 @@ namespace fast_task {
         }
 
         auto when_ready() const noexcept {
-            struct aw : awaitable {
+            struct FT_API aw : awaitable {
                 using awaitable::awaitable;
 
                 void await_resume() const noexcept {}
@@ -256,7 +263,7 @@ namespace fast_task {
     private:
         std::coroutine_handle<promise_type> v_coroutine;
 
-        struct awaitable {
+        struct FT_API awaitable {
             std::coroutine_handle<promise_type> v_coroutine;
 
             awaitable(std::coroutine_handle<promise_type> coro) noexcept : v_coroutine(coro) {}
@@ -272,27 +279,27 @@ namespace fast_task {
     };
 
     template <class T>
-    coroutine<T> coro_promise<T>::get_return_object() noexcept {
+    inline coroutine<T> coro_promise<T>::get_return_object() noexcept {
         return coroutine<T>{
             std::coroutine_handle<coro_promise>::from_promise(*this)
         };
     }
 
     template <class T>
-    coroutine<T&> coro_promise<T&>::get_return_object() noexcept {
+    inline coroutine<T&> coro_promise<T&>::get_return_object() noexcept {
         return coroutine<T&>{
             std::coroutine_handle<coro_promise>::from_promise(*this)
         };
     }
 
-    inline coroutine<void> coro_promise<void>::get_return_object() noexcept {
+    inline FT_API coroutine<void> coro_promise<void>::get_return_object() noexcept {
         return coroutine<void>{
             std::coroutine_handle<coro_promise<void>>::from_promise(*this)
         };
     }
 
-    auto co_switch() {
-        struct switch_to_fast_task {
+    inline auto co_switch() {
+        struct FT_API switch_to_fast_task {
             bool await_ready() const noexcept {
                 return false;
             }
@@ -310,7 +317,7 @@ namespace fast_task {
     }
 
     template <class T>
-    T wait_for_coroutine_sync(coroutine<T> (*coro_fn)()) {
+    inline T wait_for_coroutine_sync(coroutine<T> (*coro_fn)()) {
         task_condition_variable cv;
         std::exception_ptr ex;
         task_mutex mt;
@@ -334,4 +341,4 @@ namespace fast_task {
     }
 }
 
-#endif /* FAST_TASK_COROUTINE */
+#endif

@@ -4,7 +4,7 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
-#include <tasks.hpp>
+#include <task.hpp>
 #include <tasks/_internal.hpp>
 #include <tasks/util/interrupt.hpp>
 #include <tasks/util/light_stack.hpp>
@@ -126,10 +126,10 @@ namespace fast_task {
             loc.context_in_swap = false;
             if (get_data(loc.curr_task).invalid_switch_caught) {
                 get_data(loc.curr_task).invalid_switch_caught = false;
-                throw std::runtime_error("Caught task that switched context but not scheduled or finalized self");
+                throw invalid_switch();
             }
         } else
-            throw std::runtime_error("swapCtx() not allowed to call in non-task thread or in dispatcher");
+            throw invalid_context();
         timer_reinit();
     }
 
@@ -274,7 +274,7 @@ namespace fast_task {
                         return;
                     }
                 }
-                throw std::runtime_error("No binded workers available");
+                throw no_assignable_workers();
             }
         }
         transfer_task(task);
@@ -545,7 +545,7 @@ namespace fast_task {
             }
             guard.unlock();
             if (!cached_wake_ups.empty() || !cached_cold.empty()) {
-                fast_task::lock_guard guard(glob.task_thread_safety);
+                fast_task::lock_guard _guard(glob.task_thread_safety);
                 if (!cached_wake_ups.empty())
                     while (!cached_wake_ups.empty()) {
                         glob.tasks.push(std::move(cached_wake_ups.back()));
@@ -593,12 +593,12 @@ namespace fast_task {
         while (it != end) {
             if (it->wait_timepoint >= t) {
                 queue.emplace(it, timing(t, task, get_data(task).awake_check));
-                i = -1;
+                i = (size_t)-1;
                 break;
             }
             ++it;
         }
-        if (i != -1)
+        if (i != (size_t)-1)
             queue.emplace_back(timing(t, task, get_data(task).awake_check));
     }
 

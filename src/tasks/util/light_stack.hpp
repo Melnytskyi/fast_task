@@ -7,13 +7,13 @@
 #pragma once
 #ifndef FAST_TASK_LIGHT_STACK
     #define FAST_TASK_LIGHT_STACK
-
     #include <boost/context/fiber.hpp>
     #include <boost/context/stack_context.hpp>
     #include <boost/context/stack_traits.hpp>
+    #include <shared.hpp>
 
 namespace fast_task {
-    struct light_stack {
+    struct FT_API_LOCAL light_stack {
         typedef boost::context::stack_traits traits_type;
         typedef boost::context::stack_context stack_context;
 

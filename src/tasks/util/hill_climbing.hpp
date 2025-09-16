@@ -9,12 +9,13 @@
 #include <tuple>
 #include <vector>
 
+#include <shared.hpp>
 #include <tasks/util/cpu_usage.hpp>
 
 namespace fast_task::util {
-    class hill_climb {
-        /*const*/ uint32_t wave_period;
-        /*const*/ uint32_t samples_to_measure;
+    class FT_API_LOCAL hill_climb {
+        /*const*/ size_t wave_period;
+        /*const*/ size_t samples_to_measure;
         /*const*/ double target_throughput_ratio;
         /*const*/ double target_signal_to_noise_ratio;
         /*const*/ double max_change_per_second;
@@ -28,7 +29,7 @@ namespace fast_task::util {
         /*const*/ double max_sample_error;
 
         double current_control_setting = 0;
-        uint64_t total_samples = 0;
+        size_t total_samples = 0;
         uint32_t last_thread_count = 0;
         double average_throughput_noise = 0;
         double seconds_elapsed_since_last_change = 0;
@@ -41,7 +42,7 @@ namespace fast_task::util {
 
         std::mt19937 _random_interval_generator;
         util::cpu::usage_prev_stat prev_stat;
-        std::complex<double> get_wave_component(std::vector<double>& samples, uint32_t num_samples, double period);
+        std::complex<double> get_wave_component(std::vector<double>& samples, size_t num_samples, double period);
         void set_thread_count(uint32_t thread_count);
 
     public:

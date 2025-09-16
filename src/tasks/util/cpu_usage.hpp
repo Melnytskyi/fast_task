@@ -7,15 +7,17 @@
 #ifndef FAST_TASK_CPU_USAGE
 #define FAST_TASK_CPU_USAGE
 #include <cstdint>
+#include <shared.hpp>
+
 
 namespace fast_task::util::cpu {
-    struct usage_prev_stat {
+    struct FT_API_LOCAL usage_prev_stat {
         uint64_t total_ticks = 0;
         uint64_t idle_ticks = 0;
     };
 
-    double get_usage(usage_prev_stat& prev_stat);
-    double get_usage_percents(usage_prev_stat& prev_stat);
+    double FT_API_LOCAL get_usage(usage_prev_stat& prev_stat);
+    double FT_API_LOCAL get_usage_percents(usage_prev_stat& prev_stat);
 }
 
 

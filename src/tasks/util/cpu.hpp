@@ -7,7 +7,7 @@
  *   details, see the Creative Commons Zero 1.0 Universal license at
  *   https://creativecommons.org/publicdomain/zero/1.0/
  */
-
+#include <shared.hpp>
 #if !defined(PSNIP_CPU__H)
     #define PSNIP_CPU__H
 
@@ -179,9 +179,9 @@ enum PSnipCPUFeature {
     PSNIP_CPU_FEATURE_ARM_CRC32 = PSNIP_CPU_FEATURE_ARM | 0x0100 | 5
 };
 
-int psnip_cpu_count(void);
-int psnip_cpu_feature_check(enum PSnipCPUFeature feature);
-int psnip_cpu_feature_check_many(enum PSnipCPUFeature* feature);
+int FT_API_LOCAL psnip_cpu_count(void);
+int FT_API_LOCAL psnip_cpu_feature_check(enum PSnipCPUFeature feature);
+int FT_API_LOCAL psnip_cpu_feature_check_many(enum PSnipCPUFeature* feature);
 
     #if defined(__cplusplus)
 }

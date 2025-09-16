@@ -4,7 +4,7 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
-#include <tasks.hpp>
+#include <task.hpp>
 #include <tasks/_internal.hpp>
 
 namespace fast_task::this_task {
@@ -34,7 +34,7 @@ namespace fast_task::this_task {
                 loc.curr_task->notify_cancel();
             throw task_cancellation();
         } else
-            throw std::runtime_error("Thread attempted cancel self, like task");
+            throw invalid_context();
     }
 
     void the_coroutine_ended() noexcept {
