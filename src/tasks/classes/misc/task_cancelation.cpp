@@ -4,17 +4,18 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
+#include <interput.hpp>
 #include <task.hpp>
 #include <tasks/_internal.hpp>
 #include <tasks/util/interrupt.hpp>
 
 namespace fast_task {
     task_cancellation::task_cancellation() {
-        interrupt::interrupt_unsafe_region::lock();
+        interrupt_unsafe_region::lock();
     }
 
     task_cancellation::~task_cancellation() {
-        interrupt::interrupt_unsafe_region::unlock();
+        interrupt_unsafe_region::unlock();
         assert(in_landing);
     }
 

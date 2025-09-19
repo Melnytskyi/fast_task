@@ -15,7 +15,7 @@ namespace fast_task {
 
     static constexpr inline allocator_tag at{};
 
-    FT_API void* allocate(size_t bytes);
+    FT_API void* allocate(std::size_t bytes);
     FT_API void free(void* p);
 
     template <class T>
@@ -27,7 +27,6 @@ namespace fast_task {
 
         using propagate_on_container_copy_assignment = std::false_type;
         using propagate_on_container_move_assignment = std::false_type;
-        using propagate_on_container_copy_assignment = std::false_type;
         using propagate_on_container_swap = std::false_type;
 
         allocator() noexcept = default;
@@ -38,7 +37,7 @@ namespace fast_task {
             return (T*)fast_task::allocate(n * sizeof(T));
         }
 
-        [[nodiscard]] T* deallocate(T* p, size_type n) {
+        [[nodiscard]] T* deallocate(T* p, size_type _) {
             return fast_task::free(p);
         }
     };

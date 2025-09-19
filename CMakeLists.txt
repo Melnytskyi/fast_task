@@ -40,8 +40,8 @@ target_include_directories(fast_task PUBLIC
 target_compile_definitions(fast_task PRIVATE ENABLE_BOOST_PREPROCESSOR ON)
 if(MSVC)
 else()
-  target_compile_definitions(fast_task Boost_USE_STATIC_LIBS ${FAST_TASK_STATIC})
-  target_compile_definitions(fast_task Boost_USE_STATIC_RUNTIME ${FAST_TASK_STATIC})
+  target_compile_definitions(fast_task PRIVATE Boost_USE_STATIC_LIBS ${FAST_TASK_STATIC})
+  target_compile_definitions(fast_task PRIVATE Boost_USE_STATIC_RUNTIME ${FAST_TASK_STATIC})
 endif()
 
 find_package(Boost REQUIRED COMPONENTS context)
@@ -70,6 +70,11 @@ if(MSVC)
 
   target_compile_options(fast_task PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/permissive->)
 else()
+  find_package(PkgConfig REQUIRED)
+  pkg_check_modules(LIBURING REQUIRED IMPORTED_TARGET liburing)
+  target_include_directories(fast_task PRIVATE ${LIBURING_INCLUDE_DIRS})
+
+  target_link_libraries(fast_task PRIVATE PkgConfig::LIBURING)
   target_compile_options(fast_task PUBLIC -m64)
   target_compile_options(fast_task PRIVATE -g)
   target_compile_options(fast_task PRIVATE -Wall)

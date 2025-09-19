@@ -521,7 +521,7 @@ namespace fast_task {
                         new_future->result = std::make_optional<Ret>(fn(std::move(a)));
                 } catch (...) {
                     fast_task::lock_guard guard(new_future->task_mt);
-                    future_->ex_ptr = std::current_exception();
+                    new_future->ex_ptr = new auto(std::current_exception());
                     new_future->_is_ready = true;
                     new_future->task_cv.notify_all();
                     return;
@@ -544,7 +544,7 @@ namespace fast_task {
                         new_future->result = std::make_optional<Ret>(fn());
                 } catch (...) {
                     fast_task::lock_guard guard(new_future->task_mt);
-                    future_->ex_ptr = std::current_exception();
+                    new_future->ex_ptr = new auto(std::current_exception());
                     new_future->_is_ready = true;
                     new_future->task_cv.notify_all();
                     return;

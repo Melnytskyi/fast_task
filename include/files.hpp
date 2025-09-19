@@ -185,7 +185,6 @@ namespace fast_task {
 
         template <bool _mock>
         struct __force_static_iofstream {
-
             inline static open_mode to_open_mode(std::ios_base::openmode mode) {
                 if (mode & std::ios_base::in) {
                     return open_mode::read;
@@ -214,6 +213,7 @@ namespace fast_task {
                 }
             }
 
+#if _WIN64
             inline static share_mode to_protection_mode(std::ios_base::openmode op_mod, int mode) {
                 share_mode protection_mode;
                 if (mode & _SH_DENYRW) {
@@ -241,6 +241,17 @@ namespace fast_task {
                 return protection_mode;
             }
 
+            static constexpr inline auto default_prot = std::ios_base::_Default_open_prot;
+#else
+            inline static share_mode to_protection_mode(std::ios_base::openmode op_mod, [[maybe_unused]] int mode) {
+                share_mode protection_mode;
+                protection_mode.read = bool(op_mod & std::ios_base::in);
+                protection_mode.write = false;
+                return protection_mode;
+            }
+
+            static constexpr inline auto default_prot = 0;
+#endif
             inline static _sync_flags to_flags(std::ios_base::openmode op_mod) {
                 _sync_flags flags{};
                 if (op_mod & std::ios_base::ate)
@@ -377,35 +388,35 @@ namespace fast_task {
                 explicit async_iofstream(
                     const char* str,
                     ios_base::openmode mode = ios_base::in,
-                    int prot = ios_base::_Default_open_prot
+                    int prot = default_prot
                 )
                     : async_iofstream(std::filesystem::path(str), mode, prot) {}
 
                 explicit async_iofstream(
                     const std::string& str,
                     ios_base::openmode mode = ios_base::in,
-                    int prot = ios_base::_Default_open_prot
+                    int prot = default_prot
                 )
                     : async_iofstream(std::filesystem::path(str), mode, prot) {}
 
                 explicit async_iofstream(
                     const wchar_t* str,
                     ios_base::openmode mode = ios_base::in,
-                    int prot = ios_base::_Default_open_prot
+                    int prot = default_prot
                 )
                     : async_iofstream(std::filesystem::path(str), mode, prot) {}
 
                 explicit async_iofstream(
                     const std::wstring& str,
                     ios_base::openmode mode = ios_base::in,
-                    int prot = ios_base::_Default_open_prot
+                    int prot = default_prot
                 )
                     : async_iofstream(std::filesystem::path(str), mode, prot) {}
 
                 explicit async_iofstream(
                     const std::filesystem::path& path,
                     ios_base::openmode mode = ios_base::in | ios_base::out,
-                    int prot = ios_base::_Default_open_prot
+                    int prot = default_prot
                 ) : std::iostream(nullptr), handle(file_handle::open(path.string(), to_open_mode(mode), to_open_action(mode), to_flags(mode), to_protection_mode(mode, prot))) {
                     if (handle.is_open()) {
                         set_rdbuf(new async_filebuf(handle));

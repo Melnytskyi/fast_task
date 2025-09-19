@@ -76,8 +76,7 @@ namespace fast_task {
     struct FT_API_LOCAL executors_local {
         std::exception_ptr ex_ptr;
         std::shared_ptr<task> curr_task = nullptr;
-        boost::context::continuation* stack_current_context = nullptr;
-        void* current_context = nullptr;
+        boost::context::continuation scheduler_fiber;
         bool is_task_thread : 1 = false;
         bool context_in_swap : 1 = false;
     };

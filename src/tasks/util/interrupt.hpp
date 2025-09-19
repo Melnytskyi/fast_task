@@ -6,18 +6,11 @@
 
 #ifndef FAST_TASK_INTERRUPT
 #define FAST_TASK_INTERRUPT
+#include <interput.hpp>
 #include <shared.hpp>
 //Virtualized signals for windows and proxy for posix signals
 //  implements only timer signals
 namespace fast_task::interrupt {
-    struct FT_API_LOCAL interrupt_unsafe_region {
-        interrupt_unsafe_region();
-        ~interrupt_unsafe_region();
-        static void lock();
-        static void unlock();
-        static size_t lock_swap(size_t);
-    };
-
     struct FT_API_LOCAL timeval {
         long tv_sec;
         long tv_usec;

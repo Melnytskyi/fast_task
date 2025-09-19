@@ -245,7 +245,7 @@ namespace fast_task {
         type = mutex_unify_type::mmut;
     }
 
-    mutex_unify::mutex_unify(nullptr_t) {
+    mutex_unify::mutex_unify(std::nullptr_t) {
         type = mutex_unify_type::noting;
     }
 
@@ -319,7 +319,7 @@ namespace fast_task {
         return *this;
     }
 
-    mutex_unify& mutex_unify::operator=(nullptr_t) {
+    mutex_unify& mutex_unify::operator=(std::nullptr_t) {
         type = mutex_unify_type::noting;
         return *this;
     }
@@ -372,7 +372,7 @@ namespace fast_task {
         return (void*)nmut == (void*)std::addressof(mut);
     }
 
-    bool mutex_unify::operator==(nullptr_t) {
+    bool mutex_unify::operator==(std::nullptr_t) {
         return (void*)nmut == nullptr;
     }
 

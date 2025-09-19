@@ -9,6 +9,7 @@
 #include "shared.hpp"
 #include <atomic>
 #include <chrono>
+#include <functional>
 #include <tuple>
 #include <type_traits>
 

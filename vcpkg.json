@@ -4,6 +4,10 @@
     "version": "0.1.0",
     "dependencies": [
         "boost-context",
-        "boost-lockfree"
+        "boost-lockfree",
+        {
+            "name": "liburing",
+            "platform": "linux"
+        }
     ]
 }

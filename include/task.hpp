@@ -205,7 +205,7 @@ namespace fast_task {
         mutex_unify(task_rw_mutex& smut, bool read_write = true);
         mutex_unify(task_recursive_mutex& smut);
         mutex_unify(class multiply_mutex& mmut);
-        mutex_unify(nullptr_t);
+        mutex_unify(std::nullptr_t);
 
         ~mutex_unify();
 
@@ -220,7 +220,7 @@ namespace fast_task {
         mutex_unify& operator=(task_mutex&);
         mutex_unify& operator=(task_recursive_mutex&);
         mutex_unify& operator=(class multiply_mutex&);
-        mutex_unify& operator=(nullptr_t);
+        mutex_unify& operator=(std::nullptr_t);
 
         bool operator==(const mutex_unify&);
         bool operator==(std::mutex&);
@@ -234,7 +234,7 @@ namespace fast_task {
         bool operator==(task_rw_mutex&);
         bool operator==(task_recursive_mutex&);
         bool operator==(class multiply_mutex&);
-        bool operator==(nullptr_t);
+        bool operator==(std::nullptr_t);
 
         void lock();
         bool try_lock();

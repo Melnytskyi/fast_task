@@ -16,11 +16,12 @@ namespace fast_task::interrupt {
 
     struct timer_handle {
         void (*interrupt)() = nullptr;
-        itimerval timer_value = {0};
+        itimerval timer_value = {};
         void* timer_handle_ = nullptr;
         thread::id thread_id;
         std::atomic_size_t guard_zones = 0;
         bool enabled_timers = true;
+        bool initialized = false; //used in linux
         std::shared_ptr<handle> handle;
 
         timer_handle();
@@ -31,7 +32,9 @@ namespace fast_task::interrupt {
     };
 
     thread_local timer_handle timer;
+}
 
+namespace fast_task {
     interrupt_unsafe_region::interrupt_unsafe_region() {
         lock();
     }
@@ -41,15 +44,15 @@ namespace fast_task::interrupt {
     }
 
     size_t interrupt_unsafe_region::lock_swap(size_t other) {
-        return timer.guard_zones.exchange(other);
+        return interrupt::timer.guard_zones.exchange(other);
     }
 
     void interrupt_unsafe_region::lock() {
-        timer.guard_zones++;
+        interrupt::timer.guard_zones++;
     }
 
     void interrupt_unsafe_region::unlock() {
-        timer.guard_zones--;
+        interrupt::timer.guard_zones--;
     }
 }
 
@@ -114,6 +117,7 @@ namespace fast_task::interrupt {
     }
 
     bool timer_callback(void (*interrupter)()) {
+        interrupt_unsafe_region guard;
         timer.interrupt = interrupter;
         return true;
     }
@@ -172,23 +176,85 @@ namespace fast_task::interrupt {
 
 #else
     #include <signal.h>
-    #include <sys/time.h>
+    #include <sys/syscall.h>
+    #include <time.h>
+    #include <unistd.h>
 
 namespace fast_task::interrupt {
-    void install_on_stack() {
+    void uninstall_timer_handle_local() {
+        fast_task::interrupt::stop_timer();
     }
 
-    void init_signals_handler() {}
+    #define PREEMPTION_SIGNAL (SIGRTMIN + 5)
+
+    struct handle {
+        timer_t timerid;
+    };
+
+    std::shared_ptr<handle> global = std::make_shared<handle>();
+
+    timer_handle::timer_handle() : handle(global) {}
+
+    void posix_signal_handler([[maybe_unused]] int signum) {
+        if (timer.guard_zones == 0)
+            timer.interrupt();
+    }
+
+    void setup_signal_handler() {
+        struct sigaction sa;
+        std::memset(&sa, 0, sizeof(sa));
+        sa.sa_handler = posix_signal_handler;
+        sa.sa_flags = SA_RESTART;
+        sigemptyset(&sa.sa_mask);
+        sigaction(PREEMPTION_SIGNAL, &sa, NULL);
+    }
+
+    auto signal_handler_setup_once = std::once_flag{};
 
     bool timer_callback(void (*interrupter)()) {
-        return false;
+        interrupt_unsafe_region guard;
+        timer.interrupt = interrupter;
+        return true;
     }
 
     bool setitimer(const struct itimerval* new_value, struct itimerval* old_value) {
-        return false;
+        interrupt_unsafe_region guard;
+        std::call_once(signal_handler_setup_once, setup_signal_handler);
+
+        if (old_value)
+            *old_value = timer.timer_value;
+        timer.timer_value = *new_value;
+        if (!timer.initialized) {
+            struct sigevent sev;
+            std::memset(&sev, 0, sizeof(sev));
+            sev.sigev_notify = SIGEV_THREAD_ID;
+            sev.sigev_signo = PREEMPTION_SIGNAL;
+            sev._sigev_un._tid = syscall(SYS_gettid);
+            if (timer_create(CLOCK_REALTIME, &sev, &timer.handle->timerid) == -1)
+                return false;
+            timer.initialized = true;
+        }
+
+        if (!new_value) {
+            stop_timer();
+            return true;
+        }
+
+        struct itimerspec its;
+        its.it_value.tv_sec = new_value->it_value.tv_sec;
+        its.it_value.tv_nsec = new_value->it_value.tv_usec * 1000;
+        its.it_interval.tv_sec = new_value->it_interval.tv_sec;
+        its.it_interval.tv_nsec = new_value->it_interval.tv_usec * 1000;
+        return timer_settime(timer.handle->timerid, 0, &its, NULL) != -1;
     }
 
-    void stop_timer() {}
+    void stop_timer() {
+        interrupt_unsafe_region guard;
+        if (timer.initialized) {
+            struct itimerspec its;
+            std::memset(&its, 0, sizeof(its));
+            timer_settime(timer.handle->timerid, 0, &its, NULL);
+        }
+    }
 }
-
 #endif

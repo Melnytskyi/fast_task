@@ -10,6 +10,7 @@
     #define FAST_TASK_NATIVE_WORKERS_SINGLETON
 
     #include <chrono>
+    #include <cstring>
     #include <list>
     #include <mutex>
     #include <shared.hpp>
@@ -153,9 +154,9 @@ namespace fast_task::util {
 
         native_workers_singleton() {
             struct io_uring_params params;
-            memset(&params, 0, sizeof(params));
+            std::memset(&params, 0, sizeof(params));
 
-            if (int res = io_uring_queue_init_params(1024, &m_ring, &params); res < 0) 
+            if (int res = io_uring_queue_init_params(1024, &m_ring, &params); res < 0)
                 throw std::runtime_error("io_uring_queue_init_params failed with the error");
             auto* probe = io_uring_get_probe_ring(&m_ring);
             for (int i = 0; i < probe->ops_len && i < IORING_OP_LAST; ++i) {
@@ -166,7 +167,7 @@ namespace fast_task::util {
             fast_task::thread(&native_workers_singleton::dispatch, this).detach();
         }
 
-        std::pair<uint32_t, uint32_t> proceed_hill_climb(double sample_seconds) {
+        std::pair<uint32_t, uint32_t> proceed_hill_climb([[maybe_unused]] double sample_seconds) {
             return {1, 1};
         }
 
@@ -225,7 +226,7 @@ namespace fast_task::util {
         }
 
         static void sumbmit(native_workers_singleton& instance) {
-            if (int res = io_uring_submit(&instance.m_ring); res < 0) 
+            if (int res = io_uring_submit(&instance.m_ring); res < 0)
                 throw std::runtime_error("io_uring_submit failed with the error");
         }
 
@@ -240,14 +241,14 @@ namespace fast_task::util {
 
             ~await_cancel() noexcept(false) override = default;
 
-            void handle(native_worker_handle* self, io_uring_cqe* cqe) override {
+            void handle(native_worker_handle* _, io_uring_cqe* cqe) override {
                 fast_task::lock_guard<task_mutex> lock(mutex);
                 success = cqe->res >= 0;
                 awaiter.notify_all();
             }
 
             bool await_fd(int handle) {
-                MutexUnify unify(mutex);
+                fast_task::mutex_unify unify(mutex);
                 fast_task::unique_lock lock(unify);
                 post_cancel_fd(this, handle);
                 awaiter.wait(lock);
@@ -255,7 +256,7 @@ namespace fast_task::util {
             }
 
             bool await_fd_all(int handle) {
-                MutexUnify unify(mutex);
+                fast_task::mutex_unify unify(mutex);
                 fast_task::unique_lock lock(unify);
                 post_cancel_fd_all(this, handle);
                 awaiter.wait(lock);
@@ -291,7 +292,7 @@ namespace fast_task::util {
             auto& instance = get_instance();
             if (!instance.probe_ops.test(IORING_OP_WRITEV))
                 throw std::runtime_error("IORING_OP_WRITEV not supported");
-                    io_uring_sqe* sqe = get_sqe(instance);
+            io_uring_sqe* sqe = get_sqe(instance);
             io_uring_prep_writev(sqe, hFile, pVec, nVec, offset);
             io_uring_sqe_set_data(sqe, reinterpret_cast<void*>(handle));
             sumbmit(instance);
@@ -398,8 +399,8 @@ namespace fast_task::util {
             sumbmit(instance);
         }
 
-        static void post_recvfrom(native_worker_handle* handle, int hSocket, const void* pBuffer, uint32_t nBuffer, int32_t flags, sockaddr* addr, socklen_t* addr_len) {
-            throw NotImplementedException();
+        static void post_recvfrom([[maybe_unused]] native_worker_handle* handle, [[maybe_unused]] int hSocket, [[maybe_unused]] const void* pBuffer, [[maybe_unused]] uint32_t nBuffer, [[maybe_unused]] int32_t flags, [[maybe_unused]] sockaddr* addr, [[maybe_unused]] socklen_t* addr_len) {
+            throw std::runtime_error("IORING_OP_RECVFROM not supported");
         }
 
         static void post_send(native_worker_handle* handle, int hSocket, const void* pBuffer, uint32_t nBuffer, int32_t flags) {
@@ -412,7 +413,7 @@ namespace fast_task::util {
             sumbmit(instance);
         }
 
-        static void post_sendto(native_worker_handle* handle, int hSocket, const void* pBuffer, uint32_t nBuffer, int32_t flags, sockaddr* addr, socklen_t addr_len) {
+        static void post_sendto([[maybe_unused]] native_worker_handle* handle, [[maybe_unused]] int hSocket, [[maybe_unused]] const void* pBuffer, [[maybe_unused]] uint32_t nBuffer, [[maybe_unused]] int32_t flags, [[maybe_unused]] sockaddr* addr, [[maybe_unused]] socklen_t addr_len) {
             throw std::runtime_error("IORING_OP_SENDTO not supported");
         }
 

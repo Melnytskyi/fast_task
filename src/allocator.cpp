@@ -1,11 +1,12 @@
 #include <allocator.hpp>
 #include <exception>
+#include <interput.hpp>
 #include <malloc.h>
 #include <tasks/util/interrupt.hpp>
 
 namespace fast_task {
-    void* allocate(size_t bytes) {
-        interrupt::interrupt_unsafe_region region;
+    void* allocate(std::size_t bytes) {
+        interrupt_unsafe_region region;
         void* ptr = malloc(bytes);
         if (ptr == nullptr)
             throw std::bad_alloc();
@@ -13,13 +14,13 @@ namespace fast_task {
     }
 
     void free(void* p) {
-        interrupt::interrupt_unsafe_region region;
+        interrupt_unsafe_region region;
         ::free(p);
     }
 }
 
 void* operator new(std::size_t n, fast_task::allocator_tag) noexcept(false) {
-    fast_task::interrupt::interrupt_unsafe_region region;
+    fast_task::interrupt_unsafe_region region;
     void* ptr = malloc(n);
     if (ptr == nullptr)
         throw std::bad_alloc();
@@ -27,12 +28,12 @@ void* operator new(std::size_t n, fast_task::allocator_tag) noexcept(false) {
 }
 
 void operator delete(void* p, fast_task::allocator_tag) noexcept {
-    fast_task::interrupt::interrupt_unsafe_region region;
+    fast_task::interrupt_unsafe_region region;
     free(p);
 }
 
 void* operator new[](std::size_t s, fast_task::allocator_tag) noexcept(false) {
-    fast_task::interrupt::interrupt_unsafe_region region;
+    fast_task::interrupt_unsafe_region region;
     void* ptr = malloc(s);
     if (ptr == nullptr)
         throw std::bad_alloc();
@@ -40,6 +41,6 @@ void* operator new[](std::size_t s, fast_task::allocator_tag) noexcept(false) {
 }
 
 void operator delete[](void* p, fast_task::allocator_tag) noexcept {
-    fast_task::interrupt::interrupt_unsafe_region region;
+    fast_task::interrupt_unsafe_region region;
     free(p);
 }

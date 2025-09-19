@@ -113,9 +113,10 @@ namespace fast_task {
     #include <unistd.h>
 
 namespace fast_task {
-    stack_context create_stack(size_t size) {
-        const size_t guard_page_size = page_size;
+    const size_t page_size = boost::context::stack_traits::page_size();
+    const size_t guard_page_size = boost::context::stack_traits::page_size();
 
+    stack_context create_stack(size_t size) {
         void* vp = mmap(nullptr, size, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
         if (!vp)
             throw std::bad_alloc();
@@ -125,7 +126,7 @@ namespace fast_task {
         auto pPtr = static_cast<uint8_t*>(vp) + size;
         pPtr -= init_commit_size;
         if (mprotect(pPtr, init_commit_size, PROT_READ | PROT_WRITE) == -1) {
-            munmap(static_cast<char*>(sctx.sp) - size, size);
+            munmap(vp, size);
             throw std::bad_alloc();
         }
 
@@ -139,7 +140,6 @@ namespace fast_task {
     light_stack::light_stack(size_t size) BOOST_NOEXCEPT_OR_NOTHROW : size(size) {}
 
     stack_context light_stack::allocate() {
-        const size_t guard_page_size = page_size;
         const size_t pages = (size + guard_page_size + page_size - 1) / page_size;
         // add one page at bottom that will be used as guard-page
         const size_t size__ = (pages + 1) * page_size;

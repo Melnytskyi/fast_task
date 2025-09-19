@@ -766,26 +766,26 @@ namespace fast_task::files {
     #include <unistd.h>
 
 namespace fast_task::files {
-    class File_ : public native_worker_handle {
+    class File_ : public util::native_worker_handle {
         task_condition_variable awaiters;
         task_mutex mutex;
         int handle;
         char* buffer = nullptr;
         bool fullifed = false;
 
-        File_(native_worker_manager* manager, int handle, const char* buffer, uint32_t buffer_size, uint64_t offset)
-            : native_worker_handle(manager), handle(handle), is_read(false), buffer_size(buffer_size), offset(offset), required_full(true) {
+        File_(util::native_worker_manager* manager, int handle, const char* buffer, uint32_t buffer_size, uint64_t offset)
+            : util::native_worker_handle(manager), handle(handle), buffer_size(buffer_size), offset(offset), is_read(false), required_full(true), buffer_alloc(false) {
             this->buffer = new char[buffer_size];
             memcpy(this->buffer, buffer, buffer_size);
         }
 
-        File_(native_worker_manager* manager, int handle, uint32_t buffer_size, uint64_t offset, bool required_full = true)
-            : native_worker_handle(manager), handle(handle), is_read(true), buffer_size(buffer_size), offset(offset), required_full(required_full) {
+        File_(util::native_worker_manager* manager, int handle, uint32_t buffer_size, uint64_t offset, bool required_full = true)
+            : util::native_worker_handle(manager), handle(handle), buffer_size(buffer_size), offset(offset), is_read(true), required_full(required_full), buffer_alloc(false) {
             this->buffer = new char[buffer_size];
         }
 
-        File_(bool buffer_alloc, util::native_worker_manager* manager, void* handle, char* buffer, uint32_t buffer_size, uint64_t offset)
-            : native_worker_handle(manager), handle(handle), is_read(false), buffer_size(buffer_size), offset(offset), required_full(true), buffer_alloc(buffer_alloc) {
+        File_(bool buffer_alloc, util::native_worker_manager* manager, int handle, char* buffer, uint32_t buffer_size, uint64_t offset)
+            : util::native_worker_handle(manager), handle(handle), buffer_size(buffer_size), offset(offset), is_read(false), required_full(true), buffer_alloc(buffer_alloc) {
             if (buffer_alloc) {
                 this->buffer = new char[buffer_size];
                 memcpy(this->buffer, buffer, buffer_size);
@@ -793,13 +793,8 @@ namespace fast_task::files {
                 this->buffer = buffer;
         }
 
-        File_(util::native_worker_manager* manager, void* handle, uint32_t buffer_size, uint64_t offset, bool required_full)
-            : native_worker_handle(manager), handle(handle), is_read(true), buffer_size(buffer_size), offset(offset), required_full(required_full), buffer_alloc(true) {
-            this->buffer = new char[buffer_size];
-        }
-
-        File_(util::native_worker_manager* manager, void* handle, char* buffer, uint32_t buffer_size, uint64_t offset, bool required_full)
-            : native_worker_handle(manager), handle(handle), is_read(true), buffer_size(buffer_size), offset(offset), required_full(required_full), buffer_alloc(false) {
+        File_(util::native_worker_manager* manager, int handle, char* buffer, uint32_t buffer_size, uint64_t offset, bool required_full)
+            : util::native_worker_handle(manager), handle(handle), buffer_size(buffer_size), offset(offset), is_read(true), required_full(required_full), buffer_alloc(false) {
             this->buffer = buffer;
         }
 
@@ -812,24 +807,24 @@ namespace fast_task::files {
         const bool required_full;
         const bool buffer_alloc;
 
-        static File_* command_write(util::native_worker_manager* manager, void* handle, char* buffer, uint32_t buffer_size, uint64_t offset) {
+        static File_* command_write(util::native_worker_manager* manager, int handle, char* buffer, uint32_t buffer_size, uint64_t offset) {
             return new File_(true, manager, handle, buffer, buffer_size, offset);
         }
 
-        static File_* command_write_inline(util::native_worker_manager* manager, void* handle, char* buffer, uint32_t buffer_size, uint64_t offset) {
+        static File_* command_write_inline(util::native_worker_manager* manager, int handle, char* buffer, uint32_t buffer_size, uint64_t offset) {
             return new File_(false, manager, handle, buffer, buffer_size, offset);
         }
 
-        static File_* command_read(util::native_worker_manager* manager, void* handle, uint32_t buffer_size, uint64_t offset, bool required_full = true) {
+        static File_* command_read(util::native_worker_manager* manager, int handle, uint32_t buffer_size, uint64_t offset, bool required_full = true) {
             return new File_(manager, handle, buffer_size, offset, required_full);
         }
 
-        static File_* command_read_inline(util::native_worker_manager* manager, void* handle, char* buffer, uint32_t buffer_size, uint64_t offset, bool required_full = true) {
+        static File_* command_read_inline(util::native_worker_manager* manager, int handle, char* buffer, uint32_t buffer_size, uint64_t offset, bool required_full = true) {
             return new File_(manager, handle, buffer, buffer_size, offset, required_full);
         }
 
         ~File_() {
-            if (buffer)
+            if (buffer && buffer_alloc)
                 delete[] buffer;
         }
 
@@ -989,7 +984,7 @@ namespace fast_task::files {
         };
     } // namespace name
 
-    class file_manager : public native_worker_manager {
+    class file_manager : public util::native_worker_manager {
         int _handle = -1;
         uint64_t write_pointer = 0;
         uint64_t read_pointer = 0;
@@ -997,7 +992,7 @@ namespace fast_task::files {
         friend class File_;
 
 
-        uint16_t uflags = 0
+        uint16_t uflags = 0;
 
         uint64_t _file_size() {
             uint64_t size = 0;
@@ -1010,10 +1005,10 @@ namespace fast_task::files {
     public:
         std::optional<task_mutex> mimic_non_async;
 
-        static std::variant<file_manager*, std::string> open(const std::filesystem::path& path, size_t path_len, open_mode open, on_open_action action, share_mode share, _sync_flags flags, pointer_mode _pointer_mode){
+        static std::variant<file_manager*, std::string> open(const std::filesystem::path& path, open_mode open, on_open_action action, [[maybe_unused]] share_mode share, _sync_flags flags, pointer_mode _pointer_mode) {
             std::unique_ptr<file_manager> ptr;
             ptr.reset(new file_manager{});
-            ptr->pointer_mode = _pointer_mode;
+            ptr->_pointer_mode = _pointer_mode;
             int mode = O_NONBLOCK;
 
             //if(share.read)
@@ -1023,9 +1018,9 @@ namespace fast_task::files {
             //if(share._delete)
             //    wshare_mode |= FILE_SHARE_DELETE;
 
-            int wflags = 0;
+            //int wflags = 0;
             if (flags.delete_on_close)
-                uflags |= user_flags::FILE_FLAG_DELETE_ON_CLOSE;
+                ptr->uflags |= user_flags::FILE_FLAG_DELETE_ON_CLOSE;
             if (flags.no_buffering)
                 mode |= O_DIRECT;
             //if(flags.posix_semantics)
@@ -1046,7 +1041,7 @@ namespace fast_task::files {
                 mode |= O_WRONLY;
                 break;
             case open_mode::append:
-                mode |= O_RDONLY;
+                mode |= O_WRONLY;
                 mode |= O_APPEND;
                 break;
             case open_mode::read_write:
@@ -1102,7 +1097,7 @@ namespace fast_task::files {
                 }
             }
             if (flags.at_end)
-                seek_pos(0, pointer_offset::end);
+                ptr->seek_pos(0, pointer_offset::end);
             return ptr.release();
         }
 
@@ -1113,7 +1108,7 @@ namespace fast_task::files {
 
         future_ptr<std::vector<uint8_t>> read(uint32_t size, bool require_all = true) {
             File_* file = File_::command_read(this, _handle, size, read_pointer, require_all);
-            switch (pointer_mode) {
+            switch (_pointer_mode) {
             case pointer_mode::separated:
                 read_pointer += size;
                 break;
@@ -1134,7 +1129,7 @@ namespace fast_task::files {
                 file->awaiter = nullptr;
                 if (data->error != io_errors::no_error && data->error != io_errors::eof) {
                     io_error_to_exception(data->error);
-                    std::unreachable();
+                    throw std::runtime_error("Unreachable");
                 } else
                     return std::vector<uint8_t>((uint8_t*)data->data, (uint8_t*)data->data + data->completed_bytes);
             });
@@ -1142,7 +1137,7 @@ namespace fast_task::files {
 
         uint32_t read(uint8_t* data_, uint32_t size, bool require_all = true) {
             File_* file = File_::command_read_inline(this, _handle, (char*)data_, size, read_pointer, require_all);
-            switch (pointer_mode) {
+            switch (_pointer_mode) {
             case pointer_mode::separated:
                 read_pointer += size;
                 break;
@@ -1162,14 +1157,14 @@ namespace fast_task::files {
             file->awaiter = nullptr;
             if (data->error != io_errors::no_error && data->error != io_errors::eof) {
                 io_error_to_exception(data->error);
-                std::unreachable();
+                throw std::runtime_error("Unreachable");
             } else
                 return data->completed_bytes;
         }
 
         future_ptr<void> write(const uint8_t* data_, uint32_t size) {
             File_* file = File_::command_write(this, _handle, (char*)data_, size, write_pointer);
-            switch (pointer_mode) {
+            switch (_pointer_mode) {
             case pointer_mode::separated:
                 write_pointer += size;
                 break;
@@ -1190,14 +1185,14 @@ namespace fast_task::files {
                 file->awaiter = nullptr;
                 if (data->error != io_errors::no_error) {
                     io_error_to_exception(data->error);
-                    std::unreachable();
+                    throw std::runtime_error("Unreachable");
                 }
             });
         }
 
         void write_inline(const uint8_t* data_, uint32_t size) {
             File_* file = File_::command_write_inline(this, _handle, (char*)data_, size, write_pointer);
-            switch (pointer_mode) {
+            switch (_pointer_mode) {
             case pointer_mode::separated:
                 write_pointer += size;
                 break;
@@ -1217,7 +1212,7 @@ namespace fast_task::files {
             file->awaiter = nullptr;
             if (data->error != io_errors::no_error) {
                 io_error_to_exception(data->error);
-                std::unreachable();
+                throw std::runtime_error("Unreachable");
             }
         }
 
@@ -1233,9 +1228,10 @@ namespace fast_task::files {
             }
             return future<void>::start([file, data, task_]() {
                 task::await_task(task_);
+                file->awaiter = nullptr;
                 if (data->error != io_errors::no_error) {
                     io_error_to_exception(data->error);
-                    std::unreachable();
+                    throw std::runtime_error("Unreachable");
                 }
             });
         }
@@ -1254,7 +1250,7 @@ namespace fast_task::files {
             file->awaiter = nullptr;
             if (data->error != io_errors::no_error) {
                 io_error_to_exception(data->error);
-                std::unreachable();
+                throw std::runtime_error("Unreachable");
             }
         }
 
@@ -1296,7 +1292,7 @@ namespace fast_task::files {
                 break;
             case pointer_offset::end: {
                 auto size = _file_size();
-                if (size != -1) {
+                if (size != (uint64_t)-1) {
                     switch (_pointer_mode) {
                     case pointer_mode::separated:
                         switch (pointer) {
@@ -1332,7 +1328,7 @@ namespace fast_task::files {
                 break;
             case pointer_offset::end: {
                 auto size = _file_size();
-                if (size != -1)
+                if (size != (uint64_t)-1)
                     read_pointer = write_pointer = size + offset;
                 else
                     return false;
@@ -1351,7 +1347,7 @@ namespace fast_task::files {
             case pointer::write:
                 return write_pointer;
             default:
-                return nullptr;
+                return 0;
             }
         }
 
@@ -1361,13 +1357,13 @@ namespace fast_task::files {
 
         uint64_t file_size() {
             auto res = _file_size();
-            if (res == -1)
-                return nullptr;
+            if (res == (uint64_t)-1)
+                return 0;
             else
                 return res;
         }
 
-        void handle(class native_worker_handle* overlapped, io_uring_cqe* cqe) override {
+        void handle(class util::native_worker_handle* overlapped, io_uring_cqe* cqe) override {
             auto file = (File_*)overlapped;
             if (cqe->res <= 0)
                 file->error_filter(-cqe->res);
@@ -1388,7 +1384,15 @@ namespace fast_task::files {
             else
                 return std::string(path, len);
         }
+
+        int get_handle() const {
+            return _handle;
+        }
     };
+
+    int file_handle::internal_get_handle() const noexcept {
+        return handle->get_handle();
+    }
 }
 #endif
 
