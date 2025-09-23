@@ -98,9 +98,7 @@ namespace fast_task {
     }
 
     bool task_limiter::try_lock_until(std::chrono::high_resolution_clock::time_point time_point) {
-        if (values.no_race.try_lock_until(time_point))
-            return false;
-        fast_task::unique_lock guard(values.no_race, fast_task::adopt_lock);
+        fast_task::unique_lock guard(values.no_race);
         while (values.locked) {
             if (loc.is_task_thread) {
                 get_data(loc.curr_task).awaked = false;

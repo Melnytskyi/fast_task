@@ -7,7 +7,9 @@
 #pragma once
 #ifndef FAST_TASK_INTERNAL
     #define FAST_TASK_INTERNAL
-
+    #ifndef tasks_enable_preemptive_scheduler_preview
+        #define tasks_enable_preemptive_scheduler_preview false
+    #endif
     //platforms: windows, linux, macos, ios, android, unknown
     #if defined(_WIN32) || defined(_WIN64)
         #define PLATFORM_WINDOWS 1
@@ -32,6 +34,22 @@
     #include <task.hpp>
 
 namespace fast_task {
+    struct task::execution_data {
+        boost::context::continuation context;
+        size_t context_switch_count = 0;
+    #if tasks_enable_preemptive_scheduler_preview
+        std::chrono::nanoseconds current_available_quantum = std::chrono::nanoseconds(0);
+        task_priority priority = task_priority::high;
+        size_t interrupt_count = 0;
+        size_t interrupt_data = 0; //used only when task requested switch but it has interrupt lock
+    #endif
+    #if PLATFORM_LINUX
+        void* stack_ptr = nullptr;
+        size_t stack_size = 0;
+        unsigned int valgrind_stack_id = 0;
+    #endif
+    };
+
 
     inline auto FT_API_LOCAL get_data(std::shared_ptr<task>& task) -> task::data& {
         return task->data_;
@@ -39,6 +57,20 @@ namespace fast_task {
 
     inline auto FT_API_LOCAL get_data(const std::shared_ptr<task>& task) -> task::data& {
         return task->data_;
+    }
+
+    inline auto FT_API_LOCAL get_execution_data(std::shared_ptr<task>& task) -> task::execution_data& {
+        auto& it = get_data(task).data;
+        if (!it)
+            it = new task::execution_data{};
+        return *it;
+    }
+
+    inline auto FT_API_LOCAL get_execution_data(const std::shared_ptr<task>& task) -> task::execution_data& {
+        auto& it = get_data(task).data;
+        if (!it)
+            it = new task::execution_data{};
+        return *it;
     }
 
     inline static constexpr std::chrono::nanoseconds priority_quantum_basic[] = {
@@ -77,6 +109,7 @@ namespace fast_task {
         std::exception_ptr ex_ptr;
         std::shared_ptr<task> curr_task = nullptr;
         boost::context::continuation scheduler_fiber;
+
         bool is_task_thread : 1 = false;
         bool context_in_swap : 1 = false;
     };
@@ -143,12 +176,13 @@ namespace fast_task {
     bool FT_API_LOCAL can_be_scheduled_task_to_hot();
     void FT_API_LOCAL forceCancelCancellation(const task_cancellation& restart);
 
+    void FT_API_LOCAL __install_signal_handler_mem();
 
     bool FT_API_LOCAL _set_name_thread_dbg(const std::string& name, unsigned long thread_id);
     bool FT_API_LOCAL _set_name_thread_dbg(const std::string& name);
     std::string FT_API_LOCAL _get_name_thread_dbg(unsigned long thread_id);
     unsigned long FT_API_LOCAL _thread_id();
-
+    bool FT_API_LOCAL is_debugger_attached();
 
     extern thread_local FT_API_LOCAL executors_local loc;
     extern FT_API_LOCAL executor_global glob;

@@ -10,6 +10,7 @@
 #include <tasks/util/interrupt.hpp>
 #include <threading.hpp>
 
+
 #ifdef _WIN32
 extern "C" void thread_interrupter_asm_zmm();
 extern "C" void thread_interrupter_asm_ymm();
@@ -32,6 +33,7 @@ void (*thread_interrupter_asm_ptr)() = []() {
     #include <pthread.h>
     #include <semaphore.h>
     #include <signal.h>
+    #include <tasks/_internal.hpp>
     #include <ucontext.h>
 #endif
 
@@ -290,6 +292,8 @@ namespace fast_task {
             return status;
         }
     }
+
+    void thread::init_dat() {}
 
     void* thread::create(void (*function)(void*), void* arg, unsigned long& id, size_t stack_size, bool stack_reservation, int& error_code) {
         error_code = 0;
@@ -739,6 +743,10 @@ namespace fast_task {
             }
         }
         return cv_status::no_timeout;
+    }
+
+    void thread::init_dat() {
+        __install_signal_handler_mem();
     }
 
     void* thread::create(void (*function)(void*), void* arg, unsigned long& id, size_t stack_size, bool stack_reservation, int& error_code) {

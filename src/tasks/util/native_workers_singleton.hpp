@@ -227,7 +227,7 @@ namespace fast_task::util {
 
         static void sumbmit(native_workers_singleton& instance) {
             if (int res = io_uring_submit(&instance.m_ring); res < 0)
-                throw std::runtime_error("io_uring_submit failed with the error");
+                throw std::runtime_error("io_uring_submit failed with the error: " + std::string(strerror(errno)));
         }
 
         class await_cancel : public native_worker_handle, native_worker_manager {
@@ -276,6 +276,7 @@ namespace fast_task::util {
             io_uring_sqe* sqe = get_sqe(instance);
             io_uring_prep_readv(sqe, hFile, pVec, nVec, offset);
             io_uring_sqe_set_data(sqe, reinterpret_cast<void*>(handle));
+            sumbmit(instance);
         }
 
         static void post_readv2(native_worker_handle* handle, int hFile, const iovec* pVec, uint32_t nVec, uint64_t offset, int32_t flags) {

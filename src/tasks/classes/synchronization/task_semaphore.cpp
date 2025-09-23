@@ -63,8 +63,6 @@ namespace fast_task {
     }
 
     bool task_semaphore::try_lock_until(std::chrono::high_resolution_clock::time_point time_point) {
-        if (!values.no_race.try_lock_until(time_point))
-            return false;
         fast_task::unique_lock keeper(values.no_race);
 
         while (!values.allow_threshold) {

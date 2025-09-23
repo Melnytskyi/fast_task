@@ -155,6 +155,8 @@ namespace fast_task {
             tcp_network_stream* accept_stream(bool ignore_acceptors = false);
             void _await();
 
+            std::vector<std::string> get_errors();
+
             bool is_running();
             bool is_paused();
             bool is_corrupted();

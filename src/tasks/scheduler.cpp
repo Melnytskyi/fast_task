@@ -17,7 +17,7 @@ namespace fast_task {
     //  you could remove the '!_DEBUG ' check and add hooks to winapi like EnterCriticalSection or WaitForSingleObject and use interrupt_unsafe_region::lock() or ::unlock() to support this scheduler
 #if tasks_enable_preemptive_scheduler_preview
     void timer_reinit() {
-        std::chrono::nanoseconds interval = next_quantum(get_data(loc.curr_task).priority, get_data(loc.curr_task).current_available_quantum);
+        std::chrono::nanoseconds interval = next_quantum(get_execution_data(loc.curr_task).priority, get_execution_data(loc.curr_task).current_available_quantum);
         interrupt::itimerval timer;
         timer.it_interval.tv_sec = 0;
         timer.it_interval.tv_usec = 0;
@@ -59,7 +59,7 @@ namespace fast_task {
         }
 
         ++glob.interrupts;
-        ++get_data(loc.curr_task).interrupt_count;
+        ++get_execution_data(loc.curr_task).interrupt_count;
         auto old_relock_0 = get_data(loc.curr_task).relock_0;
         auto old_relock_1 = get_data(loc.curr_task).relock_1;
         auto old_relock_2 = get_data(loc.curr_task).relock_2;
@@ -101,7 +101,7 @@ namespace fast_task {
         if (loc.is_task_thread) {
             loc.context_in_swap = true;
             ++glob.tasks_in_swap;
-            ++get_data(loc.curr_task).context_switch_count;
+            ++get_execution_data(loc.curr_task).context_switch_count;
             preserve_interput_data;
             //TODO add exception preservation
             try {
@@ -303,7 +303,7 @@ namespace fast_task {
                 glob.cold_tasks.pop();
             }
         }
-        loc.scheduler_fiber = std::move(reinterpret_cast<boost::context::continuation&>(get_data(loc.curr_task).context));
+        loc.scheduler_fiber = std::move(get_execution_data(loc.curr_task).context);
         return false;
     }
 
@@ -341,22 +341,34 @@ namespace fast_task {
             get_data(loc.curr_task).relock_1.relock_start();
             get_data(loc.curr_task).relock_2.relock_start();
         } else {
+            light_stack stack_alloc(1048576 /*1 mb*/);
+            auto ss = stack_alloc.allocate();
+#if PLATFORM_LINUX
+            get_execution_data(loc.curr_task).stack_ptr = ((char*)ss.sp) - ss.size;
+            get_execution_data(loc.curr_task).stack_size = ss.size;
+#endif
             ++glob.in_run_tasks;
-            loc.scheduler_fiber = boost::context::callcc(std::allocator_arg, light_stack(1048576 /*1 mb*/), context_exec);
+            loc.scheduler_fiber = boost::context::callcc(std::allocator_arg, boost::context::preallocated(ss.sp, ss.size, ss), stack_alloc, context_exec);
             get_data(loc.curr_task).relock_0.relock_start();
             get_data(loc.curr_task).relock_1.relock_start();
             get_data(loc.curr_task).relock_2.relock_start();
         }
         if (loc.ex_ptr) {
+            light_stack stack_alloc(1048576 /*1 mb*/);
+            auto ss = stack_alloc.allocate();
+#if PLATFORM_LINUX
+            get_execution_data(loc.curr_task).stack_ptr = ((char*)ss.sp) - ss.size;
+            get_execution_data(loc.curr_task).stack_size = ss.size;
+#endif
             ++glob.in_run_tasks;
-            loc.scheduler_fiber = boost::context::callcc(std::allocator_arg, light_stack(1048576 /*1 mb*/), context_exec);
+            loc.scheduler_fiber = boost::context::callcc(std::allocator_arg, boost::context::preallocated(ss.sp, ss.size, ss), stack_alloc, context_ex_handle);
             get_data(loc.curr_task).relock_0.relock_start();
             get_data(loc.curr_task).relock_1.relock_start();
             get_data(loc.curr_task).relock_2.relock_start();
             loc.ex_ptr = nullptr;
         }
     end_task:
-        reinterpret_cast<boost::context::continuation&>(get_data(loc.curr_task).context) = std::move(loc.scheduler_fiber);
+        get_execution_data(loc.curr_task).context = std::move(loc.scheduler_fiber);
         loc.is_task_thread = false;
         if (!get_data(loc.curr_task).end_of_life && loc.curr_task.use_count() == 1) {
             get_data(loc.curr_task).invalid_switch_caught = true;
@@ -466,7 +478,7 @@ namespace fast_task {
                 continue;
             }
             loc.is_task_thread = true;
-            loc.scheduler_fiber = std::move(reinterpret_cast<boost::context::continuation&>(get_data(loc.curr_task).context));
+            loc.scheduler_fiber = std::move(get_execution_data(loc.curr_task).context);
             if (execute_task(old_name))
                 break;
             completions += 1;

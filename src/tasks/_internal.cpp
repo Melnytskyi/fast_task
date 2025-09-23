@@ -11,6 +11,8 @@
     #include <Windows.h>
     #include <locale>
 #elif PLATFORM_LINUX
+    #include <fstream>
+    #include <iostream>
 #endif
 
 namespace fast_task {
@@ -113,6 +115,10 @@ namespace fast_task {
         return GetCurrentThreadId();
     }
 
+    bool is_debugger_attached() {
+        return false; //TODO add implementation for windows
+    }
+
 #elif PLATFORM_LINUX
     bool _set_name_thread_dbg(const std::string& name) {
         if (name.size() > 15)
@@ -135,6 +141,17 @@ namespace fast_task {
 
     unsigned long _thread_id() {
         return pthread_self();
+    }
+
+    bool is_debugger_attached() {
+        std::ifstream status_file("/proc/self/status");
+        if (!status_file.is_open())
+            return false;
+        std::string line;
+        while (std::getline(status_file, line))
+            if (line.rfind("TracerPid:", 0) == 0)
+                return std::stoi(line.substr(10)) != 0;
+        return false;
     }
 #endif
 }

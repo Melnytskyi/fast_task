@@ -997,6 +997,7 @@ namespace fast_task::networking {
         std::function<bool(address& client, address& server)> accept_filter;
         address _address;
         SOCKET main_socket;
+        std::vector<std::string> fault_reasons;
 
     public:
         tcp_configuration config;
@@ -1146,78 +1147,92 @@ namespace fast_task::networking {
         void make_socket() {
             main_socket = WSASocketW(AF_INET6, SOCK_STREAM, IPPROTO_TCP, NULL, 0, WSA_FLAG_OVERLAPPED);
             if (main_socket == INVALID_SOCKET) {
+                fault_reasons.push_back("WSASocketW failed with reason: " + std::to_string(WSAGetLastError()));
                 corrupted = true;
                 return;
             }
             DWORD argp = 1; //non blocking
             int result = setsockopt(main_socket, SOL_SOCKET, SO_REUSEADDR, (char*)&argp, sizeof(argp));
             if (result == SOCKET_ERROR) {
+                fault_reasons.push_back("setsockopt(SO_REUSEADDR) failed with reason: " + std::to_string(WSAGetLastError()));
                 corrupted = true;
                 return;
             }
             if (ioctlsocket(main_socket, FIONBIO, &argp) == SOCKET_ERROR) {
+                fault_reasons.push_back("ioctlsocket(FIONBIO) failed with reason: " + std::to_string(WSAGetLastError()));
                 corrupted = true;
                 return;
             }
             int cfg = !config.allow_ip4;
             if (setsockopt(main_socket, IPPROTO_IPV6, IPV6_V6ONLY, (char*)&cfg, sizeof(cfg)) == -1) {
+                fault_reasons.push_back("setsockopt(IPV6_V6ONLY) failed with reason: " + std::to_string(WSAGetLastError()));
                 corrupted = true;
                 return;
             }
             cfg = !config.enable_timestamps;
             if (setsockopt(main_socket, IPPROTO_TCP, TCP_TIMESTAMPS, (char*)&cfg, sizeof(cfg)) == -1) {
+                fault_reasons.push_back("setsockopt(TCP_TIMESTAMPS) failed with reason: " + std::to_string(WSAGetLastError()));
                 corrupted = true;
                 return;
             }
             cfg = !config.enable_delay;
             if (setsockopt(main_socket, IPPROTO_TCP, TCP_NODELAY, (char*)&cfg, sizeof(cfg)) == -1) {
+                fault_reasons.push_back("setsockopt(TCP_NODELAY) failed with reason: " + std::to_string(WSAGetLastError()));
                 corrupted = true;
                 return;
             }
             cfg = config.fast_open_queue;
             if (setsockopt(main_socket, IPPROTO_TCP, TCP_FASTOPEN, (char*)&cfg, sizeof(cfg))) {
-                //TODO notify
+                fault_reasons.push_back("setsockopt(TCP_FASTOPEN) failed with reason: " + std::to_string(WSAGetLastError()));
             }
             cfg = config.recv_timeout_ms;
             if (setsockopt(main_socket, SOL_SOCKET, SO_RCVTIMEO, (char*)&cfg, sizeof(cfg)) == -1) {
+                fault_reasons.push_back("setsockopt(SO_RCVTIMEO) failed with reason: " + std::to_string(WSAGetLastError()));
                 corrupted = true;
                 return;
             }
             cfg = config.send_timeout_ms;
             if (setsockopt(main_socket, SOL_SOCKET, SO_SNDTIMEO, (char*)&cfg, sizeof(cfg)) == -1) {
+                fault_reasons.push_back("setsockopt(SO_SNDTIMEO) failed with reason: " + std::to_string(WSAGetLastError()));
                 corrupted = true;
                 return;
             }
             cfg = config.enable_keep_alive;
             if (setsockopt(main_socket, SOL_SOCKET, SO_KEEPALIVE, (char*)&cfg, sizeof(cfg)) == -1) {
+                fault_reasons.push_back("setsockopt(SO_KEEPALIVE) failed with reason: " + std::to_string(WSAGetLastError()));
                 corrupted = true;
                 return;
             }
             if (config.enable_keep_alive) {
                 cfg = config.keep_alive_settings.idle_ms;
                 if (setsockopt(main_socket, IPPROTO_TCP, TCP_KEEPIDLE, (char*)&cfg, sizeof(cfg)) == -1) {
+                    fault_reasons.push_back("setsockopt(TCP_KEEPIDLE) failed with reason: " + std::to_string(WSAGetLastError()));
                     corrupted = true;
                     return;
                 }
                 cfg = config.keep_alive_settings.interval_ms;
                 if (setsockopt(main_socket, IPPROTO_TCP, TCP_KEEPINTVL, (char*)&cfg, sizeof(cfg)) == -1) {
+                    fault_reasons.push_back("setsockopt(TCP_KEEPINTVL) failed with reason: " + std::to_string(WSAGetLastError()));
                     corrupted = true;
                     return;
                 }
                 cfg = config.keep_alive_settings.retry_count;
                 if (setsockopt(main_socket, IPPROTO_TCP, TCP_KEEPCNT, (char*)&cfg, sizeof(cfg)) == -1) {
+                    fault_reasons.push_back("setsockopt(TCP_KEEPCNT) failed with reason: " + std::to_string(WSAGetLastError()));
                     corrupted = true;
                     return;
                 }
     #ifdef TCP_MAXRTMS
                 cfg = config.keep_alive_settings.user_timeout_ms;
                 if (setsockopt(main_socket, IPPROTO_TCP, TCP_MAXRTMS, (char*)&cfg, sizeof(cfg)) == -1) {
+                    fault_reasons.push_back("setsockopt(TCP_MAXRTMS) failed with reason: " + std::to_string(WSAGetLastError()));
                     corrupted = true;
                     return;
                 }
     #else
                 cfg = config.keep_alive_settings.user_timeout_ms / 1000;
                 if (setsockopt(main_socket, IPPROTO_TCP, TCP_MAXRT, (char*)&cfg, sizeof(cfg)) == -1) {
+                    fault_reasons.push_back("setsockopt(TCP_MAXRT) failed with reason: " + std::to_string(WSAGetLastError()));
                     corrupted = true;
                     return;
                 }
@@ -1226,14 +1241,17 @@ namespace fast_task::networking {
 
             init_win_fns(main_socket);
             if (bind(main_socket, (sockaddr*)_address.get_data(), (int)_address.data_size()) == SOCKET_ERROR) {
+                fault_reasons.push_back("bind failed with reason: " + std::to_string(WSAGetLastError()));
                 corrupted = true;
                 return;
             }
             if (!util::native_workers_singleton::register_handle((HANDLE)main_socket, this)) {
+                fault_reasons.push_back("CreateIoCompletionPort failed with reason: " + std::to_string(WSAGetLastError()));
                 corrupted = true;
                 return;
             }
             if (listen(main_socket, SOMAXCONN) == SOCKET_ERROR) {
+                fault_reasons.push_back("listen failed with reason: " + std::to_string(WSAGetLastError()));
                 WSACleanup();
                 corrupted = true;
             }
@@ -1266,6 +1284,12 @@ namespace fast_task::networking {
                 if (!data.close_flag)
                     data.self->connection_reset();
             }
+        }
+
+        std::vector<std::string> get_errors() {
+            fast_task::lock_guard lock(safety);
+            auto res = std::move(fault_reasons);
+            return res;
         }
 
         void set_configuration(const tcp_configuration& tcp) {
@@ -1998,7 +2022,6 @@ namespace fast_task::networking {
             return result;
         }
 
-
         bool valid() {
             return socket != INVALID_SOCKET && invalid_reason == tcp_error::none;
         }
@@ -2438,6 +2461,8 @@ namespace fast_task::networking {
         sockaddr_in6 connectionAddress;
         SOCKET main_socket;
 
+        std::vector<std::string> fault_reasons;
+
     public:
         tcp_configuration config;
 
@@ -2452,6 +2477,7 @@ namespace fast_task::networking {
             auto op = new tcp_handle_2::operation(pClientContext, std::make_shared<task_mutex>(), this);
             op->accept_flag = true;
             util::native_workers_singleton::post_accept(op, main_socket, nullptr, nullptr, 0);
+            return op;
         }
 
         void make_acceptEx(void) {
@@ -2543,15 +2569,18 @@ namespace fast_task::networking {
         void make_socket() {
             main_socket = socket(AF_INET6, SOCK_STREAM, IPPROTO_TCP);
             if (main_socket == INVALID_SOCKET) {
+                fault_reasons.push_back("socket failed with error: " + std::string(strerror(errno)));
                 corrupted = true;
                 return;
             }
             int argp = 1;
             if (setsockopt(main_socket, SOL_SOCKET, SO_REUSEADDR, &argp, sizeof(argp)) == -1) {
+                fault_reasons.push_back("setsockopt(SO_REUSEADDR) failed with error: " + std::string(strerror(errno)));
                 corrupted = true;
                 return;
             }
             if (setsockopt(main_socket, SOL_SOCKET, SO_REUSEPORT, &argp, sizeof(argp)) == -1) {
+                fault_reasons.push_back("setsockopt(SO_REUSEPORT) failed with error: " + std::string(strerror(errno)));
                 corrupted = true;
                 return;
             }
@@ -2559,70 +2588,81 @@ namespace fast_task::networking {
 
             int cfg = !config.allow_ip4;
             if (setsockopt(main_socket, IPPROTO_IPV6, IPV6_V6ONLY, &cfg, sizeof(cfg)) == -1) {
+                fault_reasons.push_back("setsockopt(IPV6_V6ONLY) failed with error: " + std::string(strerror(errno)));
                 corrupted = true;
                 return;
             }
             cfg = !config.enable_timestamps;
             if (setsockopt(main_socket, IPPROTO_TCP, TCP_TIMESTAMP, &cfg, sizeof(cfg)) == -1) {
                 if (errno != 1) {
+                    fault_reasons.push_back("setsockopt(TCP_TIMESTAMP) failed with error: " + std::string(strerror(errno)));
                     corrupted = true;
                     return;
                 }
             }
             cfg = !config.enable_delay;
             if (setsockopt(main_socket, IPPROTO_TCP, TCP_NODELAY, &cfg, sizeof(cfg)) == -1) {
+                fault_reasons.push_back("setsockopt(TCP_NODELAY) failed with error: " + std::string(strerror(errno)));
                 corrupted = true;
                 return;
             }
             cfg = config.fast_open_queue;
-            if (setsockopt(main_socket, IPPROTO_TCP, TCP_FASTOPEN, &cfg, sizeof(cfg))) {
-                //TODO notify
-            }
+            if (setsockopt(main_socket, IPPROTO_TCP, TCP_FASTOPEN, &cfg, sizeof(cfg)))
+                fault_reasons.push_back("setsockopt(TCP_FASTOPEN) failed with error: " + std::string(strerror(errno)));
             struct timeval cfgt = {};
             cfgt.tv_sec = config.recv_timeout_ms / 1000;
             cfgt.tv_usec = (config.recv_timeout_ms % 1000) * 1000;
             if (setsockopt(main_socket, SOL_SOCKET, SO_RCVTIMEO, &cfgt, sizeof(cfgt)) == -1) {
+                fault_reasons.push_back("setsockopt(SO_RCVTIMEO) failed with error: " + std::string(strerror(errno)));
                 corrupted = true;
                 return;
             }
             cfgt.tv_sec = config.send_timeout_ms / 1000;
             cfgt.tv_usec = (config.send_timeout_ms % 1000) * 1000;
             if (setsockopt(main_socket, SOL_SOCKET, SO_SNDTIMEO, &cfgt, sizeof(cfgt)) == -1) {
+                fault_reasons.push_back("setsockopt(SO_SNDTIMEO) failed with error: " + std::string(strerror(errno)));
                 corrupted = true;
                 return;
             }
             cfg = config.enable_keep_alive;
             if (setsockopt(main_socket, SOL_SOCKET, SO_KEEPALIVE, &cfg, sizeof(cfg)) == -1) {
+                fault_reasons.push_back("setsockopt(SO_KEEPALIVE) failed with error: " + std::string(strerror(errno)));
                 corrupted = true;
                 return;
             }
             if (config.enable_keep_alive) {
                 int cfg = config.keep_alive_settings.idle_ms;
                 if (setsockopt(main_socket, IPPROTO_TCP, TCP_KEEPIDLE, &cfg, sizeof(cfg)) == -1) {
+                    fault_reasons.push_back("setsockopt(TCP_KEEPIDLE) failed with error: " + std::string(strerror(errno)));
                     corrupted = true;
                     return;
                 }
                 cfg = config.keep_alive_settings.interval_ms;
                 if (setsockopt(main_socket, IPPROTO_TCP, TCP_KEEPINTVL, &cfg, sizeof(cfg)) == -1) {
+                    fault_reasons.push_back("setsockopt(TCP_KEEPINTVL) failed with error: " + std::string(strerror(errno)));
                     corrupted = true;
                     return;
                 }
                 cfg = config.keep_alive_settings.retry_count;
                 if (setsockopt(main_socket, IPPROTO_TCP, TCP_KEEPCNT, &cfg, sizeof(cfg)) == -1) {
+                    fault_reasons.push_back("setsockopt(TCP_KEEPCNT) failed with error: " + std::string(strerror(errno)));
                     corrupted = true;
                     return;
                 }
                 cfg = config.keep_alive_settings.user_timeout_ms;
                 if (setsockopt(main_socket, IPPROTO_TCP, TCP_USER_TIMEOUT, &cfg, sizeof(cfg)) == -1) {
+                    fault_reasons.push_back("setsockopt(TCP_USER_TIMEOUT) failed with error: " + std::string(strerror(errno)));
                     corrupted = true;
                     return;
                 }
             }
             if (bind(main_socket, (sockaddr*)&connectionAddress, sizeof(sockaddr_in6)) == -1) {
+                fault_reasons.push_back("bind failed with error: " + std::string(strerror(errno)));
                 corrupted = true;
                 return;
             }
             if (listen(main_socket, SOMAXCONN) == -1) {
+                fault_reasons.push_back("listen failed with error: " + std::string(strerror(errno)));
                 corrupted = true;
                 return;
             }
@@ -2632,6 +2672,16 @@ namespace fast_task::networking {
         tcp_network_manager(const address& ip_port, size_t acceptors, const tcp_configuration& config)
             : main_socket(INVALID_SOCKET), config(config), acceptors(acceptors) {
             memcpy(&connectionAddress, &from_address(ip_port), sizeof(sockaddr_in6));
+            if (connectionAddress.sin6_family != AF_INET6) {
+                //map
+                sockaddr_in* ipv4_addr = (sockaddr_in*)&from_address(ip_port);
+                memset(&connectionAddress, 0, sizeof(connectionAddress));
+                connectionAddress.sin6_family = AF_INET6;
+                connectionAddress.sin6_port = ipv4_addr->sin_port;
+                connectionAddress.sin6_addr.s6_addr[10] = 0xFF;
+                connectionAddress.sin6_addr.s6_addr[11] = 0xFF;
+                memcpy(&connectionAddress.sin6_addr.s6_addr[12], &ipv4_addr->sin_addr, sizeof(in_addr));
+            }
         }
 
         ~tcp_network_manager() noexcept(false) {
@@ -2745,6 +2795,12 @@ namespace fast_task::networking {
                 throw std::runtime_error("tcp_network_manager is corrupted");
             while (!disabled)
                 state_changed_cv.wait(lock);
+        }
+
+        std::vector<std::string> get_errors() {
+            fast_task::lock_guard lock(safety);
+            auto res = std::move(fault_reasons);
+            return res;
         }
 
         void set_configuration(const tcp_configuration& config) {
@@ -3185,6 +3241,10 @@ namespace fast_task::networking {
 
     void tcp_network_server::_await() {
         handle->_await();
+    }
+
+    std::vector<std::string> tcp_network_server::get_errors() {
+        return handle->get_errors();
     }
 
     bool tcp_network_server::is_corrupted() {

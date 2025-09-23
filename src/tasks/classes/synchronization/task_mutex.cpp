@@ -83,9 +83,7 @@ namespace fast_task {
     }
 
     bool task_mutex::try_lock_until(std::chrono::high_resolution_clock::time_point time_point) {
-        if (!values.no_race.try_lock_until(time_point))
-            return false;
-        fast_task::unique_lock ul(values.no_race, fast_task::adopt_lock);
+        fast_task::unique_lock ul(values.no_race);
 
         if (loc.is_task_thread && !loc.context_in_swap) {
             if (values.current_task == &*loc.curr_task)

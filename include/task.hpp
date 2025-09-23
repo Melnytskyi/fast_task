@@ -7,9 +7,6 @@
 #pragma once
 #ifndef FAST_TASK_TASKS
     #define FAST_TASK_TASKS
-    #ifndef tasks_enable_preemptive_scheduler_preview
-        #define tasks_enable_preemptive_scheduler_preview false
-    #endif
     #include "exceptions.hpp"
     #include "shared.hpp"
     #include "threading.hpp"
@@ -31,7 +28,7 @@ namespace fast_task {
 
         struct FT_API_LOCAL private_values {
             std::list<resume_task> resume_task;
-            fast_task::timed_mutex no_race;
+            fast_task::spin_lock no_race;
             class task* current_task = nullptr;
         } values;
 
@@ -74,7 +71,7 @@ namespace fast_task {
             friend class task_recursive_mutex;
             std::list<resume_task> resume_task;
             std::list<task*> readers;
-            fast_task::timed_mutex no_race;
+            fast_task::spin_lock no_race;
             class task* current_writer_task = nullptr;
         } values;
 
@@ -306,7 +303,7 @@ namespace fast_task {
     //    this could be used to reduce allocated memory for stacks, because they would be reused for other coroutines
     class FT_API task {
         void awaitEnd(fast_task::unique_lock<mutex_unify>& l);
-
+        struct FT_API_LOCAL execution_data;
         struct FT_API_LOCAL data {
             union FT_API_LOCAL callbacks_data {
                 bool is_extended_mode : 1 = false;
@@ -369,7 +366,7 @@ namespace fast_task {
             } callbacks;
 
             task_condition_variable result_notify;
-            fast_task::mutex no_race;
+            fast_task::spin_lock no_race;
             mutex_unify relock_0;
             mutex_unify relock_1;
             mutex_unify relock_2;
@@ -384,18 +381,13 @@ namespace fast_task {
             bool auto_bind_worker : 1 = false;
             bool invalid_switch_caught : 1 = false;
             bool completed : 1 = false;
-            void* context = nullptr;
-            size_t context_switch_count = 0;
-    #if tasks_enable_preemptive_scheduler_preview
-            std::chrono::nanoseconds current_available_quantum = std::chrono::nanoseconds(0);
-            task_priority priority = task_priority::high;
-            size_t interrupt_count = 0;
-            size_t interrupt_data = 0; //used only when task requested switch but it has interrupt lock
-    #endif
+            execution_data* data = nullptr;
         } data_;
 
         friend task::data& get_data(std::shared_ptr<task>& task);
         friend task::data& get_data(const std::shared_ptr<task>& task);
+        friend task::execution_data& get_execution_data(std::shared_ptr<task>& task);
+        friend task::execution_data& get_execution_data(const std::shared_ptr<task>& task);
 
         void _extended_end();
 
@@ -532,7 +524,7 @@ namespace fast_task {
 
         struct private_values {
             std::list<resume_task> resume_task;
-            fast_task::timed_mutex no_race;
+            fast_task::spin_lock no_race;
             fast_task::condition_variable_any native_notify;
             size_t allow_threshold = 0;
             size_t max_threshold = 0;
@@ -558,7 +550,7 @@ namespace fast_task {
         struct private_values {
             std::list<void*> lock_check;
             std::list<resume_task> resume_task;
-            fast_task::timed_mutex no_race;
+            fast_task::spin_lock no_race;
             fast_task::condition_variable_any native_notify;
             size_t allow_threshold = 0;
             size_t max_threshold = 1;

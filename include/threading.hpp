@@ -199,11 +199,13 @@ namespace fast_task {
     class FT_API thread {
         unsigned long _id;
         void* _thread;
+        static void init_dat();
         static void* create(void (*function)(void*), void* arg, unsigned long& id, size_t stack_size, bool stack_reservation, int& error_code);
 
         template <class Tuple, size_t... Indexes>
         static void execute(void* arguments) {
             std::unique_ptr<Tuple> stored_args(static_cast<Tuple*>(arguments));
+            init_dat();
             Tuple& args = *stored_args.get();
             std::invoke(std::move(std::get<Indexes>(args))...);
         }
