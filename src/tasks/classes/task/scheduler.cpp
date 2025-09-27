@@ -22,6 +22,8 @@ namespace fast_task::scheduler {
             fast_task::unique_lock guard(glob.task_thread_safety);
             if (get_data(lgr_task).started)
                 return;
+            if (!glob.time_control_enabled)
+                startTimeController();
         }
         fast_task::unique_lock guard(glob.task_timer_safety);
         if (can_be_scheduled_task_to_hot())
@@ -31,8 +33,6 @@ namespace fast_task::scheduler {
         get_data(lgr_task).started = true;
         glob.tasks_notifier.notify_one();
         guard.unlock();
-        if (!glob.time_control_enabled)
-            startTimeController();
     }
 
     void start(std::list<std::shared_ptr<task>>& tasks) {
@@ -83,8 +83,10 @@ namespace fast_task::scheduler {
             goto is_not_id;
         glob.binded_workers[id].allow_implicit_start = allow_implicit_start;
         glob.binded_workers[id].fixed_size = (bool)fixed_count;
-        for (size_t i = 0; i < fixed_count; i++)
+        for (size_t i = 0; i < fixed_count; i++) {
+            ++glob.thread_count;
             fast_task::thread(bindedTaskExecutor, id).detach();
+        }
         return id;
     }
 
@@ -96,8 +98,10 @@ namespace fast_task::scheduler {
             throw std::runtime_error("Invalid id");
         glob.binded_workers[id].allow_implicit_start = allow_implicit_start;
         glob.binded_workers[id].fixed_size = (bool)fixed_count;
-        for (size_t i = 0; i < fixed_count; i++)
+        for (size_t i = 0; i < fixed_count; i++) {
+            ++glob.thread_count;
             fast_task::thread(bindedTaskExecutor, id).detach();
+        }
     }
 
     void close_bind_only_executor(uint16_t id) {
@@ -140,8 +144,10 @@ namespace fast_task::scheduler {
     }
 
     void create_executor(size_t count) {
-        for (size_t i = 0; i < count; i++)
+        for (size_t i = 0; i < count; i++) {
+            ++glob.thread_count;
             fast_task::thread(taskExecutor, false, false).detach();
+        }
     }
 
     size_t total_executors() {
@@ -157,6 +163,7 @@ namespace fast_task::scheduler {
 
     void become_task_executor() {
         try {
+            ++glob.thread_count;
             taskExecutor();
             loc.context_in_swap = false;
             loc.is_task_thread = false;
@@ -165,13 +172,15 @@ namespace fast_task::scheduler {
             loc.context_in_swap = false;
             loc.is_task_thread = false;
             loc.curr_task = nullptr;
+            throw;
         }
     }
 
     void await_no_tasks(bool be_executor) {
-        if (be_executor && !loc.is_task_thread)
+        if (be_executor && !loc.is_task_thread) {
+            ++glob.thread_count;
             taskExecutor(true);
-        else {
+        } else {
             mutex_unify uni(glob.task_thread_safety);
             fast_task::unique_lock l(uni);
             while (glob.tasks.size() || glob.cold_tasks.size() || glob.timed_tasks.size() || glob.cold_timed_tasks.size()) {
@@ -189,6 +198,7 @@ namespace fast_task::scheduler {
             while (glob.tasks.size() || glob.cold_tasks.size() || glob.timed_tasks.size() || glob.cold_timed_tasks.size() ||  glob.tasks_in_swap || glob.in_run_tasks) {
                 l.unlock();
                 try {
+                    ++glob.thread_count;
                     taskExecutor(true, true);
                 } catch (...) {
                     l.lock();
@@ -254,6 +264,12 @@ namespace fast_task::scheduler {
         glob.time_notifier.notify_all();
     }
 
+    void FT_API request_stw(const std::function<void()>& func) {
+        if (!loc.is_task_thread)
+            unsafe_perform_stop_the_world(func);
+        else
+            throw invalid_native_context{};
+    }
 
     void clean_up() {
         await_no_tasks();

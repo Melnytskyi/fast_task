@@ -9,16 +9,13 @@
 #include <variant>
 
 namespace fast_task {
-    struct task_condition_variable::resume_task {
-        std::shared_ptr<task> task;
-        uint16_t awake_check = 0;
-        fast_task::condition_variable_any* native_cv = nullptr;
-        bool* native_check = nullptr;
-    };
 
-    task_condition_variable::task_condition_variable() {}
+    task_condition_variable::task_condition_variable() {
+        FT_DEBUG_ONLY(register_object(this));
+    }
 
     task_condition_variable::~task_condition_variable() {
+        FT_DEBUG_ONLY(unregister_object(this));
         if (!values.resume_task.empty()) {
             assert(false && "Condition_variable destroyed while waited");
             std::terminate();

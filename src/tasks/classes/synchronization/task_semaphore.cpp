@@ -8,22 +8,19 @@
 #include <tasks/_internal.hpp>
 
 namespace fast_task {
-    struct task_semaphore::resume_task {
-        std::shared_ptr<task> task;
-        uint16_t awake_check;
-    };
-
-    task_semaphore::task_semaphore() {}
+    task_semaphore::task_semaphore() {
+        FT_DEBUG_ONLY(register_object(this));
+    }
 
     task_semaphore::~task_semaphore() {
+        FT_DEBUG_ONLY(unregister_object(this));
         if (values.allow_threshold != values.max_threshold) {
             assert(false && "Semaphore destroyed while locked");
             std::terminate();
         }
     }
 
-
-    void task_semaphore::setMaxThreshold(size_t val) {
+    void task_semaphore::set_max_threshold(size_t val) {
         fast_task::lock_guard guard(values.no_race);
         release_all();
         values.max_threshold = val;

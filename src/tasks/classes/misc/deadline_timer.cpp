@@ -1,35 +1,8 @@
 
 #include <task.hpp>
 #include <tasks/_internal.hpp>
-#include <unordered_set>
 
 namespace fast_task {
-
-    struct deadline_timer::handle {
-        std::atomic_size_t usage_count{1}; // The reference counter
-        task_mutex no_race;
-        std::chrono::high_resolution_clock::time_point time_point;
-        std::unordered_set<void*> canceled_tasks;
-        std::list<void*> scheduled_tasks;
-        bool shutdown = false;
-
-        static handle* create() {
-            return new handle{};
-        }
-
-        handle* acquire() {
-            usage_count.fetch_add(1, std::memory_order_relaxed);
-            return this;
-        }
-
-        void release() {
-            if (usage_count.fetch_sub(1, std::memory_order_release) == 1) {
-                std::atomic_thread_fence(std::memory_order_acquire);
-                delete this;
-            }
-        }
-    };
-
     template <class T>
     struct holder {
         T* res;
@@ -45,19 +18,27 @@ namespace fast_task {
         }
     };
 
-    deadline_timer::deadline_timer() : hh(handle::create()) {}
+    deadline_timer::deadline_timer() : hh(handle::create()) {
+        FT_DEBUG_ONLY(register_object(this));
+    }
 
     deadline_timer::deadline_timer(std::chrono::high_resolution_clock::duration dur) : deadline_timer() {
+        FT_DEBUG_ONLY(register_object(this));
         expires_from_now(dur);
     }
 
     deadline_timer::deadline_timer(std::chrono::high_resolution_clock::time_point point) : deadline_timer() {
+        FT_DEBUG_ONLY(register_object(this));
         expires_at(point);
     }
 
-    deadline_timer::deadline_timer(deadline_timer&& mov) : hh(std::move(mov.hh)) {}
+    deadline_timer::deadline_timer(deadline_timer&& mov) : hh(std::move(mov.hh)) {
+        FT_DEBUG_ONLY(register_object(this));
+        mov.hh = nullptr;
+    }
 
-    deadline_timer::~deadline_timer(){
+    deadline_timer::~deadline_timer() {
+        FT_DEBUG_ONLY(unregister_object(this));
         if (hh) {
             fast_task::unique_lock lock(hh->no_race);
             hh->shutdown = true;
@@ -125,7 +106,7 @@ namespace fast_task {
         else {
             scheduler::schedule_until(
                 std::make_shared<task>([hh = holder(hh), callback = std::move(callback), timeout_time = hh->time_point]() mutable {
-                    if (hh->shutdown){
+                    if (hh->shutdown) {
                         callback(status::shutdown);
                         return;
                     }
@@ -136,7 +117,7 @@ namespace fast_task {
                         if (timed_out)
                             timed_out = hh->time_point == timeout_time;
 
-                        if (hh->shutdown) {//double check, but in lock
+                        if (hh->shutdown) { //double check, but in lock
                             callback(status::shutdown);
                             return;
                         }
@@ -202,7 +183,6 @@ namespace fast_task {
         fast_task::relock_guard relock(lock);
         return wait();
     }
-
 
     bool deadline_timer::timed_out() {
         if (!hh)

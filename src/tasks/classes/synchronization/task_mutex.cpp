@@ -8,16 +8,12 @@
 #include <tasks/_internal.hpp>
 
 namespace fast_task {
-    struct task_mutex::resume_task {
-        std::shared_ptr<task> task;
-        uint16_t awake_check = 0;
-        fast_task::condition_variable_any* native_cv = nullptr;
-        bool* native_check = nullptr;
-    };
-
-    task_mutex::task_mutex() {}
+    task_mutex::task_mutex() {
+        FT_DEBUG_ONLY(register_object(this));
+    }
 
     task_mutex::~task_mutex() {
+        FT_DEBUG_ONLY(unregister_object(this));
         if (!values.resume_task.empty()) {
             assert(false && "Tried to destroy locked mutex");
             std::terminate();

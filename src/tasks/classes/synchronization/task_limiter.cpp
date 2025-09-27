@@ -8,14 +8,12 @@
 #include <tasks/_internal.hpp>
 
 namespace fast_task {
-    struct task_limiter::resume_task {
-        std::shared_ptr<task> task;
-        uint16_t awake_check;
-    };
-
-    task_limiter::task_limiter() {}
+    task_limiter::task_limiter() {
+        FT_DEBUG_ONLY(register_object(this));
+    }
 
     task_limiter::~task_limiter() {
+        FT_DEBUG_ONLY(unregister_object(this));
         if (values.locked) {
             assert(false && "Tried to destroy locked limiter");
             std::terminate();

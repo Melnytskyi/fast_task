@@ -351,6 +351,7 @@ namespace fast_task {
         pthread_rwlock_t* _mutex;
 #endif
     public:
+        using read_write_mutex = void;
         rw_mutex();
         rw_mutex(const rw_mutex& other) = delete;
         rw_mutex(rw_mutex&& other) = delete;

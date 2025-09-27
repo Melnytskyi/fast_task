@@ -8,19 +8,8 @@
 #include <tasks/_internal.hpp>
 
 namespace fast_task {
-    struct task_query_handle {                  //144 [sizeof]
-        task_mutex no_race;                     //56
-        task_condition_variable end_of_query;   //32
-        std::list<std::shared_ptr<task>> tasks; //24
-        task_query* tq = nullptr;               //8
-        size_t now_at_execution = 0;            //8
-        size_t at_execution_max = 0;            //8
-        bool destructed = false;                //1
-        bool is_running = false;                //1
-                                                //6 [padding]
-    };
-
     task_query::task_query(size_t at_execution_max) {
+        FT_DEBUG_ONLY(register_object(this));
         handle = new task_query_handle{.tq = this, .at_execution_max = at_execution_max};
     }
 
@@ -160,6 +149,7 @@ namespace fast_task {
     }
 
     task_query::~task_query() {
+        FT_DEBUG_ONLY(unregister_object(this));
         if (handle) {
             handle->is_running = false;
             handle->destructed = true;

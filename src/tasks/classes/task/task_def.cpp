@@ -19,6 +19,7 @@ namespace fast_task {
         data_.callbacks.extended_mode.on_await = on_await;
         data_.callbacks.extended_mode.on_cancel = on_cancel;
         data_.callbacks.extended_mode.on_destruct = on_destruct;
+        FT_DEBUG_ONLY(register_object(this));
     }
 
     task::task(task&& mov) noexcept
@@ -27,16 +28,18 @@ namespace fast_task {
         data_.awaked = mov.data_.awaked;
         data_.started = mov.data_.started;
         data_.completed = mov.data_.completed;
+        FT_DEBUG_ONLY(register_object(this));
     }
 
     task::task(std::function<void()> func, std::function<void(const std::exception_ptr&)> ex_handle, std::chrono::high_resolution_clock::time_point timeout, task_priority priority) : data_{.timeout = timeout.time_since_epoch().count()} {
 #if tasks_enable_preemptive_scheduler_preview
-        data_.data = new execution_data();
-        data_.data->priority = priority;
+        data_.exdata = new execution_data();
+        data_.exdata->priority = priority;
 #endif
         data_.callbacks.is_extended_mode = false;
         data_.callbacks.normal_mode.func = func;
         data_.callbacks.normal_mode.ex_handle = ex_handle;
+        FT_DEBUG_ONLY(register_object(this));
     }
 
     void task::awaitEnd(fast_task::unique_lock<mutex_unify>& l) {
@@ -45,13 +48,14 @@ namespace fast_task {
     }
 
     task::~task() {
+        FT_DEBUG_ONLY(unregister_object(this));
         if (!data_.started) {
             if (task::max_running_tasks)
                 glob.can_planned_new_notifier.notify_one();
         }
-        if (data_.data) {
-            delete data_.data;
-            data_.data = nullptr;
+        if (data_.exdata) {
+            delete data_.exdata;
+            data_.exdata = nullptr;
         }
     }
 
@@ -68,9 +72,9 @@ namespace fast_task {
 
     void task::set_priority(task_priority p) noexcept {
 #if tasks_enable_preemptive_scheduler_preview
-        if (!data_.data)
-            data_.data = new execution_data();
-        data_.data->priority = p;
+        if (!data_.exdata)
+            data_.exdata = new execution_data();
+        data_.exdata->priority = p;
 #endif
     }
 
@@ -80,7 +84,7 @@ namespace fast_task {
 
     task_priority task::get_priority() const noexcept {
 #if tasks_enable_preemptive_scheduler_preview
-        return data_.data ? data_.data->priority : task_priority::high;
+        return data_.exdata ? data_.exdata->priority : task_priority::high;
 #else
         return task_priority::semi_realtime;
 #endif
@@ -95,7 +99,7 @@ namespace fast_task {
     }
 
     size_t task::get_counter_context_switch() const noexcept {
-        return data_.data ? data_.data->context_switch_count : 0;
+        return data_.exdata ? data_.exdata->context_switch_count : 0;
     }
 
     std::chrono::high_resolution_clock::time_point task::get_timeout() const noexcept {
@@ -157,6 +161,10 @@ namespace fast_task {
         auto r = std::make_shared<task>(std::move(func));
         scheduler::start(r);
         return r;
+    }
+
+    std::shared_ptr<task> task::create(std::function<void()>&& func) {
+        return std::make_shared<task>(std::move(func));
     }
 
     void task::await_task(const std::shared_ptr<task>& lgr_task, bool make_start) {

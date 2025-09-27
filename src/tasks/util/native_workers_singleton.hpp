@@ -70,8 +70,7 @@ namespace fast_task::util {
                 ULONG entries_count = 0;
                 auto status = GetQueuedCompletionStatusEx(m_hCompletionPort.get(), entries.data(), (ULONG)entries.size(), &entries_count, INFINITE, false);
                 if (!status)
-                    return;
-
+                    continue;
                 for (ULONG i = 0; i < entries_count; i++) {
                     task::run([entry = std::move(entries[i])]() {
                         auto overlap = ((native_worker_handle*)entry.lpOverlapped);
@@ -123,7 +122,7 @@ namespace fast_task::util {
 namespace fast_task::util {
     class FT_API_LOCAL native_worker_manager {
     public:
-        virtual void handle(class native_worker_handle* overlapped, io_uring_cqe* cqe) = 0;
+        virtual void handle(class native_worker_handle* overlapped, int32_t res, uint32_t flags) = 0;
         virtual ~native_worker_manager() noexcept(false) = default;
     };
 
@@ -190,7 +189,9 @@ namespace fast_task::util {
                         //"io_uring_wait_cqe returned undefined undefined manager, skipping" handle
                         continue;
                     }
-                    handle->manager->handle(handle, cqe);
+                    task::run([handle, res = cqe->res, flags = cqe->flags]() {
+                        handle->manager->handle(handle, res, flags);
+                    });
                 }
 
                 io_uring_cq_advance(&m_ring, cqe_count);
@@ -241,9 +242,9 @@ namespace fast_task::util {
 
             ~await_cancel() noexcept(false) override = default;
 
-            void handle(native_worker_handle* _, io_uring_cqe* cqe) override {
+            void handle(native_worker_handle* _, int32_t res, uint32_t flags) override {
                 fast_task::lock_guard<task_mutex> lock(mutex);
-                success = cqe->res >= 0;
+                success = res >= 0;
                 awaiter.notify_all();
             }
 

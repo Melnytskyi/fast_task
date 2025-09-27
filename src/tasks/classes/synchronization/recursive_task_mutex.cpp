@@ -8,9 +8,12 @@
 #include <tasks/_internal.hpp>
 
 namespace fast_task {
-    task_recursive_mutex::task_recursive_mutex() {}
+    task_recursive_mutex::task_recursive_mutex() {
+        FT_DEBUG_ONLY(register_object(this));
+    }
 
     task_recursive_mutex::~task_recursive_mutex() {
+        FT_DEBUG_ONLY(unregister_object(this));
         if (recursive_count != 0) {
             assert(false && "Mutex destroyed while locked");
             std::terminate();

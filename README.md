@@ -5,9 +5,7 @@
 
 **Fast task** is a modern, stack-based green thread implementation for C++ designed to be a simple, fast, and powerful tool for concurrent programming. It offers a lightweight alternative to `std::thread`, focusing on high-performance asynchronous operations and efficient task management.
 
-The library is built with a C++23 compiler and is designed for Windows and Linux platforms. 
-
-_the library technically could be used by client code with C++20 if the coroutines not used_
+_the library technically could be used by client code with C++23 for the coroutines support_
 
 ## Core Features
 
@@ -33,7 +31,8 @@ _the library technically could be used by client code with C++20 if the coroutin
 - **C++20 Compiler:** A compiler that supports C++20 is required.
 - **CMake:** Version 3.31 or later. 
 - **Operating System:** Windows or Linux.
-- **vcpkg:** The vcpkg package manager is used for dependency management and is included as a submodule in the project.
+- **vcpkg:** The vcpkg package manager is used for dependency management and included as a submodule in the project root.
+- **dependencies** If the introspection api enabled the cpptrace is required and for linux builds the liburing is required
 
 ### Building the Project
 
@@ -63,7 +62,7 @@ The repository is organized as follows:
 -   `include/`: Public header files for the library. 
 -   `src/`: Source code, including implementation details for tasks, networking, and file operations. 
 -   `CMakeLists.txt`: The main CMake build script.
--   `vcpkg.json`: vcpkg manifest for dependencies (`boost-context`, `boost-lockfree`).
+-   `vcpkg.json`: vcpkg manifest for dependencies (`boost-context`, `boost-lockfree`, `cpptrace`, `liburing`).
 -   `LICENSE`: The Boost Software License under which the project is distributed. 
 
 ## Usage

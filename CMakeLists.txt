@@ -8,6 +8,7 @@ else(MSVC)
   set(ASM_FILE )
 endif(MSVC)
 option(FAST_TASK_STATIC "Enable static build for fast task library" ON)
+option(FAST_TASK_ENABLE_DEBUG_API "Enable the debugging and introspection API" OFF)
 
 set(fast_task_INCLUDE_DIR "src" "include")
 
@@ -44,11 +45,18 @@ else()
   target_compile_definitions(fast_task PRIVATE Boost_USE_STATIC_RUNTIME ${FAST_TASK_STATIC})
 endif()
 
+
+if(FAST_TASK_ENABLE_DEBUG_API)
+  target_compile_definitions(fast_task PRIVATE -DFT_DEBUG_API_ENABLED)
+  find_package(cpptrace CONFIG REQUIRED)
+  target_link_libraries(fast_task PUBLIC cpptrace::cpptrace)
+endif()
+
 find_package(Boost REQUIRED COMPONENTS context)
 target_include_directories(fast_task PRIVATE ${Boost_INCLUDE_DIRS} ${fast_task_INCLUDE_DIR})
 set_target_properties(fast_task
   PROPERTIES
-  CXX_STANDARD 23
+  CXX_STANDARD 20
   CXX_EXTENSIONS OFF
 )
 target_link_libraries(fast_task PUBLIC ${Boost_LIBRARIES})

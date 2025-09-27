@@ -26,6 +26,12 @@ namespace fast_task {
         }
     };
 
+    struct FT_API invalid_native_context final : public exception {
+        inline const char* what() override {
+            return "Task called native thread only function.";
+        }
+    };
+
     struct FT_API no_assignable_workers final : public exception {
         inline const char* what() override {
             return "Tried to assign task to binded workers, but there no worker that allows implicit start.";

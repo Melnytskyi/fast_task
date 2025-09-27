@@ -7,6 +7,7 @@
 #ifndef FAST_TASK_INCLUDE_INTERPUT
 #define FAST_TASK_INCLUDE_INTERPUT
 #include "shared.hpp"
+#include <cstddef>
 #include <cstdint>
 
 namespace fast_task {

@@ -7,10 +7,7 @@
 namespace fast_task {
     void* allocate(std::size_t bytes) {
         interrupt_unsafe_region region;
-        void* ptr = malloc(bytes);
-        if (ptr == nullptr)
-            throw std::bad_alloc();
-        return ptr;
+        return malloc(bytes);
     }
 
     void free(void* p) {
@@ -21,10 +18,7 @@ namespace fast_task {
 
 void* operator new(std::size_t n, fast_task::allocator_tag) noexcept(false) {
     fast_task::interrupt_unsafe_region region;
-    void* ptr = malloc(n);
-    if (ptr == nullptr)
-        throw std::bad_alloc();
-    return ptr;
+    return malloc(n);
 }
 
 void operator delete(void* p, fast_task::allocator_tag) noexcept {
@@ -34,10 +28,7 @@ void operator delete(void* p, fast_task::allocator_tag) noexcept {
 
 void* operator new[](std::size_t s, fast_task::allocator_tag) noexcept(false) {
     fast_task::interrupt_unsafe_region region;
-    void* ptr = malloc(s);
-    if (ptr == nullptr)
-        throw std::bad_alloc();
-    return ptr;
+    return malloc(s);
 }
 
 void operator delete[](void* p, fast_task::allocator_tag) noexcept {

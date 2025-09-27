@@ -20,10 +20,14 @@
     #undef min
 
 namespace fast_task {
+    namespace debug {
+        struct _debug_collect;
+    }
     class task;
 
     class FT_API task_mutex {
         friend class task_recursive_mutex;
+        friend struct debug::_debug_collect;
         struct FT_API_LOCAL resume_task;
 
         struct FT_API_LOCAL private_values {
@@ -47,6 +51,7 @@ namespace fast_task {
     };
 
     class FT_API task_recursive_mutex {
+        friend struct debug::_debug_collect;
         task_mutex mutex;
         uint32_t recursive_count = 0;
 
@@ -65,6 +70,7 @@ namespace fast_task {
     };
 
     class FT_API task_rw_mutex {
+        friend struct debug::_debug_collect;
         struct FT_API_LOCAL resume_task;
 
         struct FT_API_LOCAL private_values {
@@ -76,6 +82,7 @@ namespace fast_task {
         } values;
 
     public:
+        using read_write_mutex = void;
         task_rw_mutex();
         ~task_rw_mutex();
 
@@ -94,6 +101,30 @@ namespace fast_task {
         void write_unlock();
         bool is_write_locked();
         void lifecycle_write_lock(std::shared_ptr<task>& task);
+
+        void lock() {
+            write_lock();
+        }
+
+        void unlock() {
+            write_unlock();
+        }
+
+        bool try_lock() {
+            try_write_lock();
+        }
+
+        void lock_shared() {
+            read_lock();
+        }
+
+        void unlock_shared() {
+            read_unlock();
+        }
+
+        bool try_lock_shared() {
+            try_read_lock();
+        }
 
         bool is_own();
     };
@@ -126,12 +157,12 @@ namespace fast_task {
         }
     };
 
-    template <class T>
+    template <class T, class mutex_t = task_rw_mutex>
     class protected_value {
         T value;
 
     public:
-        task_rw_mutex mutex;
+        mutable mutex_t mutex;
 
         template <class... Args>
         protected_value(Args&&... args)
@@ -144,13 +175,13 @@ namespace fast_task {
 
         template <class _Accessor>
         decltype(auto) get(_Accessor&& accessor) const {
-            read_lock lock(const_cast<task_rw_mutex&>(mutex));
-            return accessor(const_cast<const T&>(value));
+            shared_lock lock(mutex);
+            return accessor(value);
         }
 
         template <class _Accessor>
         decltype(auto) set(_Accessor&& accessor) {
-            write_lock lock(mutex);
+            unique_lock lock(mutex);
             return accessor(value);
         }
     };
@@ -260,6 +291,7 @@ namespace fast_task {
     };
 
     class FT_API task_condition_variable {
+        friend struct debug::_debug_collect;
         struct FT_API_LOCAL resume_task;
 
         struct FT_API_LOCAL private_values {
@@ -304,6 +336,7 @@ namespace fast_task {
     class FT_API task {
         void awaitEnd(fast_task::unique_lock<mutex_unify>& l);
         struct FT_API_LOCAL execution_data;
+
         struct FT_API_LOCAL data {
             union FT_API_LOCAL callbacks_data {
                 bool is_extended_mode : 1 = false;
@@ -381,11 +414,13 @@ namespace fast_task {
             bool auto_bind_worker : 1 = false;
             bool invalid_switch_caught : 1 = false;
             bool completed : 1 = false;
-            execution_data* data = nullptr;
+            execution_data* exdata = nullptr;
         } data_;
 
+        friend task::data& get_data(task* task);
         friend task::data& get_data(std::shared_ptr<task>& task);
         friend task::data& get_data(const std::shared_ptr<task>& task);
+        friend task::execution_data& get_execution_data(task* task);
         friend task::execution_data& get_execution_data(std::shared_ptr<task>& task);
         friend task::execution_data& get_execution_data(const std::shared_ptr<task>& task);
 
@@ -437,6 +472,7 @@ namespace fast_task {
         };
 
         static std::shared_ptr<task> run(std::function<void()>&& func);
+        static std::shared_ptr<task> create(std::function<void()>&& func);
 
 
         static void await_task(const std::shared_ptr<task>& lgr_task, bool make_start = true);
@@ -465,6 +501,10 @@ namespace fast_task {
             inline constexpr long long high_max_quantum_ns = 240 * 1000000;
         };
 
+        void FT_API schedule_until(std::shared_ptr<task>&& task, std::chrono::high_resolution_clock::time_point time_point);
+        void FT_API schedule_until(const std::shared_ptr<task>& task, std::chrono::high_resolution_clock::time_point time_point);
+
+
         template <class Dur_resolution, class Dur_type>
         void schedule(std::shared_ptr<task>&& task, std::chrono::duration<Dur_resolution, Dur_type> duration) {
             schedule_until(std::move(task), std::chrono::high_resolution_clock::now() + duration);
@@ -474,9 +514,6 @@ namespace fast_task {
         void schedule(const std::shared_ptr<task>& task, std::chrono::duration<Dur_resolution, Dur_type> duration) {
             schedule_until(task, std::chrono::high_resolution_clock::now() + duration);
         }
-
-        void FT_API schedule_until(std::shared_ptr<task>&& task, std::chrono::high_resolution_clock::time_point time_point);
-        void FT_API schedule_until(const std::shared_ptr<task>& task, std::chrono::high_resolution_clock::time_point time_point);
         void FT_API start(std::shared_ptr<task>&& lgr_task);
         void FT_API start(std::list<std::shared_ptr<task>>& lgr_task);
         void FT_API start(std::vector<std::shared_ptr<task>>& lgr_task);
@@ -496,6 +533,19 @@ namespace fast_task {
 
         void FT_API explicit_start_timer();
         void FT_API shut_down();
+
+
+        /**
+         * @brief requests stop the world to scheduler and the scheduler would stop its execution 
+         *         and including internal threads and then runs the function. 
+         *         This means the function is allowed only and only in native threads.
+         *         
+         *  @note Could be used for GC or debugging purposes
+         *  @param func The function to execute when all workers stopped
+         *  @throws `invalid_native_context` in task context
+         *  @returns noting
+         */
+        void FT_API request_stw(const std::function<void()>& func);
 
         //DEBUG ONLY, not recommended use in production
         void FT_API clean_up();
@@ -520,6 +570,7 @@ namespace fast_task {
     }
 
     class FT_API task_semaphore {
+        friend struct debug::_debug_collect;
         struct FT_API_LOCAL resume_task;
 
         struct private_values {
@@ -534,7 +585,7 @@ namespace fast_task {
         task_semaphore();
         ~task_semaphore();
 
-        void setMaxThreshold(size_t val);
+        void set_max_threshold(size_t val);
         void lock();
         bool try_lock();
         bool try_lock_for(size_t milliseconds);
@@ -545,6 +596,7 @@ namespace fast_task {
     };
 
     class FT_API task_limiter {
+        friend struct debug::_debug_collect;
         struct FT_API_LOCAL resume_task;
 
         struct private_values {
@@ -573,6 +625,7 @@ namespace fast_task {
     };
 
     class FT_API task_query {
+        friend struct debug::_debug_collect;
         struct task_query_handle* handle;
         friend void __TaskQuery_add_task_leave(struct task_query_handle* tqh);
 
@@ -592,6 +645,7 @@ namespace fast_task {
     };
 
     class FT_API deadline_timer {
+        friend struct debug::_debug_collect;
         struct handle;
         handle* hh;
 

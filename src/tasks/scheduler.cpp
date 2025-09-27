@@ -107,7 +107,20 @@ namespace fast_task {
             try {
                 loc.scheduler_fiber = std::move(loc.scheduler_fiber).resume();
             } catch (const boost::context::detail::forced_unwind&) {
+                preserve_interput_data;
                 --glob.tasks_in_swap;
+                loc.context_in_swap = true;
+                auto relock_state_0 = get_data(loc.curr_task).relock_0;
+                auto relock_state_1 = get_data(loc.curr_task).relock_1;
+                auto relock_state_2 = get_data(loc.curr_task).relock_2;
+                get_data(loc.curr_task).relock_0 = nullptr;
+                get_data(loc.curr_task).relock_1 = nullptr;
+                get_data(loc.curr_task).relock_2 = nullptr;
+                relock_state_0.relock_end();
+                relock_state_1.relock_end();
+                relock_state_2.relock_end();
+                get_data(loc.curr_task).awake_check++;
+                loc.context_in_swap = false;
                 throw;
             }
             preserve_interput_data;
@@ -418,22 +431,22 @@ namespace fast_task {
         fast_task::unique_lock guard(glob.task_thread_safety);
         ++glob.executors;
         while (true) {
+            check_stw(guard);
             if (taskExecutor_check_next(guard, end_in_task_out))
                 break;
             if (loadTask())
                 continue;
-
-            guard.unlock();
             if (get_data(loc.curr_task).bind_to_worker_id != (uint16_t)-1) {
                 transfer_task(loc.curr_task);
-                guard.lock();
                 continue;
             }
+            guard.unlock();
             if (execute_task(old_name))
                 break;
             guard.lock();
         }
         --glob.executors;
+        --glob.thread_count;
         glob.executor_shutdown_notifier.notify_all();
         if (!prevent_naming)
             _set_name_thread_dbg(old_name);
@@ -461,6 +474,7 @@ namespace fast_task {
         fast_task::unique_lock guard(safety);
         context.executors++;
         while (true) {
+            check_stw(guard);
             while (queue.empty()) {
                 if (context.in_close) {
                     guard.unlock();
@@ -470,15 +484,13 @@ namespace fast_task {
             }
             loc.curr_task = queue.back();
             queue.pop_back();
-            guard.unlock();
 
             if (get_data(loc.curr_task).bind_to_worker_id != (uint16_t)id) {
                 transfer_task(loc.curr_task);
-                guard.lock();
                 continue;
             }
+            guard.unlock();
             loc.is_task_thread = true;
-            loc.scheduler_fiber = std::move(get_execution_data(loc.curr_task).context);
             if (execute_task(old_name))
                 break;
             completions += 1;
@@ -498,6 +510,7 @@ namespace fast_task {
 
         initializer_guard.lock();
         context.completions.erase(to_remove_after_death);
+        --glob.thread_count;
     }
 
 #pragma endregion
@@ -565,6 +578,8 @@ namespace fast_task {
                     }
                 glob.tasks_notifier.notify_all();
             }
+
+            check_stw();
             guard.lock();
             if (glob.timed_tasks.empty() && glob.cold_timed_tasks.empty())
                 glob.time_notifier.wait(guard);
@@ -589,6 +604,7 @@ namespace fast_task {
         fast_task::lock_guard guard(glob.task_timer_safety);
         if (glob.time_control_enabled)
             return;
+        ++glob.thread_count;
         fast_task::thread(taskTimer).detach();
         glob.time_control_enabled = true;
     }

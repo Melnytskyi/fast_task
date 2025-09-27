@@ -26,12 +26,15 @@
     #endif
 
 
+    #include <barrier>
     #include <boost/context/continuation.hpp>
     #include <exception>
     #include <queue>
+    #include <unordered_set>
 
     #include <shared.hpp>
     #include <task.hpp>
+    #include <tasks/util/_dbg_macro.hpp>
 
 namespace fast_task {
     struct task::execution_data {
@@ -50,6 +53,77 @@ namespace fast_task {
     #endif
     };
 
+    struct task_condition_variable::resume_task {
+        std::shared_ptr<task> task;
+        uint16_t awake_check = 0;
+        fast_task::condition_variable_any* native_cv = nullptr;
+        bool* native_check = nullptr;
+    };
+
+    struct task_limiter::resume_task {
+        std::shared_ptr<task> task;
+        uint16_t awake_check;
+    };
+
+    struct task_mutex::resume_task {
+        std::shared_ptr<task> task;
+        uint16_t awake_check = 0;
+        fast_task::condition_variable_any* native_cv = nullptr;
+        bool* native_check = nullptr;
+    };
+
+    struct task_query_handle {                  //128 [sizeof]
+        task_mutex no_race;                     //40
+        task_condition_variable end_of_query;   //32
+        std::list<std::shared_ptr<task>> tasks; //24
+        task_query* tq = nullptr;               //8
+        size_t now_at_execution = 0;            //8
+        size_t at_execution_max = 0;            //8
+        bool destructed = false;                //1
+        bool is_running = false;                //1
+                                                //6 [padding]
+    };
+
+    struct task_rw_mutex::resume_task {
+        std::shared_ptr<task> task;
+        uint16_t awake_check = 0;
+        fast_task::condition_variable_any* native_cv = nullptr;
+        bool* native_check = nullptr;
+    };
+
+    struct task_semaphore::resume_task {
+        std::shared_ptr<task> task;
+        uint16_t awake_check;
+    };
+
+    struct deadline_timer::handle {
+        std::atomic_size_t usage_count{1}; // The reference counter
+        task_mutex no_race;
+        std::chrono::high_resolution_clock::time_point time_point;
+        std::unordered_set<void*> canceled_tasks; //fast_task::task
+        std::list<task*> scheduled_tasks;
+        bool shutdown = false;
+
+        static handle* create() {
+            return new handle{};
+        }
+
+        handle* acquire() {
+            usage_count.fetch_add(1, std::memory_order_relaxed);
+            return this;
+        }
+
+        void release() {
+            if (usage_count.fetch_sub(1, std::memory_order_release) == 1) {
+                std::atomic_thread_fence(std::memory_order_acquire);
+                delete this;
+            }
+        }
+    };
+
+    inline auto FT_API_LOCAL get_data(task* task) -> task::data& {
+        return task->data_;
+    }
 
     inline auto FT_API_LOCAL get_data(std::shared_ptr<task>& task) -> task::data& {
         return task->data_;
@@ -59,15 +133,23 @@ namespace fast_task {
         return task->data_;
     }
 
+    inline auto FT_API_LOCAL get_execution_data(task* task) -> task::execution_data& {
+        auto& it = get_data(task).exdata;
+        if (!it)
+            it = new task::execution_data{};
+        return *it;
+    }
+
+
     inline auto FT_API_LOCAL get_execution_data(std::shared_ptr<task>& task) -> task::execution_data& {
-        auto& it = get_data(task).data;
+        auto& it = get_data(task).exdata;
         if (!it)
             it = new task::execution_data{};
         return *it;
     }
 
     inline auto FT_API_LOCAL get_execution_data(const std::shared_ptr<task>& task) -> task::execution_data& {
-        auto& it = get_data(task).data;
+        auto& it = get_data(task).exdata;
         if (!it)
             it = new task::execution_data{};
         return *it;
@@ -160,7 +242,52 @@ namespace fast_task {
 
         fast_task::mutex binded_workers_safety;
         std::unordered_map<uint16_t, binded_context, std::hash<uint16_t>> binded_workers;
+
+
+        std::atomic<bool> stw_request{false};
+        std::unique_ptr<std::barrier<>> stw_barrier_enter;
+        std::unique_ptr<std::barrier<>> stw_barrier_exit;
+        std::atomic<size_t> thread_count{0}; //including native worker and timer
+        fast_task::mutex stw_mutex;
     };
+
+    extern thread_local FT_API_LOCAL executors_local loc;
+    extern FT_API_LOCAL executor_global glob;
+    constexpr size_t native_thread_flag = size_t(1) << (sizeof(size_t) * 8 - 1);
+
+    inline void FT_API_LOCAL unsafe_perform_stop_the_world(const std::function<void()>& work) {
+        std::lock_guard lock(glob.stw_mutex);
+        size_t thread_count = glob.thread_count.load(std::memory_order_relaxed);
+        if (thread_count == 0) {
+            work();
+            return;
+        }
+
+        glob.stw_barrier_enter = std::make_unique<std::barrier<>>(thread_count + 1); // +1 for this thread
+        glob.stw_barrier_exit = std::make_unique<std::barrier<>>(thread_count + 1);
+        glob.stw_request.store(true, std::memory_order_release);
+        glob.time_notifier.notify_all();
+        glob.stw_barrier_enter->arrive_and_wait(); // Wait for all executors to pause
+        work();                                    // Execute the dump
+        glob.stw_request.store(false, std::memory_order_relaxed);
+        glob.stw_barrier_exit->arrive_and_wait(); // Signal executors to resume
+    }
+
+    template <class Mut>
+    void FT_API_LOCAL check_stw(Mut& mut) {
+        if (glob.stw_request.load(std::memory_order_acquire)) {
+            relock_guard rlck(mut);
+            glob.stw_barrier_enter->arrive_and_wait();
+            glob.stw_barrier_exit->arrive_and_wait();
+        }
+    }
+
+    inline void FT_API_LOCAL check_stw() {
+        if (glob.stw_request.load(std::memory_order_acquire)) {
+            glob.stw_barrier_enter->arrive_and_wait();
+            glob.stw_barrier_exit->arrive_and_wait();
+        }
+    }
 
     void FT_API_LOCAL startTimeController();
     void FT_API_LOCAL swapCtx();
@@ -184,9 +311,25 @@ namespace fast_task {
     unsigned long FT_API_LOCAL _thread_id();
     bool FT_API_LOCAL is_debugger_attached();
 
-    extern thread_local FT_API_LOCAL executors_local loc;
-    extern FT_API_LOCAL executor_global glob;
-    constexpr size_t native_thread_flag = size_t(1) << (sizeof(size_t) * 8 - 1);
+    FT_DEBUG_ONLY(void FT_API_LOCAL register_object(task_mutex*));
+    FT_DEBUG_ONLY(void FT_API_LOCAL register_object(task_recursive_mutex*));
+    FT_DEBUG_ONLY(void FT_API_LOCAL register_object(task_rw_mutex*));
+    FT_DEBUG_ONLY(void FT_API_LOCAL register_object(task_condition_variable*));
+    FT_DEBUG_ONLY(void FT_API_LOCAL register_object(task*));
+    FT_DEBUG_ONLY(void FT_API_LOCAL register_object(task_semaphore*));
+    FT_DEBUG_ONLY(void FT_API_LOCAL register_object(task_limiter*));
+    FT_DEBUG_ONLY(void FT_API_LOCAL register_object(task_query*));
+    FT_DEBUG_ONLY(void FT_API_LOCAL register_object(deadline_timer*));
+
+    FT_DEBUG_ONLY(void FT_API_LOCAL unregister_object(task_mutex*));
+    FT_DEBUG_ONLY(void FT_API_LOCAL unregister_object(task_recursive_mutex*));
+    FT_DEBUG_ONLY(void FT_API_LOCAL unregister_object(task_rw_mutex*));
+    FT_DEBUG_ONLY(void FT_API_LOCAL unregister_object(task_condition_variable*));
+    FT_DEBUG_ONLY(void FT_API_LOCAL unregister_object(task*));
+    FT_DEBUG_ONLY(void FT_API_LOCAL unregister_object(task_semaphore*));
+    FT_DEBUG_ONLY(void FT_API_LOCAL unregister_object(task_limiter*));
+    FT_DEBUG_ONLY(void FT_API_LOCAL unregister_object(task_query*));
+    FT_DEBUG_ONLY(void FT_API_LOCAL unregister_object(deadline_timer*));
 }
 
 #endif

@@ -5,6 +5,7 @@
     "dependencies": [
         "boost-context",
         "boost-lockfree",
+        "cpptrace",
         {
             "name": "liburing",
             "platform": "linux"

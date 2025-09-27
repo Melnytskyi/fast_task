@@ -2688,12 +2688,12 @@ namespace fast_task::networking {
             shutdown();
         }
 
-        void handle(util::native_worker_handle* completion, io_uring_cqe* cqe) override {
+        void handle(util::native_worker_handle* completion, int32_t res, [[maybe_unused]] uint32_t flags) override {
             auto data = (tcp_handle_2::operation*)completion;
             if (data->accept_flag)
-                new_connection(data, *data->self, cqe->res, cqe->res < 0 ? -cqe->res : 0);
+                new_connection(data, *data->self, res, res < 0 ? -res : 0);
             else
-                data->handle(cqe->res < 0 ? 0 : cqe->res, cqe->res < 0 ? -cqe->res : 0);
+                data->handle(res < 0 ? 0 : res, res < 0 ? -res : 0);
         }
 
         void set_on_connect(std::function<void(tcp_network_stream&)> handler_fn) {
@@ -2856,9 +2856,9 @@ namespace fast_task::networking {
         bool corrupted = false;
 
     public:
-        void handle(util::native_worker_handle* overlapped, io_uring_cqe* cqe) override {
+        void handle(util::native_worker_handle* overlapped, int32_t res, [[maybe_unused]] uint32_t flags) override {
             tcp_handle_2::operation& handle = *(tcp_handle_2::operation*)overlapped;
-            handle.handle(cqe->res, cqe->res < 0 ? -cqe->res : 0);
+            handle.handle(res, res < 0 ? -res : 0);
         }
 
         tcp_client_manager(sockaddr_in6& _connectionAddress, const tcp_configuration& config)
@@ -3127,9 +3127,9 @@ namespace fast_task::networking {
             server_address = address;
         }
 
-        void handle(util::native_worker_handle* _, io_uring_cqe* cqe) override {
-            this->fullifed_bytes = cqe->res > -1 ? cqe->res : 0;
-            this->last_error = cqe->res > -1 ? 0 : errno;
+        void handle(util::native_worker_handle* _, int32_t res, [[maybe_unused]] uint32_t flags) override {
+            this->fullifed_bytes = res > -1 ? res : 0;
+            this->last_error = res > -1 ? 0 : errno;
 
             unique_lock lock(mt);
             is_complete = true;

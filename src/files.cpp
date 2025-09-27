@@ -488,7 +488,7 @@ namespace fast_task::files {
                 file->awaiter = nullptr;
                 if (data->error != io_errors::no_error && data->error != io_errors::eof) {
                     io_error_to_exception(data->error);
-                    std::unreachable();
+                    throw std::runtime_error("Unreachable");
                 } else
                     return std::vector<uint8_t>((uint8_t*)data->data, (uint8_t*)data->data + data->completed_bytes);
             });
@@ -517,7 +517,7 @@ namespace fast_task::files {
 
             if (data->error != io_errors::no_error && data->error != io_errors::eof) {
                 io_error_to_exception(data->error);
-                std::unreachable();
+                throw std::runtime_error("Unreachable");
             } else
                 return data->completed_bytes;
         }
@@ -548,7 +548,7 @@ namespace fast_task::files {
                 file->awaiter = nullptr;
                 if (data->error != io_errors::no_error) {
                     io_error_to_exception(data->error);
-                    std::unreachable();
+                    throw std::runtime_error("Unreachable");
                 }
             });
         }
@@ -576,7 +576,7 @@ namespace fast_task::files {
             task::await_task(task_);
             if (data->error != io_errors::no_error) {
                 io_error_to_exception(data->error);
-                std::unreachable();
+                throw std::runtime_error("Unreachable");
             }
         }
 
@@ -595,7 +595,7 @@ namespace fast_task::files {
                 file->awaiter = nullptr;
                 if (data->error != io_errors::no_error) {
                     io_error_to_exception(data->error);
-                    std::unreachable();
+                    throw std::runtime_error("Unreachable");
                 }
             });
         }
@@ -613,7 +613,7 @@ namespace fast_task::files {
             task::await_task(task_);
             if (data->error != io_errors::no_error) {
                 io_error_to_exception(data->error);
-                std::unreachable();
+                throw std::runtime_error("Unreachable");
             }
         }
 
@@ -1363,12 +1363,12 @@ namespace fast_task::files {
                 return res;
         }
 
-        void handle(class util::native_worker_handle* overlapped, io_uring_cqe* cqe) override {
+        void handle(class util::native_worker_handle* overlapped, int32_t res, uint32_t flags) override {
             auto file = (File_*)overlapped;
-            if (cqe->res <= 0)
-                file->error_filter(-cqe->res);
+            if (res <= 0)
+                file->error_filter(-res);
             else
-                file->operation_fullifed(cqe->res);
+                file->operation_fullifed(res);
         }
 
         std::string get_path() const {
