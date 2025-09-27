@@ -205,7 +205,7 @@ namespace fast_task::debug {
         size_t counter_interrupt;
         size_t counter_context_switch;
         task_priority priority;
-        uint16_t awake_check;
+        uint16_t awake_check; //if check does not match with check from awake_item the awake is invalid and would be ignored by scheduler. This is intended behavior.
         uint16_t bind_to_worker_id;
         bool time_end_flag : 1;
         bool started : 1;
@@ -228,7 +228,8 @@ namespace fast_task::debug {
 
     struct FT_API raw_mutex_info {
         uintptr_t mutex_id;
-        uintptr_t owner_task_id; //optional
+        uintptr_t owner_id; //optional
+        bool owner_is_native;
         array<awake_item> waiting_tasks_ids;
         raw_stack_trace* init_call_stack = nullptr;
 
@@ -254,7 +255,8 @@ namespace fast_task::debug {
 
     struct FT_API raw_rw_mutex_info {
         uintptr_t mutex_id;
-        uintptr_t writer_task_id;          //optional //if defined the readers is locked
+        uintptr_t writer_id; //optional //if defined the readers is locked
+        bool writer_is_native;
         array<uintptr_t> reader_tasks_ids; //if this defined and `writer_task_id` defined the readers locking the writer
         array<awake_item> wait_tasks_ids;
         raw_stack_trace* init_call_stack = nullptr;

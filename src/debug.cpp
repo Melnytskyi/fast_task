@@ -100,7 +100,13 @@ namespace fast_task::debug {
                 auto& [id, trace, created_by_id, created_by_is_native] = ddata;
                 raw_mutex_info& info = dump.mutexes[i++];
                 info.mutex_id = id;
-                info.owner_task_id = mutd->values.current_task ? reg.task_instances.at(mutd->values.current_task).virtual_id : FT_DEBUG_OPTIONAL;
+                if (size_t(mutd->values.current_task) & native_thread_flag) {
+                    info.owner_is_native = true;
+                    info.owner_id = size_t(mutd->values.current_task) ^ native_thread_flag;
+                } else {
+                    info.owner_id = mutd->values.current_task ? reg.task_instances.at(mutd->values.current_task).virtual_id : FT_DEBUG_OPTIONAL;
+                    info.owner_is_native = false;
+                }
                 size_t coll = 0;
                 info.waiting_tasks_ids = array<awake_item>(mutd->values.resume_task.size());
                 for (auto& it : mutd->values.resume_task) {
@@ -140,7 +146,13 @@ namespace fast_task::debug {
                 auto& [id, trace, created_by_id, created_by_is_native] = ddata;
                 raw_rw_mutex_info& info = dump.rw_mutexes[i++];
                 info.mutex_id = id;
-                info.writer_task_id = mutd->values.current_writer_task ? reg.task_instances.at(mutd->values.current_writer_task).virtual_id : FT_DEBUG_OPTIONAL;
+                if (size_t(mutd->values.current_writer_task) & native_thread_flag) {
+                    info.writer_is_native = true;
+                    info.writer_id = size_t(mutd->values.current_writer_task) ^ native_thread_flag;
+                } else {
+                    info.writer_id = mutd->values.current_writer_task ? reg.task_instances.at(mutd->values.current_writer_task).virtual_id : FT_DEBUG_OPTIONAL;
+                    info.writer_is_native = false;
+                }
 
                 size_t coll = 0;
                 info.reader_tasks_ids = array<uintptr_t>(mutd->values.readers.size());
@@ -380,8 +392,8 @@ namespace fast_task::debug {
         en.dat = new raw_stack_trace::entry::lazy_resolve{
             .symbol = frame.symbol,
             .file = frame.filename,
-            .line = frame.line.value(),
-            .column = frame.column.value(),
+            .line = frame.line.value() == UINT32_MAX ? int64_t(-1) : frame.line.value(),
+            .column = frame.column.value() == UINT32_MAX ? int64_t(-1) : frame.column.value(),
             .is_inline = frame.is_inline
         };
         return *en.dat;
@@ -645,7 +657,10 @@ namespace fast_task::debug {
         ii << space << "Await items: " << std::endl;
         space += '\t';
         for (auto& it : items)
-            ii << space << "id-" << it.id << ", awake_check-" << it.awake_check << ", native_awake-" << it.native_awake << std::endl;
+            if (it.native_awake)
+                ii << space << "native thread" << std::endl;
+            else
+                ii << space << "id-" << it.id << ", awake_check-" << it.awake_check << std::endl;
     }
 
     void FT_API dump_task_ids_(files::async_iofstream& ii, array<uintptr_t>& items, size_t t_count) {
@@ -697,7 +712,9 @@ namespace fast_task::debug {
             if (it.init_call_stack)
                 dump_stack_(ii, *it.init_call_stack, 2);
             dump_await_(ii, it.waiting_tasks_ids, 2);
-            ii << "\t\tOwner: " << (it.owner_task_id == FT_DEBUG_OPTIONAL ? std::to_string(it.owner_task_id) : "none") << std::endl;
+            ii << "\t\tOwner: " << (it.owner_id != FT_DEBUG_OPTIONAL ? std::to_string(it.owner_id) : "none");
+            if (it.owner_id != FT_DEBUG_OPTIONAL)
+                ii << (it.owner_is_native ? " thread" : " task") << std::endl;
         }
         for (auto& it : dump.queries) {
             ii << "\tQuery " << it.query_id << std::endl;
@@ -724,7 +741,9 @@ namespace fast_task::debug {
             ii << "\t\tCreated by: " << it.created_by_id << (it.created_by_is_native ? " thread" : " task") << std::endl;
             if (it.init_call_stack)
                 dump_stack_(ii, *it.init_call_stack, 2);
-            ii << "\t\tWriter: " << (it.writer_task_id == FT_DEBUG_OPTIONAL ? std::to_string(it.writer_task_id) : "none") << std::endl;
+            ii << "\t\tWriter: " << (it.writer_id != FT_DEBUG_OPTIONAL ? std::to_string(it.writer_id) : "none");
+            if (it.writer_id != FT_DEBUG_OPTIONAL)
+                ii << (it.writer_is_native ? " thread" : " task") << std::endl;
             ii << "\t\tReader tasks: " << std::endl;
             dump_task_ids_(ii, it.reader_tasks_ids, 2);
             dump_await_(ii, it.wait_tasks_ids, 2);
@@ -746,7 +765,7 @@ namespace fast_task::debug {
                 dump_stack_(ii, *it.init_call_stack, 2);
 
             ii << "\t\tCall stack" << std::endl;
-            dump_stack_(ii, *it.init_call_stack, 2);
+            dump_stack_(ii, it.call_stack, 2);
             switch (it.priority) {
             case task_priority::background:
                 ii << "\t\tPriority: background" << std::endl;
