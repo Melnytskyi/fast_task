@@ -150,6 +150,7 @@ namespace fast_task {
             ~file_handle();
 
             bool is_open() const;
+            void close();
 
             future_ptr<std::vector<uint8_t>> read(uint32_t size);
             uint32_t read(uint8_t* data, uint32_t size);
@@ -453,10 +454,63 @@ namespace fast_task {
                     return handle.is_open();
                 }
             };
+
+            class atomic_async_ofstream : public std::iostream {
+                file_handle handle;
+                std::filesystem::path real_path;
+
+            public:
+                explicit atomic_async_ofstream(const char* str)
+                    : atomic_async_ofstream(std::filesystem::path(str)) {}
+
+                explicit atomic_async_ofstream(const std::string& str)
+                    : atomic_async_ofstream(std::filesystem::path(str)) {}
+
+                explicit atomic_async_ofstream(const wchar_t* str)
+                    : atomic_async_ofstream(std::filesystem::path(str)) {}
+
+                explicit atomic_async_ofstream(const std::wstring& str)
+                    : atomic_async_ofstream(std::filesystem::path(str)) {}
+
+                explicit atomic_async_ofstream(const std::filesystem::path& path)
+                    : std::iostream(nullptr),
+                      real_path(path),
+                      handle(
+                          file_handle::open(
+                              path.string() + ".atomic.tmp",
+                              open_mode::write,
+                              on_open_action::always_new,
+                              _sync_flags{},
+                              share_mode{true, false, false}
+                          )
+                      ) {
+                    if (handle.is_open()) {
+                        set_rdbuf(new async_filebuf(handle));
+                        clear();
+                    } else
+                        setstate(std::ios_base::badbit);
+                }
+
+                ~atomic_async_ofstream() {
+                    if (handle.is_open()) {
+                        if (rdbuf()) {
+                            flush();
+                            delete rdbuf();
+                        }
+                        handle.close();
+                        std::filesystem::rename(real_path.string() + ".atomic.tmp", real_path);
+                    }
+                }
+
+                bool is_open() const {
+                    return handle.is_open();
+                }
+            };
         };
 
         using async_filebuf = __force_static_iofstream<true>::async_filebuf;
         using async_iofstream = __force_static_iofstream<true>::async_iofstream;
+        using atomic_async_ofstream = __force_static_iofstream<true>::atomic_async_ofstream; //the writes done to temporary file and replaces the temporary with real one atomically without corrupting the data
     }
 }
 

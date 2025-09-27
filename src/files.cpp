@@ -1480,6 +1480,12 @@ namespace fast_task::files {
         return handle;
     }
 
+    void file_handle::close() {
+        if (handle)
+            delete handle;
+        handle = nullptr;
+    }
+
     future_ptr<std::vector<uint8_t>> file_handle::read(uint32_t size) {
         if (!handle)
             throw file_closed();
