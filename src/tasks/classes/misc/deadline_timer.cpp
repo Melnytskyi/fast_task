@@ -9,8 +9,31 @@ namespace fast_task {
 
         holder(T* res) : res(res->acquire()) {}
 
+        holder(const holder& copy) : res(copy.res->acquire()) {}
+
+        holder(holder&& mov) : res(mov.res) {
+            mov.res = nullptr;
+        }
+
+        holder& operator=(holder&& mov) {
+            if (res)
+                res->release();
+            res = mov.res;
+            mov.res = nullptr;
+            return *this;
+        }
+
+        holder& operator=(const holder& copy) {
+            if (res)
+                res->release();
+            res = copy.res->acquire();
+            return *this;
+        }
+
+
         ~holder() {
-            res->release();
+            if (res)
+                res->release();
         }
 
         T* operator->() {
@@ -44,6 +67,7 @@ namespace fast_task {
             hh->shutdown = true;
         }
         cancel();
+        hh = nullptr;
     }
 
     size_t deadline_timer::cancel() {

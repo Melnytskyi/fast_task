@@ -564,7 +564,8 @@ namespace fast_task {
                 std::vector<Ret> res;
                 res.resize(fut.size());
                 fut.for_each([&](size_t pos, auto& it) {
-                    res[pos] = it.take();
+                    if (it)
+                        res[pos] = it->take();
                 });
                 return res;
             });
@@ -578,7 +579,8 @@ namespace fast_task {
                 std::vector<Ret> res;
                 res.resize(fut.size());
                 fut.for_each([&](size_t pos, auto& it) {
-                    res[pos] = it.take();
+                    if (it)
+                        res[pos] = it->take();
                 });
                 return res;
             });
@@ -592,7 +594,8 @@ namespace fast_task {
                 std::vector<Ret> res;
                 res.resize(fut.size());
                 fut.for_each([&](size_t pos, auto& it) {
-                    res[pos] = it.take();
+                    if (it)
+                        res[pos] = it->take();
                 });
                 return res;
             });
@@ -606,7 +609,8 @@ namespace fast_task {
                 std::vector<Ret> res;
                 res.resize(fut.size());
                 fut.for_each([&](size_t pos, auto& it) {
-                    res[pos] = it.take();
+                    if (it)
+                        res[pos] = it->take();
                 });
                 return res;
             });
@@ -618,7 +622,8 @@ namespace fast_task {
             std::vector<future_ptr<void>> fut = {futures.begin(), futures.end()};
             return future<void>::start([fut = std::move(fut)] {
                 for (auto& future_ : fut)
-                    future_->wait();
+                    if (future_)
+                        future_->wait();
             });
         }
 
@@ -628,7 +633,8 @@ namespace fast_task {
             std::vector<future_ptr<void>> fut = {futures.begin(), futures.end()};
             return future<void>::start(query, [fut = std::move(fut)] {
                 for (auto& future_ : fut)
-                    future_->wait();
+                    if (future_)
+                        future_->wait();
             });
         }
 
@@ -637,7 +643,8 @@ namespace fast_task {
                 return future<void>::make_ready();
             return future<void>::start([fut = std::move(futures)] {
                 for (auto& future_ : fut)
-                    future_->wait();
+                    if (future_)
+                        future_->wait();
             });
         }
 
@@ -646,15 +653,38 @@ namespace fast_task {
                 return future<void>::make_ready();
             return future<void>::start(query, [fut = std::move(futures)] {
                 for (auto& future_ : fut)
-                    future_->wait();
+                    if (future_)
+                        future_->wait();
             });
         }
 
         template <class... Futures>
-        void each(Futures&&... futures) {
+        void wait_all(Futures&&... futures) {
             std::vector<future_ptr<void>> fut = {futures...};
             for (auto& future_ : fut)
-                future_->wait();
+                if (future_)
+                    future_->wait();
+        }
+
+        template <class T>
+        void wait_all(const std::vector<future_ptr<T>>& futures) {
+            for (auto& future_ : futures)
+                if (future_)
+                    future_->wait();
+        }
+
+        template <class T>
+        void wait_all(std::vector<future_ptr<T>>& futures) {
+            for (auto& future_ : futures)
+                if (future_)
+                    future_->wait();
+        }
+
+        template <class T>
+        void wait_all(std::vector<future_ptr<T>>&& futures) {
+            for (auto& future_ : futures)
+                if (future_)
+                    future_->wait();
         }
     }
 

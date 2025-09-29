@@ -562,11 +562,11 @@ namespace fast_task::debug {
     }
 
     std::optional<raw_stack_trace> request_task_stack_trace(const std::shared_ptr<task>&) {
-        return nullptr;
+        return std::nullopt;
     }
 
     std::optional<raw_stack_trace> request_task_init_stack_trace(const std::shared_ptr<task>&) {
-        return nullptr;
+        return std::nullopt;
     }
 
     bool is_debug_enabled() {
