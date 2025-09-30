@@ -431,7 +431,10 @@ namespace fast_task {
         static bool enable_task_naming;
 
         task(void* data, void (*on_start)(void*), void (*on_await)(void*), void (*on_cancel)(void*), void (*on_destruct)(void*), bool is_coroutine = false);
-        task(std::function<void()> func, std::function<void(const std::exception_ptr&)> ex_handle = nullptr, std::chrono::high_resolution_clock::time_point timeout = std::chrono::high_resolution_clock::time_point::min(), task_priority priority = task_priority::high);
+        task(const std::function<void()>& func, const std::function<void(const std::exception_ptr&)>& ex_handle, std::chrono::high_resolution_clock::time_point timeout = std::chrono::high_resolution_clock::time_point::min(), task_priority priority = task_priority::high);
+        task(const std::function<void()>& func, std::function<void(const std::exception_ptr&)>&& ex_handle = nullptr, std::chrono::high_resolution_clock::time_point timeout = std::chrono::high_resolution_clock::time_point::min(), task_priority priority = task_priority::high);
+        task(std::function<void()>&& func, const std::function<void(const std::exception_ptr&)>& ex_handle, std::chrono::high_resolution_clock::time_point timeout = std::chrono::high_resolution_clock::time_point::min(), task_priority priority = task_priority::high);
+        task(std::function<void()>&& func, std::function<void(const std::exception_ptr&)>&& ex_handle = nullptr, std::chrono::high_resolution_clock::time_point timeout = std::chrono::high_resolution_clock::time_point::min(), task_priority priority = task_priority::high);
 
         task(task&& mov) noexcept;
         ~task();

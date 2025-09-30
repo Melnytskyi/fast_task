@@ -31,7 +31,7 @@ namespace fast_task {
         FT_DEBUG_ONLY(register_object(this));
     }
 
-    task::task(std::function<void()> func, std::function<void(const std::exception_ptr&)> ex_handle, std::chrono::high_resolution_clock::time_point timeout, task_priority priority) : data_{.timeout = timeout.time_since_epoch().count()} {
+    task::task(const std::function<void()>& func, const std::function<void(const std::exception_ptr&)>& ex_handle, std::chrono::high_resolution_clock::time_point timeout, task_priority priority) : data_{.timeout = timeout.time_since_epoch().count()} {
 #if tasks_enable_preemptive_scheduler_preview
         data_.exdata = new execution_data();
         data_.exdata->priority = priority;
@@ -39,6 +39,39 @@ namespace fast_task {
         data_.callbacks.is_extended_mode = false;
         data_.callbacks.normal_mode.func = func;
         data_.callbacks.normal_mode.ex_handle = ex_handle;
+        FT_DEBUG_ONLY(register_object(this));
+    }
+
+    task::task(const std::function<void()>& func, std::function<void(const std::exception_ptr&)>&& ex_handle, std::chrono::high_resolution_clock::time_point timeout, task_priority priority) : data_{.timeout = timeout.time_since_epoch().count()} {
+#if tasks_enable_preemptive_scheduler_preview
+        data_.exdata = new execution_data();
+        data_.exdata->priority = priority;
+#endif
+        data_.callbacks.is_extended_mode = false;
+        data_.callbacks.normal_mode.func = func;
+        data_.callbacks.normal_mode.ex_handle = std::move(ex_handle);
+        FT_DEBUG_ONLY(register_object(this));
+    }
+
+    task::task(std::function<void()>&& func, const std::function<void(const std::exception_ptr&)>& ex_handle, std::chrono::high_resolution_clock::time_point timeout, task_priority priority) : data_{.timeout = timeout.time_since_epoch().count()} {
+#if tasks_enable_preemptive_scheduler_preview
+        data_.exdata = new execution_data();
+        data_.exdata->priority = priority;
+#endif
+        data_.callbacks.is_extended_mode = false;
+        data_.callbacks.normal_mode.func = std::move(func);
+        data_.callbacks.normal_mode.ex_handle = ex_handle;
+        FT_DEBUG_ONLY(register_object(this));
+    }
+
+    task::task(std::function<void()>&& func, std::function<void(const std::exception_ptr&)>&& ex_handle, std::chrono::high_resolution_clock::time_point timeout, task_priority priority) : data_{.timeout = timeout.time_since_epoch().count()} {
+#if tasks_enable_preemptive_scheduler_preview
+        data_.exdata = new execution_data();
+        data_.exdata->priority = priority;
+#endif
+        data_.callbacks.is_extended_mode = false;
+        data_.callbacks.normal_mode.func = std::move(func);
+        data_.callbacks.normal_mode.ex_handle = std::move(ex_handle);
         FT_DEBUG_ONLY(register_object(this));
     }
 
