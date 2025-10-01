@@ -105,7 +105,7 @@ namespace fast_task {
             preserve_interput_data;
             //TODO add exception preservation
             try {
-                loc.scheduler_fiber = std::move(loc.scheduler_fiber).resume();
+                *loc.stack_current_context = std::move(*loc.stack_current_context).resume();
             } catch (const boost::context::detail::forced_unwind&) {
                 preserve_interput_data;
                 --glob.tasks_in_swap;
@@ -181,7 +181,7 @@ namespace fast_task {
     }
 
     boost::context::continuation context_exec(boost::context::continuation&& sink) {
-        loc.scheduler_fiber = std::move(sink);
+        *loc.stack_current_context = std::move(sink);
         try {
             checkCancellation();
             flush_interput_data;
@@ -209,18 +209,18 @@ namespace fast_task {
                 get_data(loc.curr_task).result_notify.notify_all();
                 if (task::max_running_tasks)
                     glob.can_started_new_notifier.notify_one();
-                return std::move(loc.scheduler_fiber);
+                return std::move(*loc.stack_current_context);
             }
         }
         get_data(loc.curr_task).end_of_life = true;
         get_data(loc.curr_task).result_notify.notify_all();
         if (task::max_running_tasks)
             glob.can_started_new_notifier.notify_one();
-        return std::move(loc.scheduler_fiber);
+        return std::move(*loc.stack_current_context);
     }
 
     boost::context::continuation context_ex_handle(boost::context::continuation&& sink) {
-        loc.scheduler_fiber = std::move(sink);
+        *loc.stack_current_context = std::move(sink);
         try {
             checkCancellation();
             flush_interput_data;
@@ -244,7 +244,7 @@ namespace fast_task {
         --glob.in_run_tasks;
         if (task::max_running_tasks)
             glob.can_started_new_notifier.notify_one();
-        return std::move(loc.scheduler_fiber);
+        return std::move(*loc.stack_current_context);
     }
 
     void transfer_task(std::shared_ptr<task>& task) {
@@ -316,7 +316,7 @@ namespace fast_task {
                 glob.cold_tasks.pop();
             }
         }
-        loc.scheduler_fiber = std::move(get_execution_data(loc.curr_task).context);
+        loc.stack_current_context = &get_execution_data(loc.curr_task).context;
         return false;
     }
 
@@ -348,8 +348,8 @@ namespace fast_task {
 
 
         worker_mode_desk(old_name, "process task - " + std::to_string(this_task::get_id()));
-        if (loc.scheduler_fiber) {
-            loc.scheduler_fiber = std::move(loc.scheduler_fiber).resume();
+        if (*loc.stack_current_context) {
+            *loc.stack_current_context = std::move(*loc.stack_current_context).resume();
             get_data(loc.curr_task).relock_0.relock_start();
             get_data(loc.curr_task).relock_1.relock_start();
             get_data(loc.curr_task).relock_2.relock_start();
@@ -361,7 +361,7 @@ namespace fast_task {
             get_execution_data(loc.curr_task).stack_size = ss.size;
 #endif
             ++glob.in_run_tasks;
-            loc.scheduler_fiber = boost::context::callcc(std::allocator_arg, boost::context::preallocated(ss.sp, ss.size, ss), stack_alloc, context_exec);
+            *loc.stack_current_context = boost::context::callcc(std::allocator_arg, boost::context::preallocated(ss.sp, ss.size, ss), stack_alloc, context_exec);
             get_data(loc.curr_task).relock_0.relock_start();
             get_data(loc.curr_task).relock_1.relock_start();
             get_data(loc.curr_task).relock_2.relock_start();
@@ -374,14 +374,14 @@ namespace fast_task {
             get_execution_data(loc.curr_task).stack_size = ss.size;
 #endif
             ++glob.in_run_tasks;
-            loc.scheduler_fiber = boost::context::callcc(std::allocator_arg, boost::context::preallocated(ss.sp, ss.size, ss), stack_alloc, context_ex_handle);
+            *loc.stack_current_context = boost::context::callcc(std::allocator_arg, boost::context::preallocated(ss.sp, ss.size, ss), stack_alloc, context_ex_handle);
             get_data(loc.curr_task).relock_0.relock_start();
             get_data(loc.curr_task).relock_1.relock_start();
             get_data(loc.curr_task).relock_2.relock_start();
             loc.ex_ptr = nullptr;
         }
     end_task:
-        get_execution_data(loc.curr_task).context = std::move(loc.scheduler_fiber);
+        loc.stack_current_context = nullptr;
         loc.is_task_thread = false;
         if (!get_data(loc.curr_task).end_of_life && loc.curr_task.use_count() == 1) {
             get_data(loc.curr_task).invalid_switch_caught = true;
