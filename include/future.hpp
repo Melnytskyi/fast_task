@@ -464,6 +464,44 @@ namespace fast_task {
             });
         }
 
+        template <class T, class FN>
+        void for_each_wait(T& container, fast_task::task_query& query, FN&& fn) {
+            if (container.empty())
+                return future<void>::make_ready();
+            std::vector<cancelable_future_ptr<void>> futures;
+            futures.reserve(container.size());
+            for (auto& item : container)
+                futures.push_back(cancelable_future<void>::start(query, [&item, &fn]() { fn(item); }));
+
+            try {
+                for (auto& future_ : fut)
+                    future_->wait();
+            } catch (...) {
+                for (auto& future_ : fut)
+                    future_->cancel();
+                throw;
+            }
+        }
+
+        template <class T, class FN>
+        void for_each_wait(T& container, FN&& fn) {
+            if (container.empty())
+                return future<void>::make_ready();
+            std::vector<cancelable_future_ptr<void>> futures;
+            futures.reserve(container.size());
+            for (auto& item : container)
+                futures.push_back(cancelable_future<void>::start([&item, &fn]() { fn(item); }));
+
+            try {
+                for (auto& future_ : fut)
+                    future_->wait();
+            } catch (...) {
+                for (auto& future_ : fut)
+                    future_->cancel();
+                throw;
+            }
+        }
+
         template <class Result, class T, class FN>
         std::vector<Result> process(const std::vector<T>& container, FN&& fn) {
             if (container.empty())
