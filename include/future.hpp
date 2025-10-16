@@ -474,10 +474,10 @@ namespace fast_task {
                 futures.push_back(cancelable_future<void>::start(query, [&item, &fn]() { fn(item); }));
 
             try {
-                for (auto& future_ : fut)
+                for (auto& future_ : futures)
                     future_->wait();
             } catch (...) {
-                for (auto& future_ : fut)
+                for (auto& future_ : futures)
                     future_->cancel();
                 throw;
             }
@@ -493,10 +493,10 @@ namespace fast_task {
                 futures.push_back(cancelable_future<void>::start([&item, &fn]() { fn(item); }));
 
             try {
-                for (auto& future_ : fut)
+                for (auto& future_ : futures)
                     future_->wait();
             } catch (...) {
-                for (auto& future_ : fut)
+                for (auto& future_ : futures)
                     future_->cancel();
                 throw;
             }
