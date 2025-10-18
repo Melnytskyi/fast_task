@@ -184,7 +184,7 @@ namespace fast_task {
             }
         } else {
             auto old_func = std::move(get_data(lock_task).callbacks.normal_mode.func);
-            get_data(lock_task).callbacks.normal_mode.func = [old_func = std::move(old_func), this]() {
+            get_data(lock_task).callbacks.normal_mode.func = [old_func = std::move(old_func), this]() mutable {
                 fast_task::read_lock guard(*this);
                 old_func();
             };
@@ -369,7 +369,7 @@ namespace fast_task {
             }
         } else {
             auto old_func = std::move(get_data(lock_task).callbacks.normal_mode.func);
-            get_data(lock_task).callbacks.normal_mode.func = [old_func = std::move(old_func), this]() {
+            get_data(lock_task).callbacks.normal_mode.func = [old_func = std::move(old_func), this]() mutable {
                 fast_task::write_lock guard(*this);
                 old_func();
             };

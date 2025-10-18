@@ -14,9 +14,9 @@ namespace fast_task {
             delete ex_ptr;
     }
 
-    std::shared_ptr<future<void>> future<void>::start(const std::function<void()>& fn, uint16_t bind_id) {
+    std::shared_ptr<future<void>> future<void>::start(std::move_only_function<void()>&& fn, uint16_t bind_id) {
         std::shared_ptr<future> future_ = std::make_shared<future>();
-        auto task_ = std::make_shared<task>([fn, future_]() {
+        auto task_ = std::make_shared<task>([fn = std::move(fn), future_]() mutable {
             try {
                 fn();
             } catch (const task_cancellation&) {
@@ -37,9 +37,9 @@ namespace fast_task {
         return future_;
     }
 
-    std::shared_ptr<future<void>> future<void>::start(fast_task::task_query& query, const std::function<void()>& fn, uint16_t bind_id) {
+    std::shared_ptr<future<void>> future<void>::start(fast_task::task_query& query, std::move_only_function<void()>&& fn, uint16_t bind_id) {
         std::shared_ptr<future> future_ = std::make_shared<future>();
-        auto task_ = std::make_shared<task>([fn, future_]() {
+        auto task_ = std::make_shared<task>([fn = std::move(fn), future_]() mutable {
             try {
                 fn();
             } catch (const task_cancellation&) {
@@ -74,7 +74,7 @@ namespace fast_task {
         get();
     }
 
-    void future<void>::when_ready(const std::function<void()>& fn) {
+    void future<void>::when_ready(std::move_only_function<void()>&& fn) {
         mutex_unify um(task_mt);
         fast_task::unique_lock lock(um);
         if (_is_ready) {
@@ -83,7 +83,7 @@ namespace fast_task {
         } else {
             task_cv.callback(
                 lock,
-                std::make_shared<task>(fn)
+                std::make_shared<task>(std::move(fn))
             );
         }
     }

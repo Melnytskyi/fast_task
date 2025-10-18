@@ -56,7 +56,7 @@ find_package(Boost REQUIRED COMPONENTS context)
 target_include_directories(fast_task PRIVATE ${Boost_INCLUDE_DIRS} ${fast_task_INCLUDE_DIR})
 set_target_properties(fast_task
   PROPERTIES
-  CXX_STANDARD 20
+  CXX_STANDARD 23
   CXX_EXTENSIONS OFF
 )
 target_link_libraries(fast_task PUBLIC ${Boost_LIBRARIES})

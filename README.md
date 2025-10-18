@@ -5,8 +5,6 @@
 
 **Fast task** is a modern, stack-based green thread implementation for C++ designed to be a simple, fast, and powerful tool for concurrent programming. It offers a lightweight alternative to `std::thread`, focusing on high-performance asynchronous operations and efficient task management.
 
-_the library technically could be used by client code with C++23 for the coroutines support_
-
 ## Core Features
 
 - **Lightweight Green Threads:** Utilizes stack-based green threads for efficient context switching, enabling high concurrency with minimal overhead.
@@ -28,7 +26,7 @@ _the library technically could be used by client code with C++23 for the corouti
 
 ### Prerequisites
 
-- **C++20 Compiler:** A compiler that supports C++20 is required.
+- **C++20 Compiler:** A compiler that supports C++23 is required.
 - **CMake:** Version 3.31 or later. 
 - **Operating System:** Windows or Linux.
 - **vcpkg:** The vcpkg package manager is used for dependency management and included as a submodule in the project root.

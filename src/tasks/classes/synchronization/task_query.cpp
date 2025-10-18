@@ -57,7 +57,7 @@ namespace fast_task {
             }
         } else {
             auto old_func = std::move(get_data(task).callbacks.normal_mode.func);
-            get_data(task).callbacks.normal_mode.func = [old_func = std::move(old_func), tqh]() {
+            get_data(task).callbacks.normal_mode.func = [old_func = std::move(old_func), tqh]() mutable {
                 try {
                     old_func();
                 } catch (...) {

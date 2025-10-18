@@ -343,8 +343,8 @@ namespace fast_task {
 
                 struct FT_API_LOCAL normal_mode_t {
                     bool is_extended_mode : 1;
-                    std::function<void(const std::exception_ptr&)> ex_handle;
-                    std::function<void()> func;
+                    std::move_only_function<void(const std::exception_ptr&)> ex_handle;
+                    std::move_only_function<void()> func;
 
                     ~normal_mode_t() = default;
                 } normal_mode;
@@ -431,10 +431,7 @@ namespace fast_task {
         static bool enable_task_naming;
 
         task(void* data, void (*on_start)(void*), void (*on_await)(void*), void (*on_cancel)(void*), void (*on_destruct)(void*), bool is_coroutine = false);
-        task(const std::function<void()>& func, const std::function<void(const std::exception_ptr&)>& ex_handle, std::chrono::high_resolution_clock::time_point timeout = std::chrono::high_resolution_clock::time_point::min(), task_priority priority = task_priority::high);
-        task(const std::function<void()>& func, std::function<void(const std::exception_ptr&)>&& ex_handle = nullptr, std::chrono::high_resolution_clock::time_point timeout = std::chrono::high_resolution_clock::time_point::min(), task_priority priority = task_priority::high);
-        task(std::function<void()>&& func, const std::function<void(const std::exception_ptr&)>& ex_handle, std::chrono::high_resolution_clock::time_point timeout = std::chrono::high_resolution_clock::time_point::min(), task_priority priority = task_priority::high);
-        task(std::function<void()>&& func, std::function<void(const std::exception_ptr&)>&& ex_handle = nullptr, std::chrono::high_resolution_clock::time_point timeout = std::chrono::high_resolution_clock::time_point::min(), task_priority priority = task_priority::high);
+        task(std::move_only_function<void()>&& func, std::move_only_function<void(const std::exception_ptr&)>&& ex_handle = nullptr, std::chrono::high_resolution_clock::time_point timeout = std::chrono::high_resolution_clock::time_point::min(), task_priority priority = task_priority::high);
 
         task(task&& mov) noexcept;
         ~task();
