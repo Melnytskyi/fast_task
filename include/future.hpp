@@ -503,7 +503,7 @@ namespace fast_task {
         }
 
         template <class Result, class T, class FN>
-        std::vector<Result> process(const std::vector<T>& container, FN&& fn) {
+        std::vector<Result> process(const T& container, FN&& fn) {
             if (container.empty())
                 return {};
 
@@ -526,7 +526,7 @@ namespace fast_task {
         }
 
         template <class Result, class T, class FN>
-        std::vector<Result> process(const std::vector<T>& container, fast_task::task_query& query, FN&& fn) {
+        std::vector<Result> process(const T& container, fast_task::task_query& query, FN&& fn) {
             if (container.empty())
                 return {};
 
@@ -696,30 +696,8 @@ namespace fast_task {
             });
         }
 
-        template <class... Futures>
-        void wait_all(Futures&&... futures) {
-            std::vector<future_ptr<void>> fut = {futures...};
-            for (auto& future_ : fut)
-                if (future_)
-                    future_->wait();
-        }
-
         template <class T>
-        void wait_all(const std::vector<future_ptr<T>>& futures) {
-            for (auto& future_ : futures)
-                if (future_)
-                    future_->wait();
-        }
-
-        template <class T>
-        void wait_all(std::vector<future_ptr<T>>& futures) {
-            for (auto& future_ : futures)
-                if (future_)
-                    future_->wait();
-        }
-
-        template <class T>
-        void wait_all(std::vector<future_ptr<T>>&& futures) {
+        void wait_all(T&& futures) {
             for (auto& future_ : futures)
                 if (future_)
                     future_->wait();
