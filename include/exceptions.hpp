@@ -44,6 +44,11 @@ namespace fast_task {
         }
     };
 
+    struct FT_API no_return_value final : public exception {
+        inline const char* what() override {
+            return "The coroutine not started and doesn't has any result.";
+        }
+    };
 
     //this exception should never be catched
     class FT_API task_cancellation {

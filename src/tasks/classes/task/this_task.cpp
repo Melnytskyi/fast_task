@@ -41,7 +41,7 @@ namespace fast_task::this_task {
         if (loc.is_task_thread)
             if (loc.curr_task)
                 if (get_data(loc.curr_task).callbacks.is_extended_mode)
-                    get_data(loc.curr_task).callbacks.extended_mode.is_coroutine = false;
+                    get_data(loc.curr_task).callbacks.extended_mode.is_restartable = false;
     }
 
 #pragma optimize("", off)

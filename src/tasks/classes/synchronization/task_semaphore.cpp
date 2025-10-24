@@ -130,4 +130,68 @@ namespace fast_task {
         }
         return false;
     }
+
+    bool task_semaphore::task_lock_awaiter::await_ready() noexcept {
+        return sem.try_lock();
+    }
+
+    bool task_semaphore::task_lock_awaiter::await_suspend(std::coroutine_handle<task_promise_base> h) {
+        auto& task_ptr = h.promise().task_object;
+        fast_task::unique_lock keeper(sem.values.no_race);
+        if (!sem.values.allow_threshold) {
+            sem.values.resume_task.emplace_back(task_ptr, get_data(task_ptr).awake_check);
+            return true;
+        }
+        --sem.values.allow_threshold;
+        return false;
+    }
+
+    void task_semaphore::task_lock_awaiter::await_resume() noexcept {}
+
+    bool task_semaphore::task_try_lock_awaiter::await_ready() noexcept {
+        successful = sem.try_lock();
+        return successful;
+    }
+
+    bool task_semaphore::task_try_lock_awaiter::await_suspend(std::coroutine_handle<task_promise_base> h) {
+        handle = h;
+        auto& task_ptr = h.promise().task_object;
+        fast_task::unique_lock keeper(sem.values.no_race);
+        if (!sem.values.allow_threshold) {
+            sem.values.resume_task.emplace_back(task_ptr, get_data(task_ptr).awake_check);
+            fast_task::makeTimeWait(time_point);
+            return true;
+        }
+        --sem.values.allow_threshold;
+        return false;
+    }
+
+    bool task_semaphore::task_try_lock_awaiter::await_resume() noexcept {
+        if (successful)
+            return true;
+        auto& task_ptr = handle.promise().task_object;
+        if (get_data(task_ptr).time_end_flag) {
+            successful = false;
+        } else
+            successful = true;
+        return successful;
+    }
+
+    task_semaphore::task_lock_awaiter task_semaphore::async_lock() {
+        return task_lock_awaiter{*this};
+    }
+
+    task_semaphore::task_try_lock_awaiter task_semaphore::async_try_lock_for(size_t milliseconds) {
+        return task_try_lock_awaiter{
+            *this,
+            std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(milliseconds)
+        };
+    }
+
+    task_semaphore::task_try_lock_awaiter task_semaphore::async_try_lock_until(std::chrono::high_resolution_clock::time_point time_point) {
+        return task_try_lock_awaiter{
+            *this,
+            time_point
+        };
+    }
 }

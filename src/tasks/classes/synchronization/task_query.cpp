@@ -42,8 +42,8 @@ namespace fast_task {
         if (get_data(task).callbacks.is_extended_mode) {
             if (!get_data(task).callbacks.extended_mode.on_start)
                 throw std::logic_error("task_query::add requires in extended mode the on_start variable to be set");
-            else if (!get_data(task).callbacks.extended_mode.is_coroutine)
-                throw std::logic_error("task_query::add requires in extended mode the coroutine mode to be disabled");
+            else if (!get_data(task).callbacks.extended_mode.is_restartable)
+                throw std::logic_error("task_query::add requires in extended mode the restartable mode to be disabled");
             else {
                 return task::run([task, tqh]() {
                     try {

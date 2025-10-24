@@ -157,4 +157,86 @@ namespace fast_task {
     bool task_limiter::is_locked() {
         return values.locked;
     }
+
+    bool task_limiter::task_lock_awaiter::await_ready() noexcept {
+        return lim.try_lock();
+    }
+
+    bool task_limiter::task_lock_awaiter::await_suspend(std::coroutine_handle<task_promise_base> h) {
+        auto& task_ptr = h.promise().task_object;
+        fast_task::unique_lock keeper(lim.values.no_race);
+        if (!lim.values.allow_threshold) {
+            lim.values.resume_task.emplace_back(task_ptr, get_data(task_ptr).awake_check);
+            return true;
+        }
+        if (--lim.values.allow_threshold == 0)
+            lim.values.locked = true;
+        return false;
+    }
+
+    void task_limiter::task_lock_awaiter::await_resume() {
+        fast_task::unique_lock keeper(lim.values.no_race);
+        if (std::find(lim.values.lock_check.begin(), lim.values.lock_check.end(), &*loc.curr_task) != lim.values.lock_check.end()) {
+            if (++lim.values.allow_threshold != 0)
+                lim.values.locked = false;
+            throw std::logic_error("Dead lock. task try lock already locked task limiter");
+        } else
+            lim.values.lock_check.push_back(&*loc.curr_task);
+    }
+
+    bool task_limiter::task_try_lock_awaiter::await_ready() noexcept {
+        successful = lim.try_lock();
+        return successful;
+    }
+
+    bool task_limiter::task_try_lock_awaiter::await_suspend(std::coroutine_handle<task_promise_base> h) {
+        handle = h;
+        auto& task_ptr = h.promise().task_object;
+        fast_task::unique_lock keeper(lim.values.no_race);
+        if (!lim.values.allow_threshold) {
+            lim.values.resume_task.emplace_back(task_ptr, get_data(task_ptr).awake_check);
+            fast_task::makeTimeWait(time_point);
+            return true;
+        }
+        if (--lim.values.allow_threshold == 0)
+            lim.values.locked = true;
+        return false;
+    }
+
+    bool task_limiter::task_try_lock_awaiter::await_resume() {
+        if (successful)
+            return true;
+        auto& task_ptr = handle.promise().task_object;
+        if (get_data(task_ptr).time_end_flag) {
+            successful = false;
+        } else
+            successful = true;
+
+        fast_task::unique_lock keeper(lim.values.no_race);
+        if (std::find(lim.values.lock_check.begin(), lim.values.lock_check.end(), &*loc.curr_task) != lim.values.lock_check.end()) {
+            if (++lim.values.allow_threshold != 0)
+                lim.values.locked = false;
+            throw std::logic_error("Dead lock. task try lock already locked task limiter");
+        } else
+            lim.values.lock_check.push_back(&*loc.curr_task);
+        return successful;
+    }
+
+    task_limiter::task_lock_awaiter task_limiter::async_lock() {
+        return task_lock_awaiter{*this};
+    }
+
+    task_limiter::task_try_lock_awaiter task_limiter::async_try_lock_for(size_t milliseconds) {
+        return task_try_lock_awaiter{
+            *this,
+            std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(milliseconds)
+        };
+    }
+
+    task_limiter::task_try_lock_awaiter task_limiter::async_try_lock_until(std::chrono::high_resolution_clock::time_point time_point) {
+        return task_try_lock_awaiter{
+            *this,
+            time_point
+        };
+    }
 }

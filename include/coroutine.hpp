@@ -8,55 +8,40 @@
 #define FAST_TASK_COROUTINE
 #include "shared.hpp"
 #include "task.hpp"
-#include <coroutine>
-#include <exception>
-#include <type_traits>
-#include <variant>
 
 namespace fast_task {
-    struct FT_API promise_base {
-        struct FT_API initial_start {
-            bool await_ready() const noexcept {
-                return false;
-            }
-
-            void await_suspend(std::coroutine_handle<> aw_coroutine) {
-                task::run([aw_coroutine] { aw_coroutine.resume(); });
-            }
-
-            void await_resume() noexcept {}
-        };
-
-        promise_base() noexcept {}
-
-        auto initial_suspend() noexcept {
-            return initial_start{};
-        }
-
-        std::suspend_always final_suspend() noexcept {
-            if (v_continuation)
-                task::run([aw_coroutine = std::move(v_continuation)] { aw_coroutine.resume(); });
-            return {};
-        }
-
-        void set_continuation(std::coroutine_handle<> continuation) noexcept {
-            v_continuation = continuation;
-        }
-
-    private:
-        std::coroutine_handle<> v_continuation;
-    };
-
     template <class T>
-    struct coroutine;
+    struct task_promise final : public task_promise_base {
+        task_promise() noexcept {}
 
-    template <class T>
-    struct coro_promise final : public promise_base {
-        coro_promise() noexcept {}
+        ~task_promise() {}
 
-        ~coro_promise() {}
+        std::shared_ptr<task> get_return_object() {
+            auto h_promise = std::coroutine_handle<task_promise<T>>::from_promise(*this);
 
-        coroutine<T> get_return_object() noexcept;
+            std::coroutine_handle<> h_frame = h_promise;
+
+            auto on_start = [](void* handle_addr) {
+                auto h = std::coroutine_handle<>::from_address(handle_addr);
+                h.resume();
+            };
+
+            auto on_destruct = [](void* handle_addr) {
+                auto h = std::coroutine_handle<>::from_address(handle_addr);
+                h.destroy();
+            };
+
+            task_object = std::make_shared<task>(
+                h_frame.address(),
+                on_start,
+                [](void* handle_addr) {}, //no special treatment for the on_await
+                [](void* handle_addr) {}, //no special treatment for the on_cancel, the flag set automatically
+                on_destruct,
+                true, //coroutines could yield
+                true  //the coroutine is stackless
+            );
+            return task_object;
+        }
 
         void unhandled_exception() noexcept {
             results = std::current_exception();
@@ -109,12 +94,37 @@ namespace fast_task {
     };
 
     template <class T>
-    struct coro_promise<T&> final : public promise_base {
-        coro_promise() noexcept {}
+    struct task_promise<T&> final : public task_promise_base {
+        task_promise() noexcept {}
 
-        ~coro_promise() {}
+        ~task_promise() {}
 
-        coroutine<T&> get_return_object() noexcept;
+        std::shared_ptr<task> get_return_object() {
+            auto h_promise = std::coroutine_handle<task_promise<T&>>::from_promise(*this);
+
+            std::coroutine_handle<> h_frame = h_promise;
+
+            auto on_start = [](void* handle_addr) {
+                auto h = std::coroutine_handle<>::from_address(handle_addr);
+                h.resume();
+            };
+
+            auto on_destruct = [](void* handle_addr) {
+                auto h = std::coroutine_handle<>::from_address(handle_addr);
+                h.destroy();
+            };
+
+            task_object = std::make_shared<task>(
+                h_frame.address(),
+                on_start,
+                [](void* handle_addr) {}, //no special treatment for the on_await
+                [](void* handle_addr) {}, //no special treatment for the on_cancel, the flag set automatically
+                on_destruct,
+                true, //coroutines could yield
+                true  //the coroutine is stackless
+            );
+            return task_object;
+        }
 
         void unhandled_exception() noexcept {
             results = std::current_exception();
@@ -148,14 +158,39 @@ namespace fast_task {
     };
 
     template <>
-    struct FT_API coro_promise<void> final : public promise_base {
-        coro_promise() noexcept {}
+    struct FT_API task_promise<void> final : public task_promise_base {
+        task_promise() noexcept {}
 
-        ~coro_promise() {}
+        ~task_promise() {}
 
-        coroutine<void> get_return_object() noexcept;
+        std::shared_ptr<task> get_return_object() {
+            auto h_promise = std::coroutine_handle<task_promise<void>>::from_promise(*this);
 
-        void unhandled_exception() noexcept {
+            std::coroutine_handle<> h_frame = h_promise;
+
+            auto on_start = [](void* handle_addr) {
+                auto h = std::coroutine_handle<>::from_address(handle_addr);
+                h.resume();
+            };
+
+            auto on_destruct = [](void* handle_addr) {
+                auto h = std::coroutine_handle<>::from_address(handle_addr);
+                h.destroy();
+            };
+
+            task_object = std::make_shared<task>(
+                h_frame.address(),
+                on_start,
+                [](void* handle_addr) {}, //no special treatment for the on_await
+                [](void* handle_addr) {}, //no special treatment for the on_cancel, the flag set automatically
+                on_destruct,
+                true, //coroutines could yield
+                true  //the coroutine is stackless
+            );
+            return task_object;
+        }
+
+        void unhandled_exception() {
             results = std::current_exception();
         }
 
@@ -172,7 +207,7 @@ namespace fast_task {
                     else if constexpr (std::is_same_v<GotType, std::exception_ptr>)
                         std::rethrow_exception(it);
                     else
-                        throw std::runtime_error("The coroutine returned noting");
+                        throw no_return_value{};
                 },
                 results
             );
@@ -187,158 +222,282 @@ namespace fast_task {
     };
 
     template <class T>
-    struct coroutine : public std::coroutine_handle<coro_promise<T>> {
-        using promise_type = coro_promise<T>;
-        using value_type = T;
+    class [[nodiscard]] task_coro {
+    public:
+        using promise_type = fast_task::task_promise<T>;
 
-        coroutine() noexcept : v_coroutine(nullptr) {}
+        std::shared_ptr<fast_task::task> task_handle;
 
-        explicit coroutine(std::coroutine_handle<promise_type> coroutine) noexcept : v_coroutine(coroutine) {}
+        task_coro(std::shared_ptr<task> t) : task_handle(std::move(t)) {}
 
-        coroutine(coroutine&& other) noexcept : v_coroutine(other.v_coroutine) {
-            other.v_coroutine = nullptr;
+        task_coro(task_coro&&) noexcept = default;
+        task_coro& operator=(task_coro&&) noexcept = default;
+
+        task_coro(const task_coro&) = delete;
+        task_coro& operator=(const task_coro&) = delete;
+
+        std::shared_ptr<fast_task::task> operator->() const {
+            return task_handle;
         }
 
-        coroutine(const coroutine&) = delete;
-        coroutine& operator=(const coroutine&) = delete;
-
-        coroutine& operator=(coroutine&& other) {
-            if (std::addressof(other) != this) {
-                if (v_coroutine)
-                    v_coroutine.destroy();
-                v_coroutine = other.v_coroutine;
-                other.v_coroutine = nullptr;
-            }
-            return *this;
+        operator std::shared_ptr<fast_task::task>() const {
+            return task_handle;
         }
 
-        ~coroutine() {
-            if (v_coroutine)
-                v_coroutine.destroy();
-        }
-
-        bool is_ready() const noexcept {
-            return v_coroutine ? v_coroutine.done() : false;
+        std::shared_ptr<fast_task::task> get_task() const {
+            return task_handle;
         }
 
         auto operator co_await() const& noexcept {
-            struct FT_API aw : awaitable {
-                using awaitable::awaitable;
+            struct result_awaiter {
+                std::shared_ptr<fast_task::task> task_handle;
 
-                decltype(auto) await_resume() {
-                    if (!this->v_coroutine)
-                        throw std::runtime_error("Promise is not defined");
-                    return this->v_coroutine.promise().result();
+                bool await_ready() noexcept {
+                    return task_handle->is_ended();
+                }
+
+                bool await_suspend(std::coroutine_handle<> h) {
+                    auto on_start_resume = [](void* handle_addr) {
+                        auto awaiting_handle = std::coroutine_handle<>::from_address(handle_addr);
+                        awaiting_handle.resume();
+                    };
+
+                    auto on_nop = [](void* handle_addr) {};
+
+                    auto bridge_task = std::make_shared<fast_task::task>(
+                        h.address(),
+                        on_start_resume,
+                        on_nop,
+                        on_nop,
+                        on_nop,
+                        false,
+                        true
+                    );
+                    if (task_handle->is_ended())
+                        return false;
+                    task_handle->callback(bridge_task);
+                    return true;
+                }
+
+                T await_resume() {
+                    if constexpr (!std::is_same_v<T, void>) {
+                        void* handle_address = nullptr;
+                        task_handle->access_dummy([&](void* data) {
+                            handle_address = data;
+                        });
+
+                        if (!handle_address)
+                            throw std::runtime_error("Coroutine task has no valid handle address.");
+
+                        auto handle = std::coroutine_handle<fast_task::task_promise<T>>::from_address(handle_address);
+                        fast_task::task_promise<T>& promise = handle.promise();
+                        return std.move(promise.result());
+                    }
                 }
             };
 
-            return aw{v_coroutine};
+            return result_awaiter{task_handle};
         }
-
-        auto operator co_await() const&& noexcept {
-            struct FT_API aw : awaitable {
-                using awaitable::awaitable;
-
-                decltype(auto) await_resume() {
-                    if (!this->v_coroutine)
-                        throw std::runtime_error("Promise is not defined");
-                    return std::move(this->v_coroutine.promise()).result();
-                }
-            };
-
-            return aw{v_coroutine};
-        }
-
-        auto when_ready() const noexcept {
-            struct FT_API aw : awaitable {
-                using awaitable::awaitable;
-
-                void await_resume() const noexcept {}
-            };
-
-            return aw{v_coroutine};
-        }
-
-
-    private:
-        std::coroutine_handle<promise_type> v_coroutine;
-
-        struct FT_API awaitable {
-            std::coroutine_handle<promise_type> v_coroutine;
-
-            awaitable(std::coroutine_handle<promise_type> coro) noexcept : v_coroutine(coro) {}
-
-            bool await_ready() const noexcept {
-                return !v_coroutine || v_coroutine.done();
-            }
-
-            void await_suspend(std::coroutine_handle<> aw_coroutine) noexcept {
-                v_coroutine.promise().set_continuation(aw_coroutine);
-            }
-        };
     };
 
-    template <class T>
-    inline coroutine<T> coro_promise<T>::get_return_object() noexcept {
-        return coroutine<T>{
-            std::coroutine_handle<coro_promise>::from_promise(*this)
-        };
-    }
+    inline auto operator co_await(std::shared_ptr<task>&& t) noexcept {
+        struct FT_API result_awaiter {
+            std::shared_ptr<task> t;
 
-    template <class T>
-    inline coroutine<T&> coro_promise<T&>::get_return_object() noexcept {
-        return coroutine<T&>{
-            std::coroutine_handle<coro_promise>::from_promise(*this)
-        };
-    }
-
-    inline FT_API coroutine<void> coro_promise<void>::get_return_object() noexcept {
-        return coroutine<void>{
-            std::coroutine_handle<coro_promise<void>>::from_promise(*this)
-        };
-    }
-
-    inline auto co_switch() {
-        struct FT_API switch_to_fast_task {
-            bool await_ready() const noexcept {
-                return false;
+            bool await_ready() noexcept {
+                return t->is_ended();
             }
 
-            void await_suspend(std::coroutine_handle<> awaiting_coroutine) {
-                task::run([awaiting_coroutine]() {
-                    awaiting_coroutine.resume();
-                });
+            bool await_suspend(std::coroutine_handle<> h) {
+                auto on_start_resume = [](void* handle_addr) {
+                    auto awaiting_handle = std::coroutine_handle<>::from_address(handle_addr);
+                    awaiting_handle.resume();
+                };
+
+                auto on_nop = [](void* handle_addr) {};
+
+                auto bridge_task = std::make_shared<fast_task::task>(
+                    h.address(),
+                    on_start_resume,
+                    on_nop,
+                    on_nop,
+                    on_nop,
+                    false,
+                    true
+                );
+                if (t->is_ended())
+                    return false;
+                t->callback(bridge_task);
+                return true;
             }
 
-            void await_resume() noexcept {}
+            void await_resume() {}
         };
 
-        return switch_to_fast_task{};
+        return result_awaiter{t};
     }
 
     template <class T>
-    inline T wait_for_coroutine_sync(coroutine<T> (*coro_fn)()) {
-        task_condition_variable cv;
-        std::exception_ptr ex;
-        task_mutex mt;
-        mutex_unify unified(mt);
-        std::optional<T> res;
-        auto temp_cor = [&] mutable -> coroutine<void> {
+    class task_auto_start_coro : public task_coro<T> {
+    public:
+        task_auto_start_coro(std::shared_ptr<task> t) : task_coro<T>(std::move(t)) {
+            scheduler::start(task_coro<T>::task_handle);
+        }
+
+        task_auto_start_coro(task_auto_start_coro&&) noexcept = default;
+        task_auto_start_coro& operator=(task_auto_start_coro&&) noexcept = default;
+
+        task_auto_start_coro(const task_auto_start_coro&) = delete;
+        task_auto_start_coro& operator=(const task_auto_start_coro&) = delete;
+    };
+}
+
+namespace fast_task::coroutine {
+    template <class T, class FN>
+    task_coro<void> async_for_each(T&& container, fast_task::task_query& query, FN&& fn) {
+        if (container.empty())
+            return [] -> fast_task::task_coro<void> {
+                co_return;
+            }();
+        std::vector<fast_task::task_coro<void>> coros;
+        for (auto& item : container) {
+            auto cor = [item = std::move(item), fn] -> fast_task::task_coro<void> {
+                fn(item);
+                co_return;
+            }();
+            query.add(cor);
+            coros.emplace_back(cor);
+        }
+
+        auto res = [fut = std::move(coros)] -> fast_task::task_coro<void> {
             try {
-                res = std::move(co_await coro_fn());
+                for (auto& coro : fut)
+                    co_await coro;
             } catch (...) {
-                ex = std::current_exception();
+                for (auto& coro : fut)
+                    coro->notify_cancel();
+                throw;
             }
-            std::unique_lock lock(mt);
-            cv.notify_all();
         }();
-        std::unique_lock lock(unified);
-        while (!res && !ex)
-            cv.wait(lock);
-        if (ex)
-            std::rethrow_exception(ex);
-        return std::move(*res);
+        query.add(res);
+        return res;
+    }
+
+    template <class T, class FN>
+    task_coro<void> async_for_each(T&& container, FN&& fn) {
+        if (container.empty())
+            return [] -> fast_task::task_coro<void> {
+                co_return;
+            }();
+        std::vector<fast_task::task_coro<void>> coros;
+        for (auto& item : container) {
+            auto cor = [item = std::move(item), fn] -> fast_task::task_coro<void> {
+                fn(item);
+                co_return;
+            }();
+
+            fast_task::scheduler::start(cor);
+            coros.emplace_back(cor);
+        }
+
+        auto res = [fut = std::move(coros)] -> fast_task::task_coro<void> {
+            try {
+                for (auto& coro : fut)
+                    co_await coro;
+            } catch (...) {
+                for (auto& coro : fut)
+                    coro->notify_cancel();
+                throw;
+            }
+        }();
+        fast_task::scheduler::start(res);
+        return res;
+    }
+
+    template <class T, class FN>
+    void for_each(T& container, fast_task::task_query& query, FN&& fn) {
+        if (container.empty())
+            return;
+        std::vector<fast_task::task_coro<void>> coros;
+        for (auto& item : container) {
+            auto cor = [](auto& item, auto& fn) -> fast_task::task_coro<void> {
+                fn(item);
+                co_return;
+            }(item, fn);
+            query.add(cor);
+            coros.emplace_back(cor);
+        }
+
+        try {
+            for (auto& coro : coros)
+                coro->await_task();
+        } catch (...) {
+            for (auto& coro : coros)
+                coro->notify_cancel();
+            throw;
+        }
+    }
+
+    template <class T, class FN>
+    void for_each(T& container, FN&& fn) {
+        if (container.empty())
+            return;
+        std::vector<fast_task::task_coro<void>> coros;
+        for (auto& item : container) {
+            auto cor = [](auto& item, auto& fn) -> fast_task::task_coro<void> {
+                fn(item);
+                co_return;
+            }(item, fn);
+            fast_task::scheduler::start(cor);
+            coros.emplace_back(cor);
+        }
+
+        try {
+            for (auto& coro : coros)
+                coro->await_task();
+        } catch (...) {
+            for (auto& coro : coros)
+                coro->notify_cancel();
+            throw;
+        }
+    }
+
+    template <class T>
+    task_auto_start_coro<void> wait_all(T&& coros) {
+        for (auto& coro : coros)
+            co_await coro;
+        co_return;
+    }
+
+    template <class T>
+    void wait_all_blocking(T& coros) {
+        if (coros.empty())
+            return;
+
+        // Start all tasks first
+        for (auto& coro : coros)
+            fast_task::scheduler::start(coro);
+
+        // Now, block and wait for each one
+        try {
+            for (auto& coro : coros)
+                coro->await_task(); // This blocks
+        } catch (...) {
+            for (auto& coro : coros)
+                coro->notify_cancel();
+            throw;
+        }
     }
 }
+
+template <class T, class... Args>
+struct std::coroutine_traits<fast_task::task_coro<T>, Args...> {
+    using promise_type = typename fast_task::task_coro<T>::promise_type;
+};
+
+template <class T, class... Args>
+struct std::coroutine_traits<fast_task::task_auto_start_coro<T>, Args...> {
+    using promise_type = typename fast_task::task_auto_start_coro<T>::promise_type;
+};
 
 #endif

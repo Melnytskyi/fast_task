@@ -152,8 +152,8 @@ namespace fast_task {
             return false;
     }
 
-    void task_recursive_mutex::lifecycle_lock(std::shared_ptr<task>& task) {
-        mutex.lifecycle_lock(task);
+    void task_recursive_mutex::lifecycle_lock(std::shared_ptr<task>&& task) {
+        mutex.lifecycle_lock(std::move(task));
     }
 
     bool task_recursive_mutex::is_own() {
@@ -163,5 +163,79 @@ namespace fast_task {
         } else if (mutex.values.current_task == reinterpret_cast<task*>((size_t)_thread_id() | native_thread_flag))
             return true;
         return false;
+    }
+
+    bool task_recursive_mutex::task_mutex_lock_awaiter::await_ready() noexcept {
+        return mutex.try_lock();
+    }
+
+    bool task_recursive_mutex::task_mutex_lock_awaiter::await_suspend(std::coroutine_handle<task_promise_base> h) {
+        auto& task_ptr = h.promise().task_object;
+
+        fast_task::lock_guard l(mutex.mutex.values.no_race);
+        if (mutex.mutex.values.current_task == nullptr) {
+            mutex.mutex.values.current_task = task_ptr.get();
+            mutex.recursive_count = 1;
+            return false;
+        } else if (mutex.mutex.values.current_task == task_ptr.get()) {
+            ++mutex.recursive_count;
+            return false;
+        }
+        mutex.mutex.values.resume_task.push_back({task_ptr, get_data(task_ptr).awake_check, nullptr, nullptr});
+        return true;
+    }
+
+    bool task_recursive_mutex::task_mutex_try_lock_awaiter::await_ready() noexcept {
+        if (mutex.try_lock()) {
+            successful = true;
+            return true;
+        }
+        return false;
+    }
+
+    bool task_recursive_mutex::task_mutex_try_lock_awaiter::await_suspend(std::coroutine_handle<task_promise_base> h) {
+        handle = h;
+        auto& task_ptr = h.promise().task_object;
+        fast_task::lock_guard l(mutex.mutex.values.no_race);
+        if (mutex.mutex.values.current_task == nullptr) {
+            mutex.mutex.values.current_task = task_ptr.get();
+            mutex.recursive_count = 1;
+            return false;
+        } else if (mutex.mutex.values.current_task == task_ptr.get()) {
+            ++mutex.recursive_count;
+            return false;
+        }
+        mutex.mutex.values.resume_task.push_back({task_ptr, get_data(task_ptr).awake_check, nullptr, nullptr});
+        fast_task::makeTimeWait(time_point);
+        return true;
+    }
+
+    bool task_recursive_mutex::task_mutex_try_lock_awaiter::await_resume() noexcept {
+        if (successful)
+            return true;
+        auto& task_ptr = handle.promise().task_object;
+        if (get_data(task_ptr).time_end_flag) {
+            successful = false;
+        } else
+            successful = true;
+        return successful;
+    }
+
+    task_recursive_mutex::task_mutex_lock_awaiter task_recursive_mutex::async_lock() {
+        return task_mutex_lock_awaiter{*this};
+    }
+
+    task_recursive_mutex::task_mutex_try_lock_awaiter task_recursive_mutex::async_try_lock_for(size_t milliseconds) {
+        return task_mutex_try_lock_awaiter{
+            *this,
+            std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(milliseconds)
+        };
+    }
+
+    task_recursive_mutex::task_mutex_try_lock_awaiter task_recursive_mutex::async_try_lock_until(std::chrono::high_resolution_clock::time_point time_point) {
+        return task_mutex_try_lock_awaiter{
+            *this,
+            time_point
+        };
     }
 }

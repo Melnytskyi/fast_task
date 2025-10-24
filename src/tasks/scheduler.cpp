@@ -97,8 +97,10 @@ namespace fast_task {
 #pragma region TaskExecutor
 
     void swapCtx() {
-        stop_timer();
         if (loc.is_task_thread) {
+            stop_timer();
+            if (get_data(loc.curr_task).is_on_scheduler)
+                throw invalid_context();
             loc.context_in_swap = true;
             ++glob.tasks_in_swap;
             ++get_execution_data(loc.curr_task).context_switch_count;
@@ -141,9 +143,9 @@ namespace fast_task {
                 get_data(loc.curr_task).invalid_switch_caught = false;
                 throw invalid_switch();
             }
+            timer_reinit();
         } else
             throw invalid_context();
-        timer_reinit();
     }
 
     void swapCtxRelock(const mutex_unify& mut0) {
@@ -183,14 +185,16 @@ namespace fast_task {
     boost::context::continuation context_exec(boost::context::continuation&& sink) {
         *loc.stack_current_context = std::move(sink);
         try {
-            checkCancellation();
-            flush_interput_data;
-            timer_reinit();
-            if (get_data(loc.curr_task).callbacks.is_extended_mode) {
-                if (get_data(loc.curr_task).callbacks.extended_mode.on_start)
-                    get_data(loc.curr_task).callbacks.extended_mode.on_start(get_data(loc.curr_task).callbacks.extended_mode.data);
+            if (!checkCancellation()) {
+                flush_interput_data;
+                timer_reinit();
+                if (get_data(loc.curr_task).callbacks.is_extended_mode) {
+                    if (get_data(loc.curr_task).callbacks.extended_mode.on_start)
+                        get_data(loc.curr_task).callbacks.extended_mode.on_start(get_data(loc.curr_task).callbacks.extended_mode.data);
+                } else
+                    get_data(loc.curr_task).callbacks.normal_mode.func();
             } else
-                get_data(loc.curr_task).callbacks.normal_mode.func();
+                this_task::the_coroutine_ended();
         } catch (const task_cancellation& cancel) {
             forceCancelCancellation(cancel);
         } catch (const boost::context::detail::forced_unwind&) {
@@ -204,7 +208,7 @@ namespace fast_task {
         fast_task::lock_guard l(get_data(loc.curr_task).no_race);
         --glob.in_run_tasks;
         if (get_data(loc.curr_task).callbacks.is_extended_mode) {
-            if (get_data(loc.curr_task).callbacks.extended_mode.is_coroutine) {
+            if (get_data(loc.curr_task).callbacks.extended_mode.is_restartable) {
                 get_data(loc.curr_task).started = false;
                 get_data(loc.curr_task).result_notify.notify_all();
                 if (task::max_running_tasks)
@@ -222,11 +226,13 @@ namespace fast_task {
     boost::context::continuation context_ex_handle(boost::context::continuation&& sink) {
         *loc.stack_current_context = std::move(sink);
         try {
-            checkCancellation();
-            flush_interput_data;
-            timer_reinit();
-            if (!get_data(loc.curr_task).callbacks.is_extended_mode)
-                get_data(loc.curr_task).callbacks.normal_mode.ex_handle(loc.ex_ptr);
+            if (!checkCancellation()) {
+                flush_interput_data;
+                timer_reinit();
+                if (!get_data(loc.curr_task).callbacks.is_extended_mode)
+                    get_data(loc.curr_task).callbacks.normal_mode.ex_handle(loc.ex_ptr);
+            } else
+                this_task::the_coroutine_ended();
         } catch (task_cancellation& cancel) {
             forceCancelCancellation(cancel);
         } catch (const boost::context::detail::forced_unwind&) {
@@ -245,6 +251,41 @@ namespace fast_task {
         if (task::max_running_tasks)
             glob.can_started_new_notifier.notify_one();
         return std::move(*loc.stack_current_context);
+    }
+
+    void in_place_run() {
+        ++glob.in_run_tasks;
+        try {
+            if (!checkCancellation()) {
+                if (get_data(loc.curr_task).callbacks.is_extended_mode) {
+                    if (get_data(loc.curr_task).callbacks.extended_mode.on_start) {
+                        get_data(loc.curr_task).callbacks.extended_mode.on_start(get_data(loc.curr_task).callbacks.extended_mode.data);
+                    }
+                } else
+                    get_data(loc.curr_task).callbacks.normal_mode.func();
+                get_data(loc.curr_task).relock_0.relock_start();
+                get_data(loc.curr_task).relock_1.relock_start();
+                get_data(loc.curr_task).relock_2.relock_start();
+            } else
+                this_task::the_coroutine_ended();
+            if (get_data(loc.curr_task).callbacks.is_extended_mode) {
+                if (get_data(loc.curr_task).callbacks.extended_mode.is_restartable)
+                    get_data(loc.curr_task).started = false;
+                else
+                    get_data(loc.curr_task).end_of_life = true;
+            } else
+                get_data(loc.curr_task).end_of_life = true;
+
+            get_data(loc.curr_task).result_notify.notify_all();
+            if (task::max_running_tasks)
+                glob.can_started_new_notifier.notify_one();
+
+        } catch (const task_cancellation& cancel) {
+            forceCancelCancellation(cancel);
+        } catch (...) {
+            loc.ex_ptr = std::current_exception(); //TODO pass this to the callback
+        }
+        --glob.in_run_tasks;
     }
 
     void transfer_task(std::shared_ptr<task>& task) {
@@ -353,6 +394,8 @@ namespace fast_task {
             get_data(loc.curr_task).relock_0.relock_start();
             get_data(loc.curr_task).relock_1.relock_start();
             get_data(loc.curr_task).relock_2.relock_start();
+        } else if (get_data(loc.curr_task).is_on_scheduler) {
+            in_place_run();
         } else {
             light_stack stack_alloc(1048576 /*1 mb*/);
             auto ss = stack_alloc.allocate();

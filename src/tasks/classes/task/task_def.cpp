@@ -10,10 +10,11 @@
 namespace fast_task {
     bool task::enable_task_naming = false;
 
-    task::task(void* data, void (*on_start)(void*), void (*on_await)(void*), void (*on_cancel)(void*), void (*on_destruct)(void*), bool is_coroutine)
+    task::task(void* data, void (*on_start)(void*), void (*on_await)(void*), void (*on_cancel)(void*), void (*on_destruct)(void*), bool is_restartable, bool is_on_scheduler)
         : data_{.timeout = std::chrono::high_resolution_clock::time_point::min().time_since_epoch().count()} {
+        data_.is_on_scheduler = is_on_scheduler;
         data_.callbacks.is_extended_mode = true;
-        data_.callbacks.extended_mode.is_coroutine = is_coroutine;
+        data_.callbacks.extended_mode.is_restartable = is_restartable;
         data_.callbacks.extended_mode.data = data;
         data_.callbacks.extended_mode.on_start = on_start;
         data_.callbacks.extended_mode.on_await = on_await;
@@ -31,11 +32,12 @@ namespace fast_task {
         FT_DEBUG_ONLY(register_object(this));
     }
 
-    task::task(std::move_only_function<void()>&& func, std::move_only_function<void(const std::exception_ptr&)>&& ex_handle, std::chrono::high_resolution_clock::time_point timeout, task_priority priority) : data_{.timeout = timeout.time_since_epoch().count()} {
+    task::task(std::move_only_function<void()>&& func, std::move_only_function<void(const std::exception_ptr&)>&& ex_handle, std::chrono::high_resolution_clock::time_point timeout, task_priority priority, bool is_on_scheduler) : data_{.timeout = timeout.time_since_epoch().count()} {
 #if tasks_enable_preemptive_scheduler_preview
         data_.exdata = new execution_data();
         data_.exdata->priority = priority;
 #endif
+        data_.is_on_scheduler = is_on_scheduler;
         data_.callbacks.is_extended_mode = false;
         data_.callbacks.normal_mode.func = std::move(func);
         data_.callbacks.normal_mode.ex_handle = std::move(ex_handle);
@@ -233,11 +235,11 @@ namespace fast_task {
                 await_task(*tasks, false);
     }
 
-    std::shared_ptr<task> task::callback_dummy(void* dummy_data, void (*on_start)(void*), void (*on_await)(void*), void (*on_cancel)(void*), void (*on_destruct)(void*), bool is_coroutine) {
-        return std::make_shared<task>(dummy_data, on_start, on_await, on_cancel, on_destruct, is_coroutine);
+    std::shared_ptr<task> task::callback_dummy(void* dummy_data, void (*on_start)(void*), void (*on_await)(void*), void (*on_cancel)(void*), void (*on_destruct)(void*), bool is_restartable, bool is_on_scheduler) {
+        return std::make_shared<task>(dummy_data, on_start, on_await, on_cancel, on_destruct, is_restartable, is_on_scheduler);
     }
 
-    std::shared_ptr<task> task::callback_dummy(void* dummy_data, void (*on_await)(void*), void (*on_cancel)(void*), void (*on_destruct)(void*), bool is_coroutine) {
-        return std::make_shared<task>(dummy_data, nullptr, on_await, on_cancel, on_destruct, is_coroutine);
+    std::shared_ptr<task> task::callback_dummy(void* dummy_data, void (*on_await)(void*), void (*on_cancel)(void*), void (*on_destruct)(void*), bool is_restartable, bool is_on_scheduler) {
+        return std::make_shared<task>(dummy_data, nullptr, on_await, on_cancel, on_destruct, is_restartable, is_on_scheduler);
     }
 }

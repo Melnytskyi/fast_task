@@ -11,10 +11,12 @@
     #include "shared.hpp"
     #include "threading.hpp"
     #include <chrono>
+    #include <coroutine>
     #include <forward_list>
     #include <functional>
     #include <list>
     #include <mutex>
+    #include <variant>
 
     #pragma push_macro("min")
     #undef min
@@ -24,6 +26,12 @@ namespace fast_task {
         struct _debug_collect;
     }
     class task;
+
+    struct FT_API_LOCAL task_promise_base {
+        std::shared_ptr<task> task_object;
+        std::suspend_always initial_suspend() noexcept;
+        std::suspend_always final_suspend() noexcept;
+    };
 
     class FT_API task_mutex {
         friend class task_recursive_mutex;
@@ -36,17 +44,39 @@ namespace fast_task {
             class task* current_task = nullptr;
         } values;
 
+        struct FT_API [[nodiscard]] task_mutex_lock_awaiter {
+            task_mutex& mutex;
+
+            bool await_ready() noexcept;
+            bool await_suspend(std::coroutine_handle<task_promise_base> h);
+            void await_resume() noexcept;
+        };
+
+        struct FT_API [[nodiscard]] task_mutex_try_lock_awaiter {
+            task_mutex& mutex;
+            std::chrono::high_resolution_clock::time_point time_point;
+            std::coroutine_handle<task_promise_base> handle;
+            bool successful = false;
+
+            bool await_ready() noexcept;
+            bool await_suspend(std::coroutine_handle<task_promise_base> h);
+            bool await_resume() noexcept;
+        };
+
     public:
         task_mutex();
         ~task_mutex();
 
+        task_mutex_lock_awaiter async_lock();
+        task_mutex_try_lock_awaiter async_try_lock_for(size_t milliseconds);
+        task_mutex_try_lock_awaiter async_try_lock_until(std::chrono::high_resolution_clock::time_point time_point);
         void lock();
         bool try_lock();
         bool try_lock_for(size_t milliseconds);
         bool try_lock_until(std::chrono::high_resolution_clock::time_point time_point);
         void unlock();
         bool is_locked();
-        void lifecycle_lock(std::shared_ptr<task>& task);
+        void lifecycle_lock(std::shared_ptr<task>&& task);
         bool is_own();
     };
 
@@ -55,9 +85,32 @@ namespace fast_task {
         task_mutex mutex;
         uint32_t recursive_count = 0;
 
+        struct FT_API [[nodiscard]] task_mutex_lock_awaiter {
+            task_recursive_mutex& mutex;
+
+            bool await_ready() noexcept;
+            bool await_suspend(std::coroutine_handle<task_promise_base> h);
+            void await_resume() noexcept;
+        };
+
+        struct FT_API [[nodiscard]] task_mutex_try_lock_awaiter {
+            task_recursive_mutex& mutex;
+            std::chrono::high_resolution_clock::time_point time_point;
+            std::coroutine_handle<task_promise_base> handle;
+            bool successful = false;
+
+            bool await_ready() noexcept;
+            bool await_suspend(std::coroutine_handle<task_promise_base> h);
+            bool await_resume() noexcept;
+        };
+
     public:
         task_recursive_mutex();
         ~task_recursive_mutex();
+
+        task_mutex_lock_awaiter async_lock();
+        task_mutex_try_lock_awaiter async_try_lock_for(size_t milliseconds);
+        task_mutex_try_lock_awaiter async_try_lock_until(std::chrono::high_resolution_clock::time_point time_point);
 
         void lock();
         bool try_lock();
@@ -65,7 +118,7 @@ namespace fast_task {
         bool try_lock_until(std::chrono::high_resolution_clock::time_point time_point);
         void unlock();
         bool is_locked();
-        void lifecycle_lock(std::shared_ptr<task>& task);
+        void lifecycle_lock(std::shared_ptr<task>&& task);
         bool is_own();
     };
 
@@ -81,10 +134,57 @@ namespace fast_task {
             class task* current_writer_task = nullptr;
         } values;
 
+        struct FT_API [[nodiscard]] task_mutex_write_lock_awaiter {
+            task_rw_mutex& mutex;
+
+            bool await_ready() noexcept;
+            bool await_suspend(std::coroutine_handle<task_promise_base> h);
+            void await_resume() noexcept;
+        };
+
+        struct FT_API [[nodiscard]] task_mutex_try_write_lock_awaiter {
+            task_rw_mutex& mutex;
+            std::chrono::high_resolution_clock::time_point time_point;
+            std::coroutine_handle<task_promise_base> handle;
+            bool successful = false;
+
+            bool await_ready() noexcept;
+            bool await_suspend(std::coroutine_handle<task_promise_base> h);
+            bool await_resume() noexcept;
+        };
+
+        struct FT_API [[nodiscard]] task_mutex_read_lock_awaiter {
+            task_rw_mutex& mutex;
+
+            bool await_ready() noexcept;
+            bool await_suspend(std::coroutine_handle<task_promise_base> h);
+            void await_resume() noexcept;
+        };
+
+        struct FT_API [[nodiscard]] task_mutex_try_read_lock_awaiter {
+            task_rw_mutex& mutex;
+            std::chrono::high_resolution_clock::time_point time_point;
+            std::coroutine_handle<task_promise_base> handle;
+            bool successful = false;
+
+            bool await_ready() noexcept;
+            bool await_suspend(std::coroutine_handle<task_promise_base> h);
+            bool await_resume() noexcept;
+        };
+
     public:
         using read_write_mutex = void;
         task_rw_mutex();
         ~task_rw_mutex();
+
+        task_mutex_read_lock_awaiter async_read_lock();
+        task_mutex_try_read_lock_awaiter async_try_read_lock_for(size_t milliseconds);
+        task_mutex_try_read_lock_awaiter async_try_read_lock_until(std::chrono::high_resolution_clock::time_point time_point);
+
+
+        task_mutex_write_lock_awaiter async_write_lock();
+        task_mutex_try_write_lock_awaiter async_try_write_lock_for(size_t milliseconds);
+        task_mutex_try_write_lock_awaiter async_try_write_lock_until(std::chrono::high_resolution_clock::time_point time_point);
 
         void read_lock();
         bool try_read_lock();
@@ -92,7 +192,7 @@ namespace fast_task {
         bool try_read_lock_until(std::chrono::high_resolution_clock::time_point time_point);
         void read_unlock();
         bool is_read_locked();
-        void lifecycle_read_lock(std::shared_ptr<task>& task);
+        void lifecycle_read_lock(std::shared_ptr<task>&& task);
 
         void write_lock();
         bool try_write_lock();
@@ -100,7 +200,7 @@ namespace fast_task {
         bool try_write_lock_until(std::chrono::high_resolution_clock::time_point time_point);
         void write_unlock();
         bool is_write_locked();
-        void lifecycle_write_lock(std::shared_ptr<task>& task);
+        void lifecycle_write_lock(std::shared_ptr<task>&& task);
 
         void lock() {
             write_lock();
@@ -111,7 +211,7 @@ namespace fast_task {
         }
 
         bool try_lock() {
-            try_write_lock();
+            return try_write_lock();
         }
 
         void lock_shared() {
@@ -123,7 +223,7 @@ namespace fast_task {
         }
 
         bool try_lock_shared() {
-            try_read_lock();
+            return try_read_lock();
         }
 
         bool is_own();
@@ -299,9 +399,31 @@ namespace fast_task {
             fast_task::mutex no_race;
         } values;
 
+        struct FT_API [[nodiscard]] task_wait_awaiter {
+            task_condition_variable& cv;
+            bool await_ready() noexcept;
+            bool await_suspend(std::coroutine_handle<task_promise_base> h);
+            void await_resume() noexcept;
+        };
+
+        struct FT_API [[nodiscard]] task_wait_util_awaiter {
+            task_condition_variable& cv;
+            std::chrono::high_resolution_clock::time_point time_point;
+            std::coroutine_handle<task_promise_base> handle;
+            bool successful = false;
+
+            bool await_ready() noexcept;
+            bool await_suspend(std::coroutine_handle<task_promise_base> h);
+            bool await_resume() noexcept;
+        };
+
     public:
         task_condition_variable();
         ~task_condition_variable();
+        task_wait_awaiter async_wait(fast_task::unique_lock<mutex_unify>& lock);
+        task_wait_util_awaiter async_wait_for(fast_task::unique_lock<mutex_unify>& lock, size_t milliseconds);
+        task_wait_util_awaiter async_wait_until(fast_task::unique_lock<mutex_unify>& lock, std::chrono::high_resolution_clock::time_point time_point);
+
         void wait(fast_task::unique_lock<mutex_unify>& lock);
         bool wait_for(fast_task::unique_lock<mutex_unify>& lock, size_t milliseconds);
         bool wait_until(fast_task::unique_lock<mutex_unify>& lock, std::chrono::high_resolution_clock::time_point time_point);
@@ -327,12 +449,16 @@ namespace fast_task {
 
     //The task class has two modes,
     // the normal one allows setting `func` function which would start on ist own stack
-    //  on exception it allows to catch using `ex_handle`
+    //  on exception it allows to catch using `ex_handle` callback
     // the extended one allows handling on_start, on_await and on_cancel events.
     //  the on_await and on_cancel executed on calling thread and could be used for example, to wrap the sockets in the task interface
     //  the on_start executed on its own stack like normal one and allows using all synchronization primitives
-    //    but when is_coroutine is set the task could be restarted, to complete coroutine use this_task::the_coroutine_ended
-    //    this could be used to reduce allocated memory for stacks, because they would be reused for other coroutines
+    //    when is_restartable is set the task could be restarted, to disable use this_task::the_coroutine_ended
+    //    but when the is_on_scheduler variable is set, the task would be executed on scheduler stack which would reduce the deallocations
+    //      and the task should be aware, the scheduler could not interrupt itself, so the task effectively becomes cooperative only,
+    //      the task should never consume too much time on scheduler to prevent the task overloading the whole scheduler system
+    //      and the task should use async_* methods for synchronization, the regular operations would throw exception
+    //      this flag allows to create stackless coroutines like in c++ or other language
     class FT_API task {
         void awaitEnd(fast_task::unique_lock<mutex_unify>& l);
         struct FT_API_LOCAL execution_data;
@@ -351,7 +477,7 @@ namespace fast_task {
 
                 struct FT_API_LOCAL extended_mode_t {
                     bool is_extended_mode : 1;
-                    bool is_coroutine : 1;
+                    bool is_restartable : 1;
                     void* data;
                     void (*on_start)(void*);
                     void (*on_await)(void*);
@@ -366,7 +492,7 @@ namespace fast_task {
                 callbacks_data(callbacks_data&& move) noexcept {
                     if (move.is_extended_mode) {
                         is_extended_mode = true;
-                        extended_mode.is_coroutine = move.extended_mode.is_coroutine;
+                        extended_mode.is_restartable = move.extended_mode.is_restartable;
                         extended_mode.data = move.extended_mode.data;
                         extended_mode.on_start = move.extended_mode.on_start;
                         extended_mode.on_await = move.extended_mode.on_await;
@@ -414,6 +540,7 @@ namespace fast_task {
             bool auto_bind_worker : 1 = false;
             bool invalid_switch_caught : 1 = false;
             bool completed : 1 = false;
+            bool is_on_scheduler : 1 = false;
             execution_data* exdata = nullptr;
         } data_;
 
@@ -430,8 +557,8 @@ namespace fast_task {
         static size_t max_running_tasks;
         static bool enable_task_naming;
 
-        task(void* data, void (*on_start)(void*), void (*on_await)(void*), void (*on_cancel)(void*), void (*on_destruct)(void*), bool is_coroutine = false);
-        task(std::move_only_function<void()>&& func, std::move_only_function<void(const std::exception_ptr&)>&& ex_handle = nullptr, std::chrono::high_resolution_clock::time_point timeout = std::chrono::high_resolution_clock::time_point::min(), task_priority priority = task_priority::high);
+        task(void* data, void (*on_start)(void*), void (*on_await)(void*), void (*on_cancel)(void*), void (*on_destruct)(void*), bool is_restartable = false, bool is_on_scheduler = false);
+        task(std::move_only_function<void()>&& func, std::move_only_function<void(const std::exception_ptr&)>&& ex_handle = nullptr, std::chrono::high_resolution_clock::time_point timeout = std::chrono::high_resolution_clock::time_point::min(), task_priority priority = task_priority::high, bool is_on_scheduler = false);
 
         task(task&& mov) noexcept;
         ~task();
@@ -480,8 +607,8 @@ namespace fast_task {
         static void await_multiple(std::vector<std::shared_ptr<task>>& tasks, bool pre_started = false, bool release = false);
         static void await_multiple(std::shared_ptr<task>* tasks, size_t len, bool pre_started = false, bool release = false);
 
-        static std::shared_ptr<task> callback_dummy(void* dummy_data, void (*on_start)(void*), void (*on_await)(void*), void (*on_cancel)(void*), void (*on_destruct)(void*), bool is_coroutine = false);
-        static std::shared_ptr<task> callback_dummy(void* dummy_data, void (*on_await)(void*), void (*on_cancel)(void*), void (*on_destruct)(void*), bool is_coroutine = false);
+        static std::shared_ptr<task> callback_dummy(void* dummy_data, void (*on_start)(void*), void (*on_await)(void*), void (*on_cancel)(void*), void (*on_destruct)(void*), bool is_restartable = false, bool is_on_scheduler = false);
+        static std::shared_ptr<task> callback_dummy(void* dummy_data, void (*on_await)(void*), void (*on_cancel)(void*), void (*on_destruct)(void*), bool is_restartable = false, bool is_on_scheduler = false);
     };
 
     namespace scheduler {
@@ -504,7 +631,6 @@ namespace fast_task {
         void FT_API schedule_until(std::shared_ptr<task>&& task, std::chrono::high_resolution_clock::time_point time_point);
         void FT_API schedule_until(const std::shared_ptr<task>& task, std::chrono::high_resolution_clock::time_point time_point);
 
-
         template <class Dur_resolution, class Dur_type>
         void schedule(std::shared_ptr<task>&& task, std::chrono::duration<Dur_resolution, Dur_type> duration) {
             schedule_until(std::move(task), std::chrono::high_resolution_clock::now() + duration);
@@ -514,6 +640,7 @@ namespace fast_task {
         void schedule(const std::shared_ptr<task>& task, std::chrono::duration<Dur_resolution, Dur_type> duration) {
             schedule_until(task, std::chrono::high_resolution_clock::now() + duration);
         }
+
         void FT_API start(std::shared_ptr<task>&& lgr_task);
         void FT_API start(std::list<std::shared_ptr<task>>& lgr_task);
         void FT_API start(std::vector<std::shared_ptr<task>>& lgr_task);
@@ -581,9 +708,31 @@ namespace fast_task {
             size_t max_threshold = 0;
         } values;
 
+        struct FT_API [[nodiscard]] task_lock_awaiter {
+            task_semaphore& sem;
+
+            bool await_ready() noexcept;
+            bool await_suspend(std::coroutine_handle<task_promise_base> h);
+            void await_resume() noexcept;
+        };
+
+        struct FT_API [[nodiscard]] task_try_lock_awaiter {
+            task_semaphore& sem;
+            std::chrono::high_resolution_clock::time_point time_point;
+            std::coroutine_handle<task_promise_base> handle;
+            bool successful = false;
+
+            bool await_ready() noexcept;
+            bool await_suspend(std::coroutine_handle<task_promise_base> h);
+            bool await_resume() noexcept;
+        };
+
     public:
         task_semaphore();
         ~task_semaphore();
+        task_lock_awaiter async_lock();
+        task_try_lock_awaiter async_try_lock_for(size_t milliseconds);
+        task_try_lock_awaiter async_try_lock_until(std::chrono::high_resolution_clock::time_point time_point);
 
         void set_max_threshold(size_t val);
         void lock();
@@ -595,6 +744,7 @@ namespace fast_task {
         bool is_locked();
     };
 
+    //same as task_semaphore but with checks
     class FT_API task_limiter {
         friend struct debug::_debug_collect;
         struct FT_API_LOCAL resume_task;
@@ -611,9 +761,31 @@ namespace fast_task {
 
         void unchecked_unlock();
 
+        struct FT_API [[nodiscard]] task_lock_awaiter {
+            task_limiter& lim;
+
+            bool await_ready() noexcept;
+            bool await_suspend(std::coroutine_handle<task_promise_base> h);
+            void await_resume();
+        };
+
+        struct FT_API [[nodiscard]] task_try_lock_awaiter {
+            task_limiter& lim;
+            std::chrono::high_resolution_clock::time_point time_point;
+            std::coroutine_handle<task_promise_base> handle;
+            bool successful = false;
+
+            bool await_ready() noexcept;
+            bool await_suspend(std::coroutine_handle<task_promise_base> h);
+            bool await_resume();
+        };
+
     public:
         task_limiter();
         ~task_limiter();
+        task_lock_awaiter async_lock();
+        task_try_lock_awaiter async_try_lock_for(size_t milliseconds);
+        task_try_lock_awaiter async_try_lock_until(std::chrono::high_resolution_clock::time_point time_point);
 
         void set_max_threshold(size_t val);
         void lock();
@@ -684,6 +856,7 @@ namespace fast_task {
         bool timed_out();
     };
 }
+
 
     #pragma pop_macro("min")
 #endif

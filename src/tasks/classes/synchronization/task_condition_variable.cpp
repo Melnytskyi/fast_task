@@ -265,4 +265,75 @@ namespace fast_task {
         }
         get_data(task).started = true;
     }
+
+    bool task_condition_variable::task_wait_awaiter::await_ready() noexcept {
+        return false;
+    }
+
+    bool task_condition_variable::task_wait_awaiter::await_suspend(std::coroutine_handle<task_promise_base> h) {
+        auto& task_ptr = h.promise().task_object;
+        if (get_data(task_ptr).relock_0 == cv.values.no_race)
+            cv.values.resume_task.push_back({task_ptr, get_data(task_ptr).awake_check, nullptr, nullptr});
+        else {
+            fast_task::lock_guard l(cv.values.no_race);
+            cv.values.resume_task.push_back({task_ptr, get_data(task_ptr).awake_check, nullptr, nullptr});
+        }
+        return true;
+    }
+
+    void task_condition_variable::task_wait_awaiter::await_resume() noexcept {}
+
+    bool task_condition_variable::task_wait_util_awaiter::await_ready() noexcept {
+        successful = std::chrono::high_resolution_clock::now() >= time_point;
+        return successful;
+    }
+
+    bool task_condition_variable::task_wait_util_awaiter::await_suspend(std::coroutine_handle<task_promise_base> h) {
+        handle = h;
+        auto& task_ptr = h.promise().task_object;
+        if (get_data(task_ptr).relock_0 == cv.values.no_race)
+            cv.values.resume_task.push_back({task_ptr, get_data(task_ptr).awake_check, nullptr, nullptr});
+        else {
+            fast_task::lock_guard l(cv.values.no_race);
+            cv.values.resume_task.push_back({task_ptr, get_data(task_ptr).awake_check, nullptr, nullptr});
+        }
+        fast_task::makeTimeWait(time_point);
+        return true;
+    }
+
+    bool task_condition_variable::task_wait_util_awaiter::await_resume() noexcept {
+        if (successful)
+            return true;
+        auto& task_ptr = handle.promise().task_object;
+        if (get_data(task_ptr).time_end_flag) {
+            successful = false;
+        } else
+            successful = true;
+
+        get_data(task_ptr).relock_0 = nullptr;
+        get_data(task_ptr).relock_1 = nullptr;
+        get_data(task_ptr).relock_2 = nullptr;
+        return successful;
+    }
+
+    task_condition_variable::task_wait_awaiter task_condition_variable::async_wait(fast_task::unique_lock<mutex_unify>& lock) {
+        get_data(loc.curr_task).relock_0 = *lock.mutex();
+        return task_wait_awaiter{*this};
+    }
+
+    task_condition_variable::task_wait_util_awaiter task_condition_variable::async_wait_for(fast_task::unique_lock<mutex_unify>& lock, size_t milliseconds) {
+        get_data(loc.curr_task).relock_0 = *lock.mutex();
+        return task_wait_util_awaiter{
+            *this,
+            std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(milliseconds)
+        };
+    }
+
+    task_condition_variable::task_wait_util_awaiter task_condition_variable::async_wait_until(fast_task::unique_lock<mutex_unify>& lock, std::chrono::high_resolution_clock::time_point time_point) {
+        get_data(loc.curr_task).relock_0 = *lock.mutex();
+        return task_wait_util_awaiter{
+            *this,
+            time_point
+        };
+    }
 }

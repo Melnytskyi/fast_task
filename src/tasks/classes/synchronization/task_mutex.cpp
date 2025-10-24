@@ -171,14 +171,14 @@ namespace fast_task {
         return true;
     }
 
-    void task_mutex::lifecycle_lock(std::shared_ptr<task>& lock_task) {
+    void task_mutex::lifecycle_lock(std::shared_ptr<task>&& lock_task) {
         if (get_data(lock_task).started)
             throw std::logic_error("Task already started");
         if (get_data(lock_task).callbacks.is_extended_mode) {
             if (!get_data(lock_task).callbacks.extended_mode.on_start)
                 throw std::logic_error("lifecycle_lock requires in extended mode the on_start variable to be set");
-            else if (!get_data(lock_task).callbacks.extended_mode.is_coroutine)
-                throw std::logic_error("lifecycle_lock requires in extended mode the coroutine mode to be disabled");
+            else if (!get_data(lock_task).callbacks.extended_mode.is_restartable)
+                throw std::logic_error("lifecycle_lock requires in extended mode the restartable mode to be disabled");
             else {
                 task::run([lock_task, this]() {
                     fast_task::lock_guard guard(*this);
@@ -193,5 +193,72 @@ namespace fast_task {
             };
             scheduler::start(lock_task);
         }
+    }
+
+    bool task_mutex::task_mutex_lock_awaiter::await_ready() noexcept {
+        return mutex.try_lock();
+    }
+
+    bool task_mutex::task_mutex_lock_awaiter::await_suspend(std::coroutine_handle<task_promise_base> h) {
+        auto& task_ptr = h.promise().task_object;
+
+        fast_task::lock_guard l(mutex.values.no_race);
+        if (mutex.values.current_task == nullptr) {
+            mutex.values.current_task = task_ptr.get();
+            return false;
+        }
+
+        mutex.values.resume_task.push_back({task_ptr, get_data(task_ptr).awake_check, nullptr, nullptr});
+        return true;
+    }
+
+    bool task_mutex::task_mutex_try_lock_awaiter::await_ready() noexcept {
+        if (mutex.try_lock()) {
+            successful = true;
+            return true;
+        }
+        return false;
+    }
+
+    bool task_mutex::task_mutex_try_lock_awaiter::await_suspend(std::coroutine_handle<task_promise_base> h) {
+        handle = h;
+        auto& task_ptr = h.promise().task_object;
+        fast_task::lock_guard l(mutex.values.no_race);
+        if (mutex.values.current_task == nullptr) {
+            mutex.values.current_task = task_ptr.get();
+            return false;
+        }
+        mutex.values.resume_task.push_back({task_ptr, get_data(task_ptr).awake_check, nullptr, nullptr});
+        fast_task::makeTimeWait(time_point);
+        return true;
+    }
+
+    bool task_mutex::task_mutex_try_lock_awaiter::await_resume() noexcept {
+        if (successful)
+            return true;
+        auto& task_ptr = handle.promise().task_object;
+        if (get_data(task_ptr).time_end_flag) {
+            successful = false;
+        } else
+            successful = true;
+        return successful;
+    }
+
+    task_mutex::task_mutex_lock_awaiter task_mutex::async_lock() {
+        return task_mutex_lock_awaiter{*this};
+    }
+
+    task_mutex::task_mutex_try_lock_awaiter task_mutex::async_try_lock_for(size_t milliseconds) {
+        return task_mutex_try_lock_awaiter{
+            *this,
+            std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(milliseconds)
+        };
+    }
+
+    task_mutex::task_mutex_try_lock_awaiter task_mutex::async_try_lock_until(std::chrono::high_resolution_clock::time_point time_point) {
+        return task_mutex_try_lock_awaiter{
+            *this,
+            time_point
+        };
     }
 }
