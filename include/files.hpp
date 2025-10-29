@@ -153,14 +153,23 @@ namespace fast_task {
             void close();
 
             future_ptr<std::vector<uint8_t>> read(uint32_t size);
+            future_ptr<std::vector<uint8_t>> read_at(uint64_t offset, uint32_t size);
             uint32_t read(uint8_t* data, uint32_t size);
+            uint32_t read_at(uint64_t offset, uint8_t* data, uint32_t size);
 
             future_ptr<std::vector<uint8_t>> read_fixed(uint32_t size);
+            future_ptr<std::vector<uint8_t>> read_fixed_at(uint64_t offset, uint32_t size);
+
             uint32_t read_fixed(uint8_t* data, uint32_t size);
+            uint32_t read_fixed_at(uint64_t offset, uint8_t* data, uint32_t size);
 
             future_ptr<void> write(const uint8_t* data, uint32_t size);
-            future_ptr<void> append(const uint8_t* data, uint32_t size);
+            future_ptr<void> write_at(uint64_t offset, const uint8_t* data, uint32_t size);
+
             void write_inline(const uint8_t* data, uint32_t size);
+            void write_inline_at(uint64_t offset, const uint8_t* data, uint32_t size);
+
+            future_ptr<void> append(const uint8_t* data, uint32_t size);
             void append_inline(const uint8_t* data, uint32_t size);
 
             bool seek_pos(uint64_t offset, pointer_offset pointer_offset, pointer pointer);
