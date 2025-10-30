@@ -138,7 +138,6 @@ namespace fast_task {
         class FT_API file_handle {
             class file_manager* handle;
 
-            file_handle();
 
         public:
             static file_handle open(const std::filesystem::path& path, open_mode open, on_open_action action, _async_flags flags = {}, share_mode share = {}, pointer_mode pointer_mode = pointer_mode::combined);
@@ -147,6 +146,11 @@ namespace fast_task {
             static file_handle open_throws(const std::filesystem::path& path, open_mode open, on_open_action action, _async_flags flags = {}, share_mode share = {}, pointer_mode pointer_mode = pointer_mode::combined);
             static file_handle open_throws(const std::filesystem::path& path, open_mode open, on_open_action action, _sync_flags flags = {}, share_mode share = {}, pointer_mode pointer_mode = pointer_mode::combined);
 
+            file_handle();
+            file_handle(file_handle&& other);
+            file_handle(const file_handle&) = delete;
+            file_handle& operator=(const file_handle&) = delete;
+            file_handle& operator=(file_handle&& other);
             ~file_handle();
 
             bool is_open() const;

@@ -1559,8 +1559,6 @@ namespace fast_task::files {
 
 namespace fast_task::files {
 
-    file_handle::file_handle() = default;
-
     file_handle file_handle::open(const std::filesystem::path& path, open_mode open, on_open_action action, _async_flags flags, share_mode share, pointer_mode pointer_mode) {
         file_handle res;
         res.handle = nullptr;
@@ -1630,6 +1628,25 @@ namespace fast_task::files {
             file_manager::open(path, open, action, share, flags, pointer_mode)
         );
         return res;
+    }
+
+    file_handle::file_handle() {
+        handle = nullptr;
+    }
+
+    file_handle::file_handle(file_handle&& other) {
+        handle = other.handle;
+        other.handle = nullptr;
+    }
+
+    file_handle& file_handle::operator=(file_handle&& other) {
+        if (this == &other)
+            return *this;
+        if (handle)
+            delete handle;
+        handle = other.handle;
+        other.handle = nullptr;
+        return *this;
     }
 
     file_handle::~file_handle() {
