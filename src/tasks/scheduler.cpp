@@ -269,8 +269,14 @@ namespace fast_task {
             get_data(loc.curr_task).result_notify.notify_all();
         } catch (const task_cancellation& cancel) {
             forceCancelCancellation(cancel);
+            get_data(loc.curr_task).end_of_life = true;
+            get_data(loc.curr_task).result_notify.notify_all();
+            --glob.executing_tasks;
         } catch (...) {
             loc.ex_ptr = std::current_exception(); //TODO pass this to the callback
+            get_data(loc.curr_task).end_of_life = true;
+            get_data(loc.curr_task).result_notify.notify_all();
+            --glob.executing_tasks;
         }
         --glob.in_run_tasks;
     }
@@ -292,23 +298,18 @@ namespace fast_task {
                 }
             }
             if (loc.binded_id == (uint16_t)-1 && loc.is_task_thread) {
-                if (loc.local_tasks->emplace(std::move(task)))
+                if (loc.local_tasks->enqueue(std::move(task)))
                     return;
             }
 
-            auto queue = glob.executors_queues.load();
-            bool empty = !queue;
-            if (!empty)
-                empty = queue->empty();
-                    
-            if (empty || task::max_running_tasks <= glob.in_run_tasks)
+            if (task::max_running_tasks <= glob.in_run_tasks)
                 glob.cold_tasks.enqueue(std::move(task));
             else
                 glob.tasks.enqueue(std::move(task));
             glob.tasks_notifier.notify_one();
         } else {
             if (get_data(task).bind_to_worker_id == loc.binded_id)
-                if (loc.local_tasks->emplace(std::move(task)))
+                if (loc.local_tasks->enqueue(std::move(task)))
                     return;
             fast_task::shared_lock initializer_guard(glob.binded_workers_safety);
             if (!glob.binded_workers.contains(get_data(task).bind_to_worker_id)) {
@@ -328,56 +329,61 @@ namespace fast_task {
     }
 
     bool loadTask() {
-        if (auto tmp = loc.local_tasks->pop()) {
-            loc.curr_task = std::move(*tmp);
+        if (loc.local_tasks->try_dequeue(loc.curr_task)) {
             loc.stack_current_context = &get_execution_data(loc.curr_task).context;
             return false;
         }
 
         constexpr size_t BATCH_SIZE = 8;
         std::shared_ptr<task> temp_tasks[BATCH_SIZE];
-        size_t count = glob.tasks.try_dequeue_bulk(temp_tasks, BATCH_SIZE);
+        {
+            size_t count = glob.tasks.try_dequeue_bulk(temp_tasks, BATCH_SIZE);
 
-        if (count > 0) {
-            for (size_t i = 1; i < count; ++i)
-                if (!loc.local_tasks->emplace(std::move(temp_tasks[i])))
-                    glob.tasks.enqueue(temp_tasks[i]);
-            loc.curr_task = std::move(temp_tasks[0]);
-            loc.stack_current_context = &get_execution_data(loc.curr_task).context;
-            return false;
+            if (count > 0) {
+                for (size_t i = 1; i < count; ++i)
+                    if (!loc.local_tasks->enqueue(std::move(temp_tasks[i])))
+                        glob.tasks.enqueue(temp_tasks[i]);
+                loc.curr_task = std::move(temp_tasks[0]);
+                loc.stack_current_context = &get_execution_data(loc.curr_task).context;
+                return false;
+            }
+        }
+
+        if (task::max_running_tasks == 0 || can_be_scheduled_task_to_hot()) {
+            size_t count = glob.cold_tasks.try_dequeue_bulk(temp_tasks, BATCH_SIZE);
+
+            if (count > 0) {
+                for (size_t i = 1; i < count; ++i)
+                    if (!loc.local_tasks->enqueue(std::move(temp_tasks[i])))
+                        glob.cold_tasks.enqueue(temp_tasks[i]);
+                loc.curr_task = std::move(temp_tasks[0]);
+                loc.stack_current_context = &get_execution_data(loc.curr_task).context;
+                return false;
+            }
         }
 
         {
-            auto queues = glob.executors_queues.load();
+            auto queues = glob.executors_queues.load(std::memory_order::memory_order_relaxed);
             if (queues) {
                 if (!queues->empty()) {
                     auto& engine = get_thread_local_random_engine();
-                    std::uniform_int_distribution<size_t> dist(0, queues->size() - 1);
+                    size_t size = queues->size();
+                    std::uniform_int_distribution<size_t> dist(0, size - 1);
 
                     size_t start_index = dist(engine);
-                    for (size_t i = 0; i < queues->size(); ++i) {
-                        size_t index = (start_index + i) % queues->size();
-                        auto victim_deque = (*queues)[index];
+                    for (size_t i = 0; i < size; ++i) {
+                        size_t index = (start_index + i) % size;
+                        auto& victim_deque = (*queues)[index];
 
                         if (victim_deque == loc.local_tasks)
                             continue;
 
-                        if (auto tmp = victim_deque->steal()) {
-                            loc.curr_task = std::move(*tmp);
+                        if (victim_deque->try_dequeue(loc.curr_task)) {
                             loc.stack_current_context = &get_execution_data(loc.curr_task).context;
                             return false;
                         }
                     }
                 }
-            }
-        }
-
-
-        if (task::max_running_tasks == 0 || can_be_scheduled_task_to_hot()) {
-            if (glob.cold_tasks.try_dequeue(temp_tasks[0])) {
-                loc.curr_task = std::move(temp_tasks[0]);
-                loc.stack_current_context = &get_execution_data(loc.curr_task).context;
-                return false;
             }
         }
 
@@ -477,8 +483,8 @@ namespace fast_task {
         {
             fast_task::unique_lock lock(glob.task_thread_safety);
             auto old_queues_ptr = glob.executors_queues.load();
-            auto new_queues = old_queues_ptr ? std::make_shared<std::vector<std::shared_ptr<riften::Deque<std::shared_ptr<task>>>>>(*old_queues_ptr) 
-                                             : std::make_shared<std::vector<std::shared_ptr<riften::Deque<std::shared_ptr<task>>>>>();
+            auto new_queues = old_queues_ptr ? std::make_shared<std::vector<std::shared_ptr<moodycamel::ConcurrentQueue<std::shared_ptr<task>>>>>(*old_queues_ptr)
+                                             : std::make_shared<std::vector<std::shared_ptr<moodycamel::ConcurrentQueue<std::shared_ptr<task>>>>>();
             new_queues->push_back(loc.local_tasks);
             glob.executors_queues.store(new_queues);
         }
@@ -515,7 +521,7 @@ namespace fast_task {
             fast_task::lock_guard lock(glob.task_thread_safety);
 
             auto old_queues_ptr = glob.executors_queues.load();
-            auto new_queues = std::make_shared<std::vector<std::shared_ptr<riften::Deque<std::shared_ptr<task>>>>>();
+            auto new_queues = std::make_shared<std::vector<std::shared_ptr<moodycamel::ConcurrentQueue<std::shared_ptr<task>>>>>();
             new_queues->reserve(old_queues_ptr->size());
 
             for (const auto& q_ptr : *old_queues_ptr) {
@@ -530,8 +536,7 @@ namespace fast_task {
     bool loadTaskBinded(binded_context& context) {
         while (true) {
             check_stw();
-            if (auto tmp = loc.local_tasks->pop()) {
-                loc.curr_task = std::move(*tmp);
+            if (loc.local_tasks->try_dequeue(loc.curr_task)) {
                 loc.stack_current_context = &get_execution_data(loc.curr_task).context;
                 return true;
             }
@@ -542,7 +547,7 @@ namespace fast_task {
 
             if (count > 0) {
                 for (size_t i = 1; i < count; ++i)
-                    if (!loc.local_tasks->emplace(std::move(temp_tasks[i])))
+                    if (!loc.local_tasks->enqueue(std::move(temp_tasks[i])))
                         glob.tasks.enqueue(temp_tasks[i]);
                 loc.curr_task = std::move(temp_tasks[0]);
                 loc.stack_current_context = &get_execution_data(loc.curr_task).context;
@@ -564,8 +569,7 @@ namespace fast_task {
                             if (victim_deque == loc.local_tasks)
                                 continue;
 
-                            if (auto tmp = victim_deque->steal()) {
-                                loc.curr_task = std::move(*tmp);
+                            if (victim_deque->try_dequeue(loc.curr_task)) {
                                 loc.stack_current_context = &get_execution_data(loc.curr_task).context;
                                 return true;
                             }
@@ -605,8 +609,8 @@ namespace fast_task {
         {
             fast_task::unique_lock lock(context.no_race);
             auto old_queues_ptr = context.executors_queues.load();
-            auto new_queues = old_queues_ptr ? std::make_shared<std::vector<std::shared_ptr<riften::Deque<std::shared_ptr<task>>>>>(*old_queues_ptr)
-                                             : std::make_shared<std::vector<std::shared_ptr<riften::Deque<std::shared_ptr<task>>>>>();
+            auto new_queues = old_queues_ptr ? std::make_shared<std::vector<std::shared_ptr<moodycamel::ConcurrentQueue<std::shared_ptr<task>>>>>(*old_queues_ptr)
+                                             : std::make_shared<std::vector<std::shared_ptr<moodycamel::ConcurrentQueue<std::shared_ptr<task>>>>>();
             new_queues->push_back(loc.local_tasks);
             context.executors_queues.store(new_queues);
         }
@@ -639,7 +643,7 @@ namespace fast_task {
             }
             context.completions.erase(completions_remove);
             auto old_queues_ptr = context.executors_queues.load();
-            auto new_queues = std::make_shared<std::vector<std::shared_ptr<riften::Deque<std::shared_ptr<task>>>>>();
+            auto new_queues = std::make_shared<std::vector<std::shared_ptr<moodycamel::ConcurrentQueue<std::shared_ptr<task>>>>>();
             new_queues->reserve(old_queues_ptr->size());
 
             for (const auto& q_ptr : *old_queues_ptr) {
@@ -749,6 +753,14 @@ namespace fast_task {
         glob.time_control_enabled = true;
     }
 
+    void startTimeController_unsafe() {
+        if (glob.time_control_enabled)
+            return;
+        ++glob.thread_count;
+        fast_task::thread(taskTimer).detach();
+        glob.time_control_enabled = true;
+    }
+
     void unsafe_put_task_to_timed_queue(std::deque<timing>& queue, std::chrono::high_resolution_clock::time_point t, std::shared_ptr<task>& task) {
         size_t i = 0;
         auto it = queue.begin();
@@ -778,7 +790,7 @@ namespace fast_task {
 
     void FT_API_LOCAL makeTimeWait_unsafe(std::chrono::high_resolution_clock::time_point t) {
         if (!glob.time_control_enabled)
-            startTimeController();
+            startTimeController_unsafe();
         get_data(loc.curr_task).awaked = false;
         get_data(loc.curr_task).time_end_flag = false;
 

@@ -176,7 +176,7 @@ namespace fast_task::scheduler {
                 if (!queue)
                     return false;
                 for (auto& q : *queue)
-                    if (!q->empty())
+                    if (!q->size_approx())
                         return true;
                 return false;
             };
