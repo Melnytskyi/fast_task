@@ -28,13 +28,16 @@
 
     #include <barrier>
     #include <boost/context/continuation.hpp>
+    #include <concurrentqueue/moodycamel/concurrentqueue.h>
     #include <exception>
     #include <queue>
+    #include <random>
     #include <unordered_set>
 
     #include <shared.hpp>
     #include <task.hpp>
     #include <tasks/util/_dbg_macro.hpp>
+    #include <tasks/util/riften_deque.hpp>
 
 namespace fast_task {
     struct task::execution_data {
@@ -140,7 +143,6 @@ namespace fast_task {
         return *it;
     }
 
-
     inline auto FT_API_LOCAL get_execution_data(std::shared_ptr<task>& task) -> task::execution_data& {
         auto& it = get_data(task).exdata;
         if (!it)
@@ -188,12 +190,16 @@ namespace fast_task {
     std::chrono::nanoseconds FT_API_LOCAL init_quantum(task_priority priority);
 
     struct FT_API_LOCAL executors_local {
+        std::shared_ptr<riften::Deque<std::shared_ptr<task>>> local_tasks = std::make_shared<riften::Deque<std::shared_ptr<task>>>();
         std::exception_ptr ex_ptr;
         std::shared_ptr<task> curr_task = nullptr;
         boost::context::continuation* stack_current_context = nullptr;
+        scheduler::executor_policy policy = scheduler::executor_policy::default_policy;
+        uint16_t binded_id = (uint16_t)-1;
 
         bool is_task_thread : 1 = false;
         bool context_in_swap : 1 = false;
+        bool yield_request : 1 = false;
     };
 
     struct FT_API_LOCAL timing {
@@ -203,27 +209,30 @@ namespace fast_task {
     };
 
     struct FT_API_LOCAL binded_context {
+        std::atomic<std::shared_ptr<const std::vector<std::shared_ptr<riften::Deque<std::shared_ptr<task>>>>>> executors_queues;
         std::list<uint32_t> completions;
-        std::list<std::shared_ptr<task>> tasks;
+        moodycamel::ConcurrentQueue<std::shared_ptr<task>> tasks;
         task_condition_variable on_closed_notifier;
-        fast_task::recursive_mutex no_race;
+        fast_task::rw_mutex no_race;
         fast_task::condition_variable_any new_task_notifier;
         uint16_t executors = 0;
         bool in_close : 1 = false;
         bool allow_implicit_start : 1 = false;
         bool fixed_size : 1 = false;
+        scheduler::executor_policy policy = scheduler::executor_policy::default_policy;
     };
 
     struct FT_API_LOCAL executor_global {
         task_condition_variable no_tasks_notifier;
         task_condition_variable no_tasks_execute_notifier;
 
-        std::queue<std::shared_ptr<task>> tasks;
-        std::queue<std::shared_ptr<task>> cold_tasks;
+        std::atomic<std::shared_ptr<const std::vector<std::shared_ptr<riften::Deque<std::shared_ptr<task>>>>>> executors_queues;
+        moodycamel::ConcurrentQueue<std::shared_ptr<task>> tasks;
+        moodycamel::ConcurrentQueue<std::shared_ptr<task>> cold_tasks;
         std::deque<timing> timed_tasks;
         std::deque<timing> cold_timed_tasks;
 
-        fast_task::recursive_mutex task_thread_safety;
+        fast_task::rw_mutex task_thread_safety;
         fast_task::mutex task_timer_safety;
 
         fast_task::condition_variable_any tasks_notifier;
@@ -232,15 +241,14 @@ namespace fast_task {
 
         bool time_control_enabled = false;
 
-        std::atomic_size_t interrupts = 0;
+        std::atomic_size_t interrupts = 0; //debug counter of the usermode fast_task interrupts
         std::atomic_size_t executors = 0;
-        std::atomic_size_t tasks_in_swap = 0;
-        std::atomic_size_t in_run_tasks = 0;
+        std::atomic_size_t tasks_in_swap = 0;   //this means the tasks is stored outside the scheduler and excepted to be rescheduled later, ex. mutex
+        std::atomic_size_t in_run_tasks = 0;    //count of tasks in run right now
+        std::atomic_size_t executing_tasks = 0; //scheduled and in run tasks, including tasks in swap
 
-        task_condition_variable can_started_new_notifier;
-        task_condition_variable can_planned_new_notifier;
 
-        fast_task::mutex binded_workers_safety;
+        fast_task::rw_mutex binded_workers_safety;
         std::unordered_map<uint16_t, binded_context, std::hash<uint16_t>> binded_workers;
 
 
@@ -295,8 +303,10 @@ namespace fast_task {
     void FT_API_LOCAL swapCtxRelock(const mutex_unify& mut0);
     void FT_API_LOCAL swapCtxRelock(const mutex_unify& mut0, const mutex_unify& mut1, const mutex_unify& mut2);
     void FT_API_LOCAL swapCtxRelock(const mutex_unify& mut0, const mutex_unify& mut1);
-    void FT_API_LOCAL transfer_task(std::shared_ptr<task>& task);
+    void FT_API_LOCAL transfer_task(std::shared_ptr<task>&& task);
     void FT_API_LOCAL makeTimeWait(std::chrono::high_resolution_clock::time_point t);
+
+    void FT_API_LOCAL makeTimeWait_unsafe(std::chrono::high_resolution_clock::time_point t);
     void FT_API_LOCAL taskExecutor(bool end_in_task_out = false, bool prevent_naming = false);
     void FT_API_LOCAL bindedTaskExecutor(uint16_t id);
     void FT_API_LOCAL unsafe_put_task_to_timed_queue(std::deque<timing>& queue, std::chrono::high_resolution_clock::time_point t, std::shared_ptr<task>& task);
@@ -330,6 +340,9 @@ namespace fast_task {
     FT_DEBUG_ONLY(void FT_API_LOCAL unregister_object(task_limiter*));
     FT_DEBUG_ONLY(void FT_API_LOCAL unregister_object(task_query*));
     FT_DEBUG_ONLY(void FT_API_LOCAL unregister_object(deadline_timer*));
+
+
+    std::default_random_engine& FT_API_LOCAL get_thread_local_random_engine();
 }
 
 #endif

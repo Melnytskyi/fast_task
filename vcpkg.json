@@ -4,7 +4,7 @@
     "version": "0.1.0",
     "dependencies": [
         "boost-context",
-        "boost-lockfree",
+        "concurrentqueue",
         "cpptrace",
         {
             "name": "liburing",

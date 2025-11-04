@@ -51,10 +51,6 @@ namespace fast_task {
 
     task::~task() {
         FT_DEBUG_ONLY(unregister_object(this));
-        if (!data_.started) {
-            if (task::max_running_tasks)
-                glob.can_planned_new_notifier.notify_one();
-        }
         if (data_.exdata) {
             delete data_.exdata;
             data_.exdata = nullptr;

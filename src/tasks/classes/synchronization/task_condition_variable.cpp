@@ -55,13 +55,13 @@ namespace fast_task {
 
     bool task_condition_variable::wait_until(fast_task::unique_lock<mutex_unify>& mut, std::chrono::high_resolution_clock::time_point time_point) {
         if (loc.is_task_thread) {
-            fast_task::lock_guard guard(get_data(loc.curr_task).no_race);
-            makeTimeWait(time_point);
+            fast_task::lock_guard guard(glob.task_timer_safety);
+            makeTimeWait_unsafe(time_point);
             {
                 fast_task::lock_guard _guard(values.no_race);
                 values.resume_task.emplace_back(loc.curr_task, get_data(loc.curr_task).awake_check);
             }
-            swapCtxRelock(get_data(loc.curr_task).no_race);
+            swapCtxRelock(glob.task_timer_safety);
             if (get_data(loc.curr_task).time_end_flag)
                 return false;
         } else {
@@ -124,13 +124,13 @@ namespace fast_task {
 
     bool task_condition_variable::wait_until(std::unique_lock<mutex_unify>& mut, std::chrono::high_resolution_clock::time_point time_point) {
         if (loc.is_task_thread) {
-            fast_task::lock_guard guard(get_data(loc.curr_task).no_race);
-            makeTimeWait(time_point);
+            fast_task::lock_guard guard(glob.task_timer_safety);
+            makeTimeWait_unsafe(time_point);
             {
                 fast_task::lock_guard _guard(values.no_race);
                 values.resume_task.emplace_back(loc.curr_task, get_data(loc.curr_task).awake_check);
             }
-            swapCtxRelock(get_data(loc.curr_task).no_race);
+            swapCtxRelock(glob.task_timer_safety);
             if (get_data(loc.curr_task).time_end_flag)
                 return false;
         } else {
@@ -168,7 +168,7 @@ namespace fast_task {
             return;
         bool to_yield = false;
         {
-            fast_task::lock_guard guard(glob.task_thread_safety);
+            fast_task::shared_lock guard(glob.task_thread_safety);
             for (auto& [it, awake_check, native_cv, native_flag] : revive_tasks) {
                 if (it == nullptr) {
                     if (native_cv != nullptr) {
@@ -182,7 +182,8 @@ namespace fast_task {
                     continue;
                 if (!get_data(it).time_end_flag) {
                     get_data(it).awaked = true;
-                    transfer_task(it);
+                    fast_task::relock_guard guard_relock(guard);
+                    transfer_task(std::move(it));
                 }
             }
             glob.tasks_notifier.notify_one();
@@ -226,12 +227,13 @@ namespace fast_task {
         fast_task::lock_guard guard_loc(get_data(tsk).no_race, fast_task::adopt_lock);
         {
             get_data(tsk).awaked = true;
-            fast_task::lock_guard guard(glob.task_thread_safety);
+            fast_task::shared_lock guard(glob.task_thread_safety);
             if (task::max_running_tasks && loc.is_task_thread) {
                 if (can_be_scheduled_task_to_hot() && loc.curr_task && !get_data(loc.curr_task).end_of_life)
                     to_yield = true;
             }
-            transfer_task(tsk);
+            guard.unlock();
+            transfer_task(std::move(tsk));
         }
         if (to_yield)
             this_task::yield();

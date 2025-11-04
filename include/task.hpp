@@ -292,6 +292,8 @@ namespace fast_task {
             nmut,
             ntimed,
             nrec,
+            rwmut_r,
+            rwmut_w,
             std_nmut,
             std_ntimed,
             std_nrec,
@@ -309,6 +311,7 @@ namespace fast_task {
             std::recursive_mutex* std_nrec;
             fast_task::mutex* nmut;
             fast_task::timed_mutex* ntimed;
+            fast_task::rw_mutex* rwmut;
             fast_task::recursive_mutex* nrec;
             fast_task::spin_lock* uspin;
             task_mutex* umut;
@@ -327,10 +330,11 @@ namespace fast_task {
         mutex_unify(std::recursive_mutex& smut);
         mutex_unify(fast_task::mutex& smut);
         mutex_unify(fast_task::timed_mutex& smut);
+        mutex_unify(fast_task::rw_mutex& smut, bool write_read = true);
         mutex_unify(fast_task::recursive_mutex& smut);
         mutex_unify(fast_task::spin_lock& smut);
         mutex_unify(task_mutex& smut);
-        mutex_unify(task_rw_mutex& smut, bool read_write = true);
+        mutex_unify(task_rw_mutex& smut, bool write_read = true);
         mutex_unify(task_recursive_mutex& smut);
         mutex_unify(class multiply_mutex& mmut);
         mutex_unify(std::nullptr_t);
@@ -356,6 +360,7 @@ namespace fast_task {
         bool operator==(std::recursive_mutex&);
         bool operator==(fast_task::mutex&);
         bool operator==(fast_task::timed_mutex&);
+        bool operator==(fast_task::rw_mutex&);
         bool operator==(fast_task::recursive_mutex&);
         bool operator==(fast_task::spin_lock&);
         bool operator==(task_mutex&);
@@ -612,6 +617,14 @@ namespace fast_task {
     };
 
     namespace scheduler {
+        enum class executor_policy {
+            allows_preempt = 0,   //if fast_task built with preemptive scheduling disabled it would behave like cooperative_only
+            cooperative_only = 1, //forces the scheduler to disable preemption for this executor
+
+
+            default_policy = allows_preempt,
+        };
+
         namespace config {
             inline constexpr long long background_basic_quantum_ns = 15 * 1000000;
             inline constexpr long long low_basic_quantum_ns = 30 * 1000000;
@@ -646,8 +659,8 @@ namespace fast_task {
         void FT_API start(std::vector<std::shared_ptr<task>>& lgr_task);
         void FT_API start(const std::shared_ptr<task>& lgr_task);
 
-        uint16_t FT_API create_bind_only_executor(uint16_t fixed_count, bool allow_implicit_start);
-        void FT_API assign_bind_only_executor(uint16_t id, uint16_t fixed_count, bool allow_implicit_start);
+        uint16_t FT_API create_bind_only_executor(uint16_t fixed_count, bool allow_implicit_start, executor_policy policy = executor_policy::default_policy);
+        void FT_API assign_bind_only_executor(uint16_t id, uint16_t fixed_count, bool allow_implicit_start, executor_policy policy = executor_policy::default_policy);
         void FT_API close_bind_only_executor(uint16_t id);
 
         void FT_API create_executor(size_t count = 1);

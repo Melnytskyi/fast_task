@@ -28,6 +28,12 @@ namespace fast_task {
         case mutex_unify_type::nrec:
             nrec->lock();
             break;
+        case mutex_unify_type::rwmut_r:
+            rwmut->lock_shared();
+            break;
+        case mutex_unify_type::rwmut_w:
+            rwmut->lock();
+            break;
         case mutex_unify_type::umut:
             umut->lock();
             break;
@@ -65,6 +71,10 @@ namespace fast_task {
             return ntimed->try_lock();
         case mutex_unify_type::nrec:
             return nrec->try_lock();
+        case mutex_unify_type::rwmut_r:
+            return rwmut->try_lock_shared();
+        case mutex_unify_type::rwmut_w:
+            return rwmut->try_lock();
         case mutex_unify_type::umut:
             return umut->try_lock();
         case mutex_unify_type::urmut:
@@ -94,6 +104,10 @@ namespace fast_task {
             return ntimed->try_lock_for(std::chrono::milliseconds(milliseconds));
         case mutex_unify_type::nrec:
             return nrec->try_lock();
+        case mutex_unify_type::rwmut_r:
+            return rwmut->try_lock_shared();
+        case mutex_unify_type::rwmut_w:
+            return rwmut->try_lock();
         case mutex_unify_type::umut:
             return umut->try_lock_for(milliseconds);
         case mutex_unify_type::urmut:
@@ -123,6 +137,10 @@ namespace fast_task {
             return ntimed->try_lock_until(time_point);
         case mutex_unify_type::nrec:
             return nrec->try_lock();
+        case mutex_unify_type::rwmut_r:
+            return rwmut->try_lock_shared();
+        case mutex_unify_type::rwmut_w:
+            return rwmut->try_lock();
         case mutex_unify_type::umut:
             return umut->try_lock_until(time_point);
         case mutex_unify_type::urmut:
@@ -157,6 +175,12 @@ namespace fast_task {
             break;
         case mutex_unify_type::nrec:
             nrec->unlock();
+            break;
+        case mutex_unify_type::rwmut_r:
+            rwmut->unlock_shared();
+            break;
+        case mutex_unify_type::rwmut_w:
+            rwmut->unlock();
             break;
         case mutex_unify_type::umut:
             umut->unlock();
@@ -215,6 +239,11 @@ namespace fast_task {
         ntimed = std::addressof(smut);
     }
 
+    mutex_unify::mutex_unify(fast_task::rw_mutex& smut, bool write_read) {
+        type = write_read ? mutex_unify_type::rwmut_w : mutex_unify_type::rwmut_r;
+        rwmut = std::addressof(smut);
+    }
+
     mutex_unify::mutex_unify(fast_task::recursive_mutex& smut) {
         type = mutex_unify_type::nrec;
         nrec = std::addressof(smut);
@@ -230,8 +259,8 @@ namespace fast_task {
         umut = std::addressof(smut);
     }
 
-    mutex_unify::mutex_unify(task_rw_mutex& smut, bool read_write) {
-        type = read_write ? mutex_unify_type::urwmut_w : mutex_unify_type::urwmut_r;
+    mutex_unify::mutex_unify(task_rw_mutex& smut, bool write_read) {
+        type = write_read ? mutex_unify_type::urwmut_w : mutex_unify_type::urwmut_r;
         urwmut = std::addressof(smut);
     }
 

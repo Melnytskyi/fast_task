@@ -53,7 +53,8 @@ if(FAST_TASK_ENABLE_DEBUG_API)
 endif()
 
 find_package(Boost REQUIRED COMPONENTS context)
-target_include_directories(fast_task PRIVATE ${Boost_INCLUDE_DIRS} ${fast_task_INCLUDE_DIR})
+find_package(concurrentqueue CONFIG REQUIRED)
+target_include_directories(fast_task PRIVATE ${Boost_INCLUDE_DIRS} ${fast_task_INCLUDE_DIR} ${concurrentqueue_INCLUDE_DIRS})
 set_target_properties(fast_task
   PROPERTIES
   CXX_STANDARD 23

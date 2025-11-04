@@ -60,7 +60,7 @@ The repository is organized as follows:
 -   `include/`: Public header files for the library. 
 -   `src/`: Source code, including implementation details for tasks, networking, and file operations. 
 -   `CMakeLists.txt`: The main CMake build script.
--   `vcpkg.json`: vcpkg manifest for dependencies (`boost-context`, `boost-lockfree`, `cpptrace`, `liburing`).
+-   `vcpkg.json`: vcpkg manifest for dependencies (`boost-context`, `concurrentqueue`, `cpptrace`, `liburing`).
 -   `LICENSE`: The Boost Software License under which the project is distributed. 
 
 ## Usage

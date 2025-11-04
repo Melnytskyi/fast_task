@@ -33,10 +33,8 @@ namespace fast_task {
         fast_task::unique_lock keeper(values.no_race);
         while (!values.allow_threshold) {
             if (loc.is_task_thread) {
-                fast_task::lock_guard guard(glob.task_thread_safety);
                 values.resume_task.emplace_back(loc.curr_task, get_data(loc.curr_task).awake_check);
-                keeper.unlock();
-                swapCtxRelock(glob.task_thread_safety);
+                swapCtxRelock(values.no_race);
             } else
                 values.native_notify.wait(keeper);
         }
@@ -64,11 +62,10 @@ namespace fast_task {
 
         while (!values.allow_threshold) {
             if (loc.is_task_thread) {
-                fast_task::lock_guard guard(glob.task_thread_safety);
-                makeTimeWait(time_point);
+                fast_task::lock_guard guard(glob.task_timer_safety);
                 values.resume_task.emplace_back(loc.curr_task, get_data(loc.curr_task).awake_check);
-                keeper.unlock();
-                swapCtxRelock(glob.task_thread_safety);
+                makeTimeWait_unsafe(time_point);
+                swapCtxRelock(glob.task_timer_safety, values.no_race);
                 if (!get_data(loc.curr_task).awaked)
                     return false;
             } else if (values.native_notify.wait_until(keeper, time_point) == fast_task::cv_status::timeout)
@@ -94,7 +91,7 @@ namespace fast_task {
                 get_data(it.task).awaked = true;
                 auto task = values.resume_task.front().task;
                 values.resume_task.pop_front();
-                transfer_task(task);
+                transfer_task(std::move(task));
                 return;
             } else
                 values.resume_task.pop_front();
@@ -105,7 +102,6 @@ namespace fast_task {
         fast_task::lock_guard lg0(values.no_race);
         if (values.allow_threshold == values.max_threshold)
             return;
-        fast_task::lock_guard lg1(glob.task_thread_safety);
         values.allow_threshold = values.max_threshold;
         values.native_notify.notify_all();
         while (values.resume_task.size()) {
@@ -117,7 +113,7 @@ namespace fast_task {
                 get_data(it.task).awaked = true;
                 auto task = values.resume_task.front().task;
                 values.resume_task.pop_front();
-                transfer_task(task);
+                transfer_task(std::move(task));
             } else
                 values.resume_task.pop_front();
         }
