@@ -946,13 +946,21 @@ namespace fast_task {
 
     void condition_variable_any::notify_one() {
         interrupt_unsafe_region region;
-        //fast_task::lock_guard<mutex> lock(_mutex);
+        fast_task::lock_guard<mutex> lock(_mutex);
         _cond.notify_one();
     }
 
     void condition_variable_any::notify_all() {
         interrupt_unsafe_region region;
-        //fast_task::lock_guard<mutex> lock(_mutex);
+        fast_task::lock_guard<mutex> lock(_mutex);
+        _cond.notify_all();
+    }
+
+    void condition_variable_any::unsafe_notify_one() {
+        _cond.notify_one();
+    }
+
+    void condition_variable_any::unsafe_notify_all() {
         _cond.notify_all();
     }
 

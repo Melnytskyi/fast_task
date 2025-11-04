@@ -37,6 +37,7 @@
     #include <shared.hpp>
     #include <task.hpp>
     #include <tasks/util/_dbg_macro.hpp>
+    #include <tasks/util/work_stealing_deque.hpp>
 
 namespace fast_task {
     struct task::execution_data {
@@ -189,7 +190,7 @@ namespace fast_task {
     std::chrono::nanoseconds FT_API_LOCAL init_quantum(task_priority priority);
 
     struct FT_API_LOCAL executors_local {
-        std::shared_ptr<moodycamel::ConcurrentQueue<std::shared_ptr<task>>> local_tasks = std::make_shared<moodycamel::ConcurrentQueue<std::shared_ptr<task>>>();
+        std::shared_ptr<work_stealing_deque<std::shared_ptr<task>>> local_tasks = std::make_shared<work_stealing_deque<std::shared_ptr<task>>>();
         std::exception_ptr ex_ptr;
         std::shared_ptr<task> curr_task = nullptr;
         boost::context::continuation* stack_current_context = nullptr;
@@ -208,7 +209,7 @@ namespace fast_task {
     };
 
     struct FT_API_LOCAL binded_context {
-        std::atomic<std::shared_ptr<const std::vector<std::shared_ptr<moodycamel::ConcurrentQueue<std::shared_ptr<task>>>>>> executors_queues;
+        std::atomic<std::shared_ptr<const std::vector<std::shared_ptr<work_stealing_deque<std::shared_ptr<task>>>>>> executors_queues;
         std::list<uint32_t> completions;
         moodycamel::ConcurrentQueue<std::shared_ptr<task>> tasks;
         task_condition_variable on_closed_notifier;
@@ -225,7 +226,7 @@ namespace fast_task {
         task_condition_variable no_tasks_notifier;
         task_condition_variable no_tasks_execute_notifier;
 
-        std::atomic<std::shared_ptr<const std::vector<std::shared_ptr<moodycamel::ConcurrentQueue<std::shared_ptr<task>>>>>> executors_queues;
+        std::atomic<std::shared_ptr<const std::vector<std::shared_ptr<work_stealing_deque<std::shared_ptr<task>>>>>> executors_queues;
         moodycamel::ConcurrentQueue<std::shared_ptr<task>> tasks;
         moodycamel::ConcurrentQueue<std::shared_ptr<task>> cold_tasks;
         std::deque<timing> timed_tasks;
@@ -274,6 +275,7 @@ namespace fast_task {
         glob.stw_barrier_exit = std::make_unique<std::barrier<>>(thread_count + 1);
         glob.stw_request.store(true, std::memory_order_release);
         glob.time_notifier.notify_all();
+        glob.tasks_notifier.notify_all();
         glob.stw_barrier_enter->arrive_and_wait(); // Wait for all executors to pause
         work();                                    // Execute the dump
         glob.stw_request.store(false, std::memory_order_relaxed);

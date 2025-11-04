@@ -712,7 +712,7 @@ namespace fast_task::debug {
             if (it.init_call_stack)
                 dump_stack_(ii, *it.init_call_stack, 2);
             dump_await_(ii, it.waiting_tasks_ids, 2);
-            ii << "\t\tOwner: " << (it.owner_id != FT_DEBUG_OPTIONAL ? std::to_string(it.owner_id) : "none");
+            ii << "\t\tOwner: " << (it.owner_id != FT_DEBUG_OPTIONAL ? std::to_string(it.owner_id) : "none") << std::endl;
             if (it.owner_id != FT_DEBUG_OPTIONAL)
                 ii << (it.owner_is_native ? " thread" : " task") << std::endl;
         }

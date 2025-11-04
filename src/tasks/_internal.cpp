@@ -51,7 +51,7 @@ namespace fast_task {
 
     bool can_be_scheduled_task_to_hot() {
         if (task::max_running_tasks)
-            if (task::max_running_tasks <= glob.in_run_tasks)
+            if (task::max_running_tasks <= glob.in_run_tasks.load(std::memory_order_relaxed))
                 return false;
         return true;
     }

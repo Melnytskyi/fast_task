@@ -570,6 +570,9 @@ namespace fast_task {
             lock.unlock();
             return ret;
         }
+
+        void unsafe_notify_one(); //used in scheduler
+        void unsafe_notify_all();
     };
 }
 

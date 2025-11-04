@@ -42,9 +42,10 @@ namespace fast_task {
             } else {
                 fast_task::unique_lock no_race_guard(values.no_race);
                 values.resume_task.emplace_back(nullptr, 0, &cd, &has_res);
-                no_race_guard.unlock();
+                relock_guard relock(mut);
                 while (!has_res) //-V654
-                    cd.wait(mut);
+                    cd.wait(no_race_guard);
+                no_race_guard.unlock();
             }
         }
     }
@@ -78,14 +79,14 @@ namespace fast_task {
             } else {
                 fast_task::unique_lock no_race_guard(values.no_race);
                 auto& rs_task = values.resume_task.emplace_back(nullptr, 0, &cd, &has_res);
-                no_race_guard.unlock();
+                relock_guard relock(mut);
                 while (!has_res) { //-V654
-                    if (cd.wait_until(mut, time_point) == cv_status::timeout) {
-                        no_race_guard.lock();
+                    if (cd.wait_until(no_race_guard, time_point) == cv_status::timeout) {
                         rs_task.native_cv = nullptr;
                         return false;
                     }
                 }
+                no_race_guard.unlock();
             }
         }
         return true;
@@ -111,9 +112,10 @@ namespace fast_task {
             } else {
                 fast_task::unique_lock no_race_guard(values.no_race);
                 values.resume_task.emplace_back(nullptr, 0, &cd, &has_res);
-                no_race_guard.unlock();
+                relock_guard relock(mut);
                 while (!has_res) //-V654
-                    cd.wait(mut);
+                    cd.wait(no_race_guard);
+                no_race_guard.unlock();
             }
         }
     }
@@ -147,14 +149,14 @@ namespace fast_task {
             } else {
                 fast_task::unique_lock no_race_guard(values.no_race);
                 auto& rs_task = values.resume_task.emplace_back(nullptr, 0, &cd, &has_res);
-                no_race_guard.unlock();
+                relock_guard relock(mut);
                 while (!has_res) { //-V654
-                    if (cd.wait_until(mut, time_point) == cv_status::timeout) {
-                        no_race_guard.lock();
+                    if (cd.wait_until(no_race_guard, time_point) == cv_status::timeout) {
                         rs_task.native_cv = nullptr;
                         return false;
                     }
                 }
+                no_race_guard.unlock();
             }
         }
         return true;

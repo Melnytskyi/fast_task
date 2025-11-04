@@ -298,18 +298,18 @@ namespace fast_task {
                 }
             }
             if (loc.binded_id == (uint16_t)-1 && loc.is_task_thread) {
-                if (loc.local_tasks->enqueue(std::move(task)))
+                if (loc.local_tasks->emplace(std::move(task)))
                     return;
             }
 
-            if (task::max_running_tasks <= glob.in_run_tasks)
-                glob.cold_tasks.enqueue(std::move(task));
-            else
+            if (can_be_scheduled_task_to_hot())
                 glob.tasks.enqueue(std::move(task));
-            glob.tasks_notifier.notify_one();
+            else
+                glob.cold_tasks.enqueue(std::move(task));
+            glob.tasks_notifier.unsafe_notify_one();
         } else {
             if (get_data(task).bind_to_worker_id == loc.binded_id)
-                if (loc.local_tasks->enqueue(std::move(task)))
+                if (loc.local_tasks->emplace(std::move(task)))
                     return;
             fast_task::shared_lock initializer_guard(glob.binded_workers_safety);
             if (!glob.binded_workers.contains(get_data(task).bind_to_worker_id)) {
@@ -329,19 +329,19 @@ namespace fast_task {
     }
 
     bool loadTask() {
-        if (loc.local_tasks->try_dequeue(loc.curr_task)) {
+        if (loc.local_tasks->pop(loc.curr_task)) {
             loc.stack_current_context = &get_execution_data(loc.curr_task).context;
             return false;
         }
 
-        constexpr size_t BATCH_SIZE = 8;
+        constexpr size_t BATCH_SIZE = 32;
         std::shared_ptr<task> temp_tasks[BATCH_SIZE];
         {
             size_t count = glob.tasks.try_dequeue_bulk(temp_tasks, BATCH_SIZE);
 
             if (count > 0) {
                 for (size_t i = 1; i < count; ++i)
-                    if (!loc.local_tasks->enqueue(std::move(temp_tasks[i])))
+                    if (!loc.local_tasks->emplace(std::move(temp_tasks[i])))
                         glob.tasks.enqueue(temp_tasks[i]);
                 loc.curr_task = std::move(temp_tasks[0]);
                 loc.stack_current_context = &get_execution_data(loc.curr_task).context;
@@ -349,12 +349,12 @@ namespace fast_task {
             }
         }
 
-        if (task::max_running_tasks == 0 || can_be_scheduled_task_to_hot()) {
+        if (can_be_scheduled_task_to_hot()) {
             size_t count = glob.cold_tasks.try_dequeue_bulk(temp_tasks, BATCH_SIZE);
 
             if (count > 0) {
                 for (size_t i = 1; i < count; ++i)
-                    if (!loc.local_tasks->enqueue(std::move(temp_tasks[i])))
+                    if (!loc.local_tasks->emplace(std::move(temp_tasks[i])))
                         glob.cold_tasks.enqueue(temp_tasks[i]);
                 loc.curr_task = std::move(temp_tasks[0]);
                 loc.stack_current_context = &get_execution_data(loc.curr_task).context;
@@ -378,7 +378,7 @@ namespace fast_task {
                         if (victim_deque == loc.local_tasks)
                             continue;
 
-                        if (victim_deque->try_dequeue(loc.curr_task)) {
+                        if (victim_deque->steal(loc.curr_task)) {
                             loc.stack_current_context = &get_execution_data(loc.curr_task).context;
                             return false;
                         }
@@ -392,15 +392,15 @@ namespace fast_task {
         return true;
     }
 
-#define worker_mode_desk(old_name, mode) \
-    if (task::enable_task_naming)        \
-        worker_mode_desk_(old_name, mode);
+#define worker_mode_desk(old_name, mode, id) \
+    if (task::enable_task_naming)            \
+        worker_mode_desk_(old_name, mode, id);
 
-    void worker_mode_desk_(const std::string& old_name, const std::string& mode) {
+    void worker_mode_desk_(const std::string& old_name, std::string_view mode, size_t id) {
         if (old_name.empty())
-            _set_name_thread_dbg("Worker " + std::to_string(_thread_id()) + ": " + mode);
+            _set_name_thread_dbg("Worker " + std::to_string(_thread_id()) + ": " + std::string(mode) + std::to_string(id));
         else
-            _set_name_thread_dbg(old_name + " | (Temporal worker) " + std::to_string(_thread_id()) + ": " + mode);
+            _set_name_thread_dbg(old_name + " | (Temporal worker) " + std::to_string(_thread_id()) + ": " + std::string(mode) + std::to_string(id));
     }
 
     bool execute_task(const std::string& old_name) {
@@ -420,7 +420,7 @@ namespace fast_task {
 
         loc.is_task_thread = true;
 
-        worker_mode_desk(old_name, "process task - " + std::to_string(this_task::get_id()));
+        worker_mode_desk(old_name, "process task - ", this_task::get_id());
         if (*loc.stack_current_context) {
             *loc.stack_current_context = std::move(*loc.stack_current_context).resume();
             get_data(loc.curr_task).relock_0.relock_start();
@@ -467,7 +467,7 @@ namespace fast_task {
             loc.yield_request = false;
         }
         loc.curr_task = nullptr;
-        worker_mode_desk(old_name, "idle");
+        worker_mode_desk(old_name, "idle ", 0);
         return false;
     }
 
@@ -483,26 +483,32 @@ namespace fast_task {
         {
             fast_task::unique_lock lock(glob.task_thread_safety);
             auto old_queues_ptr = glob.executors_queues.load();
-            auto new_queues = old_queues_ptr ? std::make_shared<std::vector<std::shared_ptr<moodycamel::ConcurrentQueue<std::shared_ptr<task>>>>>(*old_queues_ptr)
-                                             : std::make_shared<std::vector<std::shared_ptr<moodycamel::ConcurrentQueue<std::shared_ptr<task>>>>>();
+            auto new_queues = old_queues_ptr ? std::make_shared<std::vector<std::shared_ptr<work_stealing_deque<std::shared_ptr<task>>>>>(*old_queues_ptr)
+                                             : std::make_shared<std::vector<std::shared_ptr<work_stealing_deque<std::shared_ptr<task>>>>>();
             new_queues->push_back(loc.local_tasks);
             glob.executors_queues.store(new_queues);
         }
-
+        constexpr size_t max_retrys = 13;
+        size_t retrys = 0;
         ++glob.executors;
         while (true) {
             check_stw();
             if (loadTask()) {
                 if (end_in_task_out)
                     goto exit_path;
-                else {
+                else if (retrys < max_retrys) {
+                    ++retrys;
+                } else {
                     fast_task::unique_lock guard(glob.task_thread_safety);
-                    if (!glob.executing_tasks)
-                        glob.no_tasks_execute_notifier.notify_all();
-                    glob.tasks_notifier.wait(guard);
+                    if (glob.tasks.size_approx() == 0 && glob.cold_tasks.size_approx() == 0) {
+                        if (!glob.executing_tasks)
+                            glob.no_tasks_execute_notifier.notify_all();
+                        glob.tasks_notifier.wait(guard);
+                    }
                 }
                 continue;
             }
+            retrys = 0;
             if (get_data(loc.curr_task).bind_to_worker_id != (uint16_t)-1) {
                 transfer_task(std::move(loc.curr_task));
                 continue;
@@ -521,7 +527,7 @@ namespace fast_task {
             fast_task::lock_guard lock(glob.task_thread_safety);
 
             auto old_queues_ptr = glob.executors_queues.load();
-            auto new_queues = std::make_shared<std::vector<std::shared_ptr<moodycamel::ConcurrentQueue<std::shared_ptr<task>>>>>();
+            auto new_queues = std::make_shared<std::vector<std::shared_ptr<work_stealing_deque<std::shared_ptr<task>>>>>();
             new_queues->reserve(old_queues_ptr->size());
 
             for (const auto& q_ptr : *old_queues_ptr) {
@@ -536,7 +542,7 @@ namespace fast_task {
     bool loadTaskBinded(binded_context& context) {
         while (true) {
             check_stw();
-            if (loc.local_tasks->try_dequeue(loc.curr_task)) {
+            if (loc.local_tasks->pop(loc.curr_task)) {
                 loc.stack_current_context = &get_execution_data(loc.curr_task).context;
                 return true;
             }
@@ -547,7 +553,7 @@ namespace fast_task {
 
             if (count > 0) {
                 for (size_t i = 1; i < count; ++i)
-                    if (!loc.local_tasks->enqueue(std::move(temp_tasks[i])))
+                    if (!loc.local_tasks->emplace(std::move(temp_tasks[i])))
                         glob.tasks.enqueue(temp_tasks[i]);
                 loc.curr_task = std::move(temp_tasks[0]);
                 loc.stack_current_context = &get_execution_data(loc.curr_task).context;
@@ -569,7 +575,7 @@ namespace fast_task {
                             if (victim_deque == loc.local_tasks)
                                 continue;
 
-                            if (victim_deque->try_dequeue(loc.curr_task)) {
+                            if (victim_deque->pop(loc.curr_task)) {
                                 loc.stack_current_context = &get_execution_data(loc.curr_task).context;
                                 return true;
                             }
@@ -609,8 +615,8 @@ namespace fast_task {
         {
             fast_task::unique_lock lock(context.no_race);
             auto old_queues_ptr = context.executors_queues.load();
-            auto new_queues = old_queues_ptr ? std::make_shared<std::vector<std::shared_ptr<moodycamel::ConcurrentQueue<std::shared_ptr<task>>>>>(*old_queues_ptr)
-                                             : std::make_shared<std::vector<std::shared_ptr<moodycamel::ConcurrentQueue<std::shared_ptr<task>>>>>();
+            auto new_queues = old_queues_ptr ? std::make_shared<std::vector<std::shared_ptr<work_stealing_deque<std::shared_ptr<task>>>>>(*old_queues_ptr)
+                                             : std::make_shared<std::vector<std::shared_ptr<work_stealing_deque<std::shared_ptr<task>>>>>();
             new_queues->push_back(loc.local_tasks);
             context.executors_queues.store(new_queues);
         }
@@ -643,7 +649,7 @@ namespace fast_task {
             }
             context.completions.erase(completions_remove);
             auto old_queues_ptr = context.executors_queues.load();
-            auto new_queues = std::make_shared<std::vector<std::shared_ptr<moodycamel::ConcurrentQueue<std::shared_ptr<task>>>>>();
+            auto new_queues = std::make_shared<std::vector<std::shared_ptr<work_stealing_deque<std::shared_ptr<task>>>>>();
             new_queues->reserve(old_queues_ptr->size());
 
             for (const auto& q_ptr : *old_queues_ptr) {
@@ -719,7 +725,7 @@ namespace fast_task {
                         glob.cold_tasks.enqueue(std::move(cached_cold.back()));
                         cached_cold.pop_back();
                     }
-                    glob.tasks_notifier.notify_all();
+                    glob.tasks_notifier.unsafe_notify_all();
                 }
             }
 

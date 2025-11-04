@@ -21,7 +21,7 @@ FILE(GLOB SRCFILES
 )
 if(FAST_TASK_STATIC)
   add_library(fast_task STATIC ${SRCFILES})
-  target_compile_definitions(fast_task PUBLIC -DFT_API_STATIC)
+  target_compile_definitions(fast_task PUBLIC FT_API_STATIC)
 else()
   add_library(fast_task SHARED ${SRCFILES})
 endif()
@@ -47,9 +47,9 @@ endif()
 
 
 if(FAST_TASK_ENABLE_DEBUG_API)
-  target_compile_definitions(fast_task PRIVATE -DFT_DEBUG_API_ENABLED)
+  target_compile_definitions(fast_task PRIVATE FT_DEBUG_API_ENABLED)
   find_package(cpptrace CONFIG REQUIRED)
-  target_link_libraries(fast_task PUBLIC cpptrace::cpptrace)
+  target_link_libraries(fast_task PRIVATE cpptrace::cpptrace)
 endif()
 
 find_package(Boost REQUIRED COMPONENTS context)
@@ -60,7 +60,7 @@ set_target_properties(fast_task
   CXX_STANDARD 23
   CXX_EXTENSIONS OFF
 )
-target_link_libraries(fast_task PUBLIC ${Boost_LIBRARIES})
+target_link_libraries(fast_task PRIVATE ${Boost_LIBRARIES})
 
 if(MSVC)
   set_property(TARGET fast_task PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
