@@ -492,39 +492,10 @@ namespace fast_task {
                     ~extended_mode_t() = default;
                 } extended_mode;
 
-                callbacks_data() : normal_mode() {}
+                callbacks_data();
 
-                callbacks_data(callbacks_data&& move) noexcept {
-                    if (move.is_extended_mode) {
-                        is_extended_mode = true;
-                        extended_mode.is_restartable = move.extended_mode.is_restartable;
-                        extended_mode.data = move.extended_mode.data;
-                        extended_mode.on_start = move.extended_mode.on_start;
-                        extended_mode.on_await = move.extended_mode.on_await;
-                        extended_mode.on_cancel = move.extended_mode.on_cancel;
-                        extended_mode.on_destruct = move.extended_mode.on_destruct;
-                        move.extended_mode.on_destruct = nullptr;
-                    } else {
-                        is_extended_mode = false;
-                        normal_mode.ex_handle = std::move(move.normal_mode.ex_handle);
-                        normal_mode.func = std::move(move.normal_mode.func);
-                    }
-                }
-
-                ~callbacks_data() {
-                    if (is_extended_mode) {
-                        if (extended_mode.on_destruct)
-                            extended_mode.on_destruct(extended_mode.data);
-                        extended_mode.data = nullptr;
-                        extended_mode.on_start = nullptr;
-                        extended_mode.on_await = nullptr;
-                        extended_mode.on_cancel = nullptr;
-                        extended_mode.on_destruct = nullptr;
-                    } else {
-                        normal_mode.ex_handle = nullptr;
-                        normal_mode.func = nullptr;
-                    }
-                }
+                callbacks_data(callbacks_data&& move) noexcept;
+                ~callbacks_data();
 
                 callbacks_data& operator=(callbacks_data&&) = delete;
             } callbacks;
