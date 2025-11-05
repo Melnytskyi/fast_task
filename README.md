@@ -1,32 +1,34 @@
-[![Language](https://img.shields.io/badge/C%2B%2B-20-blue.svg)](https://isocpp.org/) 
+[![Language](https://img.shields.io/badge/C%2B%2B-23-blue.svg)](https://isocpp.org/) 
 [![License](https://img.shields.io/badge/License-BSL%201.0-orange.svg)](LICENSE)
 
 # Fast Task: A High-Performance C++ Green Thread Library
 
-**Fast task** is a modern, stack-based green thread implementation for C++ designed to be a simple, fast, and powerful tool for concurrent programming. It offers a lightweight alternative to `std::thread`, focusing on high-performance asynchronous operations and efficient task management.
+**Fast Task** is a modern, tasking library for C++ designed to be fast and powerful tool for handling I/O and CPU bound tasks. It offers a lightweight alternative to `std::thread` as `fast_task::task`, focusing on high-performance asynchronous operations and efficient task management. Also there option to use stack-less coroutines `fast_task::task_coro` to optimize the memory consumption.
 
-## Core Features
+## Key Features
 
 - **Lightweight Green Threads:** Utilizes stack-based green threads for efficient context switching, enabling high concurrency with minimal overhead.
+- **Stack-less coroutines**: Integrated coroutines support to reduce memory consumption.
 - **Asynchronous I/O:**
     - **File I/O:** Non-blocking file operations for reading and writing data.
     - **Network I/O:** Asynchronous networking capabilities for building responsive and scalable applications.
-- **Advanced Synchronization:** Provides a rich set of synchronization primitives that work seamlessly with both tasks and native threads, including:
+- **Advanced Synchronization:** Provides a rich set of synchronization primitives that work seamlessly with stack full/less tasks and native threads, including:
     - Mutexes (`task_mutex`, `task_recursive_mutex`, `task_rw_mutex`)
     - Condition Variables (`task_condition_variable`)
     - Semaphores (`task_semaphore`)
     - Utilities like `task_limiter` and `task_query` for managing concurrent access.
-- **Preemptive Scheduler:** Includes a preemptive scheduler (currently in testing for Windows, with incomplete Linux support) to prevent tasks from monopolizing execution time. This feature can be disabled if not needed.
+- **Preemptive Scheduler:** Includes a preemptive scheduler (with incomplete Linux support) to prevent tasks from monopolizing execution time. This feature can be enabled if needed.
 - **Task Cancellation:** Supports cancellation of tasks, allowing for graceful termination of operations. 
-- **Improved Native Thread Implementation:** Offers an enhanced version of native threads that prevents deadlocks when used with the preemptive scheduler by avoiding context switching when a mutex is locked.  It also utilizes modern APIs for Windows, reduces memory usage, and adds support for thread pausing and resuming.
-- **Callback Support:** Facilitates the use of callbacks for handling asynchronous events.
+- **Improved Native Thread Implementation:** Offers an enhanced version of native threads to cases when the lock used in task used with the preemptive scheduler enabled by avoiding context switching when a mutex is locked. It also utilizes modern APIs for Windows, reduces memory usage, and adds support for thread pausing and resuming.
+- **Callback Support:** Facilitates the use of callbacks for handling asynchronous events. Or even add support for custom coroutines.
 - **Stack Protection:** Implements guard pages for stacks on Windows to protect against stack overflows.
+- **Introspection API** Allows to do stop the world operation to inspect the program state.
 
 ## Getting Started
 
 ### Prerequisites
 
-- **C++20 Compiler:** A compiler that supports C++23 is required.
+- **C++23 Compiler:** A compiler that supports C++23 is required.
 - **CMake:** Version 3.31 or later. 
 - **Operating System:** Windows or Linux.
 - **vcpkg:** The vcpkg package manager is used for dependency management and included as a submodule in the project root.
@@ -70,7 +72,7 @@ To integrate `fast_task` into your project, you can add it as a subdirectory in 
 ```cmake
 add_subdirectory(fast_task)
 target_link_libraries(YOUR_PROJECT_NAME PRIVATE fast_task)
-````
+```
 
 If you have installed the library globally, you can use `find_package`:
 
@@ -78,6 +80,14 @@ If you have installed the library globally, you can use `find_package`:
 find_package(fast_task CONFIG REQUIRED)
 target_link_libraries(YOUR_PROJECT_NAME PRIVATE fast_task)
 ```
+
+There also multiple cmake options to enable or disable features or checks.
+ - FAST_TASK_STATIC
+ - FAST_TASK_ENABLE_DEBUG_API enables the `include/debug.hpp` functionality.
+ - FAST_TASK_ENABLE_PREEMPTIVE_SCHEDULER
+ - FAST_TASK_ENABLE_ABORT_IF_ALREADY_STARTED
+ - FAST_TASK_ENABLE_ABORT_IF_NEVER_STARTED
+ - FAST_TASK_EXCEPTION_POLICY `NONE, CHECK, PRESERVE` changes behavior for context switch
 
 ## Contributing
 
