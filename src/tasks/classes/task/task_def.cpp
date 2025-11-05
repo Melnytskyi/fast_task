@@ -33,7 +33,7 @@ namespace fast_task {
     }
 
     task::task(std::move_only_function<void()>&& func, std::move_only_function<void(const std::exception_ptr&)>&& ex_handle, std::chrono::high_resolution_clock::time_point timeout, task_priority priority, bool is_on_scheduler) : data_{.timeout = timeout.time_since_epoch().count()} {
-#if tasks_enable_preemptive_scheduler_preview
+#ifdef FT_ENABLE_PREEMPTIVE_SCHEDULER
         data_.exdata = new execution_data();
         data_.exdata->priority = priority;
 #endif
@@ -55,6 +55,12 @@ namespace fast_task {
             delete data_.exdata;
             data_.exdata = nullptr;
         }
+#ifdef FT_ENABLE_ABORT_IF_NEVER_STARTED
+        if (!data_.started && !data_.end_of_life) {
+            assert(false && "The task should always be started.");
+            std::abort();
+        }
+#endif
     }
 
     void task::set_auto_bind_worker(bool enable) noexcept {
@@ -69,7 +75,7 @@ namespace fast_task {
     }
 
     void task::set_priority(task_priority p) noexcept {
-#if tasks_enable_preemptive_scheduler_preview
+#ifdef FT_ENABLE_PREEMPTIVE_SCHEDULER
         if (!data_.exdata)
             data_.exdata = new execution_data();
         data_.exdata->priority = p;
@@ -81,7 +87,7 @@ namespace fast_task {
     }
 
     task_priority task::get_priority() const noexcept {
-#if tasks_enable_preemptive_scheduler_preview
+#ifdef FT_ENABLE_PREEMPTIVE_SCHEDULER
         return data_.exdata ? data_.exdata->priority : task_priority::high;
 #else
         return task_priority::semi_realtime;
@@ -89,7 +95,7 @@ namespace fast_task {
     }
 
     size_t task::get_counter_interrupt() const noexcept {
-#if tasks_enable_preemptive_scheduler_preview
+#ifdef FT_ENABLE_PREEMPTIVE_SCHEDULER
         return data_.data ? data_.data->interrupt_count : 0;
 #else
         return 0;

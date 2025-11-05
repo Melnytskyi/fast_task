@@ -7,8 +7,23 @@ else(MSVC)
   project(fast_task CXX)
   set(ASM_FILE )
 endif(MSVC)
+
 option(FAST_TASK_STATIC "Enable static build for fast task library" ON)
 option(FAST_TASK_ENABLE_DEBUG_API "Enable the debugging and introspection API" OFF)
+option(FAST_TASK_ENABLE_ABORT_IF_ALREADY_STARTED "Abort if the task already started" OFF)
+option(FAST_TASK_ENABLE_ABORT_IF_NEVER_STARTED "Abort if task's destructor called before the task even started" OFF)
+option(FAST_TASK_ENABLE_PREEMPTIVE_SCHEDULER "Enables time sliced preemption for tasks, the tasks should use interrupt_unsafe_region on regions where preemption should be disabled." OFF)
+
+set(FAST_TASK_EXCEPTION_POLICY "NONE" CACHE 
+STRING 
+"Sets the exception handling policy for context switches:
+  - NONE: No checks.
+  - CHECK: abort if a context switch occurs in catch block or in other exception handling stage. (Has performance cost)
+  - PRESERVE: Preserve the exception on context switch and rethrow when switched back. (Has performance cost)")
+
+set_property(CACHE FAST_TASK_EXCEPTION_POLICY PROPERTY STRINGS "NONE" "CHECK" "PRESERVE")
+mark_as_advanced(FAST_TASK_EXCEPTION_POLICY)
+
 
 set(fast_task_INCLUDE_DIR "src" "include")
 
@@ -50,6 +65,21 @@ if(FAST_TASK_ENABLE_DEBUG_API)
   target_compile_definitions(fast_task PRIVATE FT_DEBUG_API_ENABLED)
   find_package(cpptrace CONFIG REQUIRED)
   target_link_libraries(fast_task PRIVATE cpptrace::cpptrace)
+endif()
+
+if(FAST_TASK_ENABLE_ABORT_IF_ALREADY_STARTED)
+  target_compile_definitions(fast_task PRIVATE FT_ENABLE_ABORT_IF_ALREADY_STARTED)
+endif()
+if(FAST_TASK_ENABLE_ABORT_IF_NEVER_STARTED)
+  target_compile_definitions(fast_task PRIVATE FT_ENABLE_ABORT_IF_NEVER_STARTED)
+endif()
+if(FAST_TASK_ENABLE_PREEMPTIVE_SCHEDULER)
+  target_compile_definitions(fast_task PRIVATE FT_ENABLE_PREEMPTIVE_SCHEDULER)
+endif()
+if(FAST_TASK_EXCEPTION_POLICY STREQUAL "CHECK")
+  target_compile_definitions(fast_task PRIVATE FT_EXCEPTION_POLICY_CHECK)
+elseif(FAST_TASK_EXCEPTION_POLICY STREQUAL "PRESERVE")
+  target_compile_definitions(fast_task PRIVATE FT_EXCEPTION_POLICY_PRESERVE)
 endif()
 
 find_package(Boost REQUIRED COMPONENTS context)

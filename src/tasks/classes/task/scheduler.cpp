@@ -48,8 +48,13 @@ namespace fast_task::scheduler {
         if (!total_executors())
             create_executor(1);
         std::shared_ptr<task> lgr_task = tsk;
-        if (get_data(lgr_task).started)
+        if (get_data(lgr_task).started) {
+#ifdef FT_ENABLE_ABORT_IF_ALREADY_STARTED
+            assert(false && "The task is already started.");
+            std::abort();
+#endif
             return;
+        }
         get_data(lgr_task).started = true;
         ++glob.executing_tasks;
         transfer_task(std::move(lgr_task));

@@ -7,9 +7,6 @@
 #pragma once
 #ifndef FAST_TASK_INTERNAL
     #define FAST_TASK_INTERNAL
-    #ifndef tasks_enable_preemptive_scheduler_preview
-        #define tasks_enable_preemptive_scheduler_preview false
-    #endif
     //platforms: windows, linux, macos, ios, android, unknown
     #if defined(_WIN32) || defined(_WIN64)
         #define PLATFORM_WINDOWS 1
@@ -43,7 +40,7 @@ namespace fast_task {
     struct task::execution_data {
         boost::context::continuation context;
         size_t context_switch_count = 0;
-    #if tasks_enable_preemptive_scheduler_preview
+    #ifdef FT_ENABLE_PREEMPTIVE_SCHEDULER
         std::chrono::nanoseconds current_available_quantum = std::chrono::nanoseconds(0);
         task_priority priority = task_priority::high;
         size_t interrupt_count = 0;
@@ -53,6 +50,9 @@ namespace fast_task {
         void* stack_ptr = nullptr;
         size_t stack_size = 0;
         unsigned int valgrind_stack_id = 0;
+    #endif
+    #if defined(FT_EXCEPTION_POLICY_PRESERVE)
+        std::exception_ptr switch_preserve;
     #endif
     };
 

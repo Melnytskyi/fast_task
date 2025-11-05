@@ -120,7 +120,7 @@ namespace fast_task {
     }
 
     bool is_debugger_attached() {
-        return false; //TODO add implementation for windows
+        return IsDebuggerPresent();
     }
 
 #elif PLATFORM_LINUX

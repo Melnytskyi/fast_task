@@ -13,9 +13,7 @@
 namespace fast_task {
 
     size_t task::max_running_tasks = 0;
-    //In debug builds there locks in std library, so it could deadlock
-    //  you could remove the '!_DEBUG ' check and add hooks to winapi like EnterCriticalSection or WaitForSingleObject and use interrupt_unsafe_region::lock() or ::unlock() to support this scheduler
-#if tasks_enable_preemptive_scheduler_preview
+#ifdef FT_ENABLE_PREEMPTIVE_SCHEDULER
     void timer_reinit() {
         if (loc.policy == scheduler::executor_policy::cooperative_only)
             return;
@@ -33,12 +31,16 @@ namespace fast_task {
     void interruptTask() {
         if (loc.policy == scheduler::executor_policy::cooperative_only)
             return;
+    #ifdef FT_EXCEPTION_POLICY_CHECK
+        if (std::uncaught_exceptions())
+            return;
+    #endif
         if (get_data(loc.curr_task).bind_to_worker_id != (uint16_t)-1) {
             fast_task::unique_lock guard(glob.binded_workers_safety);
             auto& bind_context = glob.binded_workers[get_data(loc.curr_task).bind_to_worker_id];
             guard.unlock();
-            if (bind_context.tasks.empty()) {
-                if (glob.cold_tasks.empty()) {
+            if (bind_context.tasks.size_approx() == 0) {
+                if (glob.cold_tasks.size_approx() == 0) {
                     timer_reinit();
                     return;
                 } else {
@@ -49,8 +51,8 @@ namespace fast_task {
                 }
             }
         } else {
-            if (glob.tasks.empty()) {
-                if (glob.cold_tasks.empty()) {
+            if (glob.tasks.size_approx() == 0) {
+                if (glob.cold_tasks.size_approx() == 0) {
                     timer_reinit();
                     return;
                 } else {
@@ -70,8 +72,7 @@ namespace fast_task {
         get_data(loc.curr_task).relock_0 = nullptr;
         get_data(loc.curr_task).relock_1 = nullptr;
         get_data(loc.curr_task).relock_2 = nullptr;
-        auto tmp_tsk = loc.curr_task;
-        transfer_task(tmp_tsk);
+        loc.yield_request = true;
         swapCtx();
         get_data(loc.curr_task).relock_0 = old_relock_0;
         get_data(loc.curr_task).relock_1 = old_relock_1;
@@ -81,8 +82,8 @@ namespace fast_task {
     #define set_interruptTask() interrupt::timer_callback(interruptTask);
 
     #define stop_timer() interrupt::stop_timer()
-    #define preserve_interput_data get_data(loc.curr_task).interrupt_data = interrupt_unsafe_region::lock_swap(0);
-    #define restore_interput_data interrupt_unsafe_region::lock_swap(get_data(loc.curr_task).interrupt_data);
+    #define preserve_interput_data get_execution_data(loc.curr_task).interrupt_data = interrupt_unsafe_region::lock_swap(0);
+    #define restore_interput_data interrupt_unsafe_region::lock_swap(get_execution_data(loc.curr_task).interrupt_data);
     #define flush_interput_data interrupt_unsafe_region::lock_swap(0);
 #else
     #define timer_reinit()
@@ -109,7 +110,15 @@ namespace fast_task {
             ++glob.tasks_in_swap;
             ++get_execution_data(loc.curr_task).context_switch_count;
             preserve_interput_data;
-            //TODO add exception preservation
+#ifdef FT_EXCEPTION_POLICY_CHECK
+            if (std::uncaught_exceptions()) {
+                assert(false && "Unexpected exception during context switch");
+                std::abort();
+            }
+#elif defined(FT_EXCEPTION_POLICY_PRESERVE)
+            if (std::uncaught_exceptions())
+                get_execution_data(loc.curr_task).switch_preserve = std::current_exception();
+#endif
             try {
                 *loc.stack_current_context = std::move(*loc.stack_current_context).resume();
             } catch (const boost::context::detail::forced_unwind&) {
@@ -129,6 +138,10 @@ namespace fast_task {
                 loc.context_in_swap = false;
                 throw;
             }
+#if defined(FT_EXCEPTION_POLICY_PRESERVE)
+            if (get_execution_data(loc.curr_task).switch_preserve)
+                std::rethrow_exception(std::move(get_execution_data(loc.curr_task).switch_preserve));
+#endif
             preserve_interput_data;
             --glob.tasks_in_swap;
             loc.context_in_swap = true;
@@ -284,13 +297,14 @@ namespace fast_task {
     void transfer_task(std::shared_ptr<task>&& task) {
         if (get_data(task).bind_to_worker_id == (uint16_t)-1) {
             if (get_data(task).auto_bind_worker) {
-                fast_task::shared_lock guard(glob.binded_workers_safety);
+                fast_task::shared_lock global_guard(glob.binded_workers_safety);
                 for (auto& [id, context] : glob.binded_workers) {
                     if (context.allow_implicit_start) {
                         if (context.in_close)
                             continue;
-                        guard.unlock();
+                        global_guard.unlock();
                         get_data(task).bind_to_worker_id = id;
+                        fast_task::shared_lock guard(context.no_race);
                         context.tasks.enqueue(std::move(task));
                         context.new_task_notifier.notify_one();
                         return;
@@ -298,8 +312,11 @@ namespace fast_task {
                 }
             }
             if (loc.binded_id == (uint16_t)-1 && loc.is_task_thread) {
-                if (loc.local_tasks->emplace(std::move(task)))
+                if (loc.local_tasks->emplace(std::move(task))) {
+                    if (loc.local_tasks->size() > 1) //if there only one task the notification not passed to avoid redundant concurency
+                        glob.tasks_notifier.unsafe_notify_one();
                     return;
+                }
             }
 
             if (can_be_scheduled_task_to_hot())
@@ -308,9 +325,6 @@ namespace fast_task {
                 glob.cold_tasks.enqueue(std::move(task));
             glob.tasks_notifier.unsafe_notify_one();
         } else {
-            if (get_data(task).bind_to_worker_id == loc.binded_id)
-                if (loc.local_tasks->emplace(std::move(task)))
-                    return;
             fast_task::shared_lock initializer_guard(glob.binded_workers_safety);
             if (!glob.binded_workers.contains(get_data(task).bind_to_worker_id)) {
                 initializer_guard.unlock();
@@ -323,6 +337,14 @@ namespace fast_task {
                 assert("Binded worker context is closed");
                 std::abort();
             }
+            if (get_data(task).bind_to_worker_id == loc.binded_id) {
+                if (loc.local_tasks->emplace(std::move(task))) {
+                    if (loc.local_tasks->size() > 1) //if there only one task the notification not passed to avoid redundant concurency
+                        extern_context.new_task_notifier.unsafe_notify_one();
+                    return;
+                }
+            }
+            fast_task::shared_lock guard(extern_context.no_race);
             extern_context.tasks.enqueue(std::move(task));
             extern_context.new_task_notifier.notify_one();
         }
@@ -498,7 +520,9 @@ namespace fast_task {
                     goto exit_path;
                 else if (retrys < max_retrys) {
                     ++retrys;
-                } else {
+                } else if (!loc.local_tasks->empty())
+                    retrys = 0;
+                else {
                     fast_task::unique_lock guard(glob.task_thread_safety);
                     if (glob.tasks.size_approx() == 0 && glob.cold_tasks.size_approx() == 0) {
                         if (!glob.executing_tasks)
@@ -537,6 +561,9 @@ namespace fast_task {
 
             glob.executors_queues.store(new_queues);
         }
+        while (!loc.local_tasks->empty())
+            while (loc.local_tasks->pop(loc.curr_task))
+                glob.tasks.enqueue(std::move(loc.curr_task));
     }
 
     bool loadTaskBinded(binded_context& context) {
