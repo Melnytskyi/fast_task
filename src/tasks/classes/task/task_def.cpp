@@ -10,6 +10,40 @@
 namespace fast_task {
     bool task::enable_task_naming = false;
 
+    task::data::callbacks_data::callbacks_data() : normal_mode() {}
+
+    task::data::callbacks_data::callbacks_data(callbacks_data&& move) noexcept {
+        if (move.is_extended_mode) {
+            is_extended_mode = true;
+            extended_mode.is_restartable = move.extended_mode.is_restartable;
+            extended_mode.data = move.extended_mode.data;
+            extended_mode.on_start = move.extended_mode.on_start;
+            extended_mode.on_await = move.extended_mode.on_await;
+            extended_mode.on_cancel = move.extended_mode.on_cancel;
+            extended_mode.on_destruct = move.extended_mode.on_destruct;
+            move.extended_mode.on_destruct = nullptr;
+        } else {
+            is_extended_mode = false;
+            normal_mode.ex_handle = std::move(move.normal_mode.ex_handle);
+            normal_mode.func = std::move(move.normal_mode.func);
+        }
+    }
+
+    task::data::callbacks_data::~callbacks_data() {
+        if (is_extended_mode) {
+            if (extended_mode.on_destruct)
+                extended_mode.on_destruct(extended_mode.data);
+            extended_mode.data = nullptr;
+            extended_mode.on_start = nullptr;
+            extended_mode.on_await = nullptr;
+            extended_mode.on_cancel = nullptr;
+            extended_mode.on_destruct = nullptr;
+        } else {
+            normal_mode.ex_handle = nullptr;
+            normal_mode.func = nullptr;
+        }
+    }
+
     task::task(void* data, void (*on_start)(void*), void (*on_await)(void*), void (*on_cancel)(void*), void (*on_destruct)(void*), bool is_restartable, bool is_on_scheduler)
         : data_{.timeout = std::chrono::high_resolution_clock::time_point::min().time_since_epoch().count()} {
         data_.is_on_scheduler = is_on_scheduler;
@@ -33,7 +67,7 @@ namespace fast_task {
     }
 
     task::task(std::move_only_function<void()>&& func, std::move_only_function<void(const std::exception_ptr&)>&& ex_handle, std::chrono::high_resolution_clock::time_point timeout, task_priority priority, bool is_on_scheduler) : data_{.timeout = timeout.time_since_epoch().count()} {
-#if tasks_enable_preemptive_scheduler_preview
+#ifdef FT_ENABLE_PREEMPTIVE_SCHEDULER
         data_.exdata = new execution_data();
         data_.exdata->priority = priority;
 #endif
@@ -51,14 +85,20 @@ namespace fast_task {
 
     task::~task() {
         FT_DEBUG_ONLY(unregister_object(this));
-        if (!data_.started) {
-            if (task::max_running_tasks)
-                glob.can_planned_new_notifier.notify_one();
-        }
         if (data_.exdata) {
             delete data_.exdata;
             data_.exdata = nullptr;
         }
+        if (!data_.completed && data_.started) {
+            --glob.executing_tasks;
+            glob.no_tasks_execute_notifier.notify_all();
+        }
+#ifdef FT_ENABLE_ABORT_IF_NEVER_STARTED
+        if (!data_.started && !data_.end_of_life) {
+            assert(false && "The task should always be started.");
+            std::abort();
+        }
+#endif
     }
 
     void task::set_auto_bind_worker(bool enable) noexcept {
@@ -73,7 +113,7 @@ namespace fast_task {
     }
 
     void task::set_priority(task_priority p) noexcept {
-#if tasks_enable_preemptive_scheduler_preview
+#ifdef FT_ENABLE_PREEMPTIVE_SCHEDULER
         if (!data_.exdata)
             data_.exdata = new execution_data();
         data_.exdata->priority = p;
@@ -85,7 +125,7 @@ namespace fast_task {
     }
 
     task_priority task::get_priority() const noexcept {
-#if tasks_enable_preemptive_scheduler_preview
+#ifdef FT_ENABLE_PREEMPTIVE_SCHEDULER
         return data_.exdata ? data_.exdata->priority : task_priority::high;
 #else
         return task_priority::semi_realtime;
@@ -93,7 +133,7 @@ namespace fast_task {
     }
 
     size_t task::get_counter_interrupt() const noexcept {
-#if tasks_enable_preemptive_scheduler_preview
+#ifdef FT_ENABLE_PREEMPTIVE_SCHEDULER
         return data_.data ? data_.data->interrupt_count : 0;
 #else
         return 0;

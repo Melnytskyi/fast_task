@@ -18,19 +18,14 @@ namespace fast_task::scheduler {
         std::shared_ptr<task> lgr_task = _task;
         if (get_data(lgr_task).started)
             return;
-        {
-            fast_task::unique_lock guard(glob.task_thread_safety);
-            if (get_data(lgr_task).started)
-                return;
-            if (!glob.time_control_enabled)
-                startTimeController();
-        }
+        if (!glob.time_control_enabled)
+            startTimeController();
         fast_task::unique_lock guard(glob.task_timer_safety);
+        get_data(lgr_task).started = true;
         if (can_be_scheduled_task_to_hot())
             unsafe_put_task_to_timed_queue(glob.timed_tasks, time_point, lgr_task);
         else
             unsafe_put_task_to_timed_queue(glob.cold_timed_tasks, time_point, lgr_task);
-        get_data(lgr_task).started = true;
         glob.tasks_notifier.notify_one();
         guard.unlock();
     }
@@ -53,22 +48,19 @@ namespace fast_task::scheduler {
         if (!total_executors())
             create_executor(1);
         std::shared_ptr<task> lgr_task = tsk;
-        if (get_data(lgr_task).started)
+        if (get_data(lgr_task).started) {
+#ifdef FT_ENABLE_ABORT_IF_ALREADY_STARTED
+            assert(false && "The task is already started.");
+            std::abort();
+#endif
             return;
-        {
-            fast_task::lock_guard guard(glob.task_thread_safety);
-            if (get_data(lgr_task).started)
-                return;
-            if (can_be_scheduled_task_to_hot())
-                glob.tasks.push(lgr_task);
-            else
-                glob.cold_tasks.push(lgr_task);
-            get_data(lgr_task).started = true;
-            glob.tasks_notifier.notify_one();
         }
+        get_data(lgr_task).started = true;
+        ++glob.executing_tasks;
+        transfer_task(std::move(lgr_task));
     }
 
-    uint16_t create_bind_only_executor(uint16_t fixed_count, bool allow_implicit_start) {
+    uint16_t create_bind_only_executor(uint16_t fixed_count, bool allow_implicit_start, executor_policy policy) {
         fast_task::lock_guard guard(glob.binded_workers_safety);
         uint16_t try_count = 0;
         uint16_t id = (uint16_t)glob.binded_workers.size();
@@ -83,6 +75,7 @@ namespace fast_task::scheduler {
             goto is_not_id;
         glob.binded_workers[id].allow_implicit_start = allow_implicit_start;
         glob.binded_workers[id].fixed_size = (bool)fixed_count;
+        glob.binded_workers[id].policy = policy;
         for (size_t i = 0; i < fixed_count; i++) {
             ++glob.thread_count;
             fast_task::thread(bindedTaskExecutor, id).detach();
@@ -90,7 +83,7 @@ namespace fast_task::scheduler {
         return id;
     }
 
-    void assign_bind_only_executor(uint16_t id, uint16_t fixed_count, bool allow_implicit_start) {
+    void assign_bind_only_executor(uint16_t id, uint16_t fixed_count, bool allow_implicit_start, executor_policy policy) {
         fast_task::lock_guard guard(glob.binded_workers_safety);
         if (glob.binded_workers.contains(id))
             throw std::runtime_error("Worker already assigned!");
@@ -98,6 +91,7 @@ namespace fast_task::scheduler {
             throw std::runtime_error("Invalid id");
         glob.binded_workers[id].allow_implicit_start = allow_implicit_start;
         glob.binded_workers[id].fixed_size = (bool)fixed_count;
+        glob.binded_workers[id].policy = policy;
         for (size_t i = 0; i < fixed_count; i++) {
             ++glob.thread_count;
             fast_task::thread(bindedTaskExecutor, id).detach();
@@ -107,7 +101,7 @@ namespace fast_task::scheduler {
     void close_bind_only_executor(uint16_t id) {
         mutex_unify unify(glob.binded_workers_safety);
         fast_task::unique_lock guard(unify);
-        std::list<std::shared_ptr<task>> transfer_tasks;
+        decltype(glob.binded_workers[id].tasks) transfer_tasks;
         if (!glob.binded_workers.contains(id)) {
             throw std::runtime_error("Binded worker not found");
         } else {
@@ -121,7 +115,7 @@ namespace fast_task::scheduler {
             for (uint16_t i = 0; i < context.executors; i++) {
                 std::shared_ptr<task> tsk = std::make_shared<task>(nullptr);
                 tsk->set_worker_id(id);
-                context.tasks.emplace_back(tsk);
+                context.tasks.enqueue(tsk);
             }
 
             context.new_task_notifier.notify_all();
@@ -137,10 +131,9 @@ namespace fast_task::scheduler {
             context_lock.unlock();
             glob.binded_workers.erase(id);
         }
-        for (std::shared_ptr<task>& task : transfer_tasks) {
-            get_data(task).bind_to_worker_id = (uint16_t)-1;
-            transfer_task(task);
-        }
+        std::shared_ptr<task> task;
+        while (transfer_tasks.try_dequeue(task))
+            transfer_task(std::move(task));
     }
 
     void create_executor(size_t count) {
@@ -151,7 +144,6 @@ namespace fast_task::scheduler {
     }
 
     size_t total_executors() {
-        fast_task::lock_guard guard(glob.task_thread_safety);
         return glob.executors;
     }
 
@@ -183,7 +175,18 @@ namespace fast_task::scheduler {
         } else {
             mutex_unify uni(glob.task_thread_safety);
             fast_task::unique_lock l(uni);
-            while (glob.tasks.size() || glob.cold_tasks.size() || glob.timed_tasks.size() || glob.cold_timed_tasks.size()) {
+
+            static auto tasks_present = []() -> bool {
+                auto queue = glob.executors_queues.load();
+                if (!queue)
+                    return false;
+                for (auto& q : *queue)
+                    if (!q->size())
+                        return true;
+                return false;
+            };
+
+            while (tasks_present() || glob.cold_tasks.size_approx() || glob.timed_tasks.size() || glob.cold_timed_tasks.size()) {
                 if (!total_executors())
                     create_executor(1);
                 glob.no_tasks_notifier.wait(l);
@@ -193,55 +196,30 @@ namespace fast_task::scheduler {
 
     void await_end_tasks(bool be_executor) {
         if (be_executor && !loc.is_task_thread) {
-            fast_task::unique_lock l(glob.task_thread_safety);
-        binded_workers:
-            while (glob.tasks.size() || glob.cold_tasks.size() || glob.timed_tasks.size() || glob.cold_timed_tasks.size() ||  glob.tasks_in_swap || glob.in_run_tasks) {
-                l.unlock();
+            while (glob.executing_tasks) {
                 try {
                     ++glob.thread_count;
                     taskExecutor(true, true);
                 } catch (...) {
-                    l.lock();
                     throw;
                 }
-                l.lock();
             }
-            fast_task::lock_guard lock(glob.binded_workers_safety);
-            bool binded_tasks_empty = true;
-            for (auto& contexts : glob.binded_workers)
-                if (contexts.second.tasks.size())
-                    binded_tasks_empty = false;
-            if (!binded_tasks_empty)
-                goto binded_workers;
         } else {
-        binded_workers_:;
-            {
-                mutex_unify uni(glob.task_thread_safety);
-                fast_task::unique_lock l(uni);
+            mutex_unify uni(glob.task_thread_safety);
+            fast_task::unique_lock l(uni);
 
-                if (loc.is_task_thread)
-                    while ((glob.tasks.size() || glob.cold_tasks.size() || glob.timed_tasks.size() || glob.cold_timed_tasks.size()) &&  glob.tasks_in_swap != 1 && glob.in_run_tasks != 1) {
-                        if (!total_executors())
-                            create_executor(1);
-                        glob.no_tasks_execute_notifier.wait(l);
-                    }
-                else
-                    while (glob.tasks.size() || glob.cold_tasks.size() || glob.timed_tasks.size() || glob.cold_timed_tasks.size() || glob.tasks_in_swap || glob.in_run_tasks) {
-                        if (!total_executors())
-                            create_executor(1);
-                        glob.no_tasks_execute_notifier.wait(l);
-                    }
-            }
-            {
-                fast_task::lock_guard lock(glob.binded_workers_safety);
-                bool binded_tasks_empty = true;
-                for (auto& contexts : glob.binded_workers)
-                    if (contexts.second.tasks.size())
-                        binded_tasks_empty = false;
-                if (binded_tasks_empty)
-                    return;
-            }
-            goto binded_workers_;
+            if (loc.is_task_thread)
+                while (glob.executing_tasks != 1) {
+                    if (!total_executors())
+                        create_executor(1);
+                    glob.no_tasks_execute_notifier.wait(l);
+                }
+            else
+                while (glob.executing_tasks) {
+                    if (!total_executors())
+                        create_executor(1);
+                    glob.no_tasks_execute_notifier.wait(l);
+                }
         }
     }
 
@@ -256,7 +234,7 @@ namespace fast_task::scheduler {
         fast_task::unique_lock guard(glob.task_thread_safety);
         size_t executors = glob.executors;
         for (size_t i = 0; i < executors; i++)
-            glob.tasks.emplace(new task(nullptr, {}));
+            transfer_task(std::make_shared<task>(nullptr));
         glob.tasks_notifier.notify_all();
         while (glob.executors)
             glob.executor_shutdown_notifier.wait(guard);
@@ -273,10 +251,9 @@ namespace fast_task::scheduler {
 
     void clean_up() {
         await_no_tasks();
-        std::queue<std::shared_ptr<task>> e0;
-        std::queue<std::shared_ptr<task>> e1;
-        glob.tasks.swap(e0);
-        glob.cold_tasks.swap(e1);
+        decltype(glob.cold_tasks) cold;
+        glob.executors_queues = nullptr;
+        glob.cold_tasks.swap(cold);
         glob.timed_tasks.shrink_to_fit();
     }
 }

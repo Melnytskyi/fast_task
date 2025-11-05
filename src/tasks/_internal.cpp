@@ -51,11 +51,15 @@ namespace fast_task {
 
     bool can_be_scheduled_task_to_hot() {
         if (task::max_running_tasks)
-            if (task::max_running_tasks <= (glob.tasks_in_swap + glob.tasks.size()))
+            if (task::max_running_tasks <= glob.in_run_tasks.load(std::memory_order_relaxed))
                 return false;
         return true;
     }
 
+    std::default_random_engine& FT_API_LOCAL get_thread_local_random_engine() {
+        static thread_local std::default_random_engine engine(std::random_device{}());
+        return engine;
+    }
 
 #if PLATFORM_WINDOWS
     std::wstring s2ws(const std::string& str) {
@@ -116,7 +120,7 @@ namespace fast_task {
     }
 
     bool is_debugger_attached() {
-        return false; //TODO add implementation for windows
+        return IsDebuggerPresent();
     }
 
 #elif PLATFORM_LINUX

@@ -213,12 +213,14 @@ namespace fast_task {
 
             inline static on_open_action to_open_action(std::ios_base::openmode mode) {
                 if (mode & std::ios_base::trunc) {
-                    return on_open_action::truncate_exists;
+                    return on_open_action::always_new;
                 } else if (mode & std::ios_base::app) {
                     return on_open_action::open;
 #if ((defined(_MSVC_LANG) && _MSVC_LANG >= 202302L) || __cplusplus >= 202302L)
                 } else if (mode & std::ios_base::noreplace) {
                     return on_open_action::create_new;
+                } else if (mode & (std::ios_base::trunc & std::ios_base::_Nocreate)) {
+                    return on_open_action::truncate_exists;
 #endif
                 } else if (mode & std::ios_base::ate) {
                     return on_open_action::open_exists;

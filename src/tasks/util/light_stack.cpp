@@ -8,6 +8,7 @@
 #include <atomic>
 #include <boost/lockfree/queue.hpp>
 #include <cassert>
+#include <concurrentqueue/moodycamel/concurrentqueue.h>
 #include <vector>
 
 #include <tasks/_internal.hpp>
@@ -16,7 +17,7 @@
 namespace fast_task {
     typedef boost::context::stack_context stack_context;
 
-    boost::lockfree::queue<light_stack::stack_context> stack_allocations(10000);
+    moodycamel::ConcurrentQueue<light_stack::stack_context> stack_allocations(10000);
     std::atomic_size_t stack_allocations_buffer = 0;
     bool light_stack::flush_used_stacks = 0;
     size_t light_stack::max_buffer_size = 0;
@@ -67,7 +68,7 @@ namespace fast_task {
         const size_t size__ = (pages + 1) * page_size;
 
         stack_context result;
-        if (stack_allocations.pop(result)) {
+        if (stack_allocations.try_dequeue(result)) {
             stack_allocations_buffer--;
             if (!flush_used_stacks)
                 return result;
@@ -80,7 +81,7 @@ namespace fast_task {
     }
 
     void unlimited_buffer(stack_context& sctx) {
-        if (!stack_allocations.push(sctx))
+        if (!stack_allocations.enqueue(sctx))
             ::VirtualFree(static_cast<char*>(sctx.sp) - sctx.size, 0, MEM_RELEASE);
         else
             stack_allocations_buffer++;
@@ -88,7 +89,7 @@ namespace fast_task {
 
     void limited_buffer(stack_context& sctx) {
         if (++stack_allocations_buffer < light_stack::max_buffer_size) {
-            if (!stack_allocations.push(sctx)) {
+            if (!stack_allocations.enqueue(sctx)) {
                 ::VirtualFree(static_cast<char*>(sctx.sp) - sctx.size, 0, MEM_RELEASE);
                 stack_allocations_buffer--;
             }
@@ -250,7 +251,7 @@ namespace fast_task {
         const size_t size__ = (pages + 1) * page_size;
 
         stack_context result;
-        if (stack_allocations.pop(result)) {
+        if (stack_allocations.try_dequeue(result)) {
             stack_allocations_buffer--;
             if (!flush_used_stacks)
                 return result;
@@ -263,7 +264,7 @@ namespace fast_task {
     }
 
     void unlimited_buffer(stack_context& sctx) {
-        if (!stack_allocations.push(sctx))
+        if (!stack_allocations.enqueue(sctx))
             destroy_stack(sctx);
         else
             stack_allocations_buffer++;
@@ -271,7 +272,7 @@ namespace fast_task {
 
     void limited_buffer(stack_context& sctx) {
         if (++stack_allocations_buffer < light_stack::max_buffer_size) {
-            if (!stack_allocations.push(sctx)) {
+            if (!stack_allocations.enqueue(sctx)) {
                 destroy_stack(sctx);
                 stack_allocations_buffer--;
             }

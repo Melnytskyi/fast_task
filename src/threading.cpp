@@ -12,6 +12,8 @@
 
 
 #ifdef _WIN32
+
+    #ifdef FT_INCLUDE_THREAD_INTERRUPT_CODE
 extern "C" void thread_interrupter_asm_zmm();
 extern "C" void thread_interrupter_asm_ymm();
 extern "C" void thread_interrupter_asm_xmm();
@@ -26,6 +28,8 @@ void (*thread_interrupter_asm_ptr)() = []() {
         return thread_interrupter_asm_xmm;
     return thread_interrupter_asm;
 }();
+    #endif
+
     #define NOMINMAX
     #include <Windows.h>
     #include <process.h>
@@ -378,6 +382,7 @@ namespace fast_task {
     }
 
     bool thread::insert_context(id id, void (*inserted_context)(void*), void* arg) {
+    #ifdef FT_INCLUDE_THREAD_INTERRUPT_CODE
         interrupt_unsafe_region region;
         HANDLE_CLOSER thread_handle(OpenThread(THREAD_SUSPEND_RESUME | THREAD_QUERY_INFORMATION | THREAD_GET_CONTEXT | THREAD_SET_CONTEXT, false, id._id));
         if (SuspendThread(thread_handle.handle) == -1)
@@ -406,6 +411,9 @@ namespace fast_task {
         }
         ResumeThread(thread_handle.handle);
         return res;
+    #else
+        return false;
+    #endif
     }
 
     namespace this_thread {
@@ -953,6 +961,14 @@ namespace fast_task {
     void condition_variable_any::notify_all() {
         interrupt_unsafe_region region;
         fast_task::lock_guard<mutex> lock(_mutex);
+        _cond.notify_all();
+    }
+
+    void condition_variable_any::unsafe_notify_one() {
+        _cond.notify_one();
+    }
+
+    void condition_variable_any::unsafe_notify_all() {
         _cond.notify_all();
     }
 

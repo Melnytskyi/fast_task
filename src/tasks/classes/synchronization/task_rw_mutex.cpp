@@ -151,7 +151,7 @@ namespace fast_task {
                     return;
                 if (!get_data(item).time_end_flag) {
                     get_data(item).awaked = true;
-                    transfer_task(item);
+                    transfer_task(std::move(item));
                 }
                 break;
             }
@@ -258,20 +258,20 @@ namespace fast_task {
             get_data(loc.curr_task).awaked = false;
             get_data(loc.curr_task).time_end_flag = false;
             while (values.current_writer_task) {
-                fast_task::lock_guard guard(get_data(loc.curr_task).no_race);
-                makeTimeWait(time_point);
+                fast_task::lock_guard guard(glob.task_timer_safety);
+                makeTimeWait_unsafe(time_point);
                 values.resume_task.emplace_back(loc.curr_task, get_data(loc.curr_task).awake_check);
-                swapCtxRelock(get_data(loc.curr_task).no_race, values.no_race);
+                swapCtxRelock(glob.task_timer_safety, values.no_race);
                 if (!get_data(loc.curr_task).awaked)
                     return false;
             }
             values.current_writer_task = &*loc.curr_task;
 
             while (!values.readers.empty()) {
-                fast_task::lock_guard guard(get_data(loc.curr_task).no_race);
-                makeTimeWait(time_point);
+                fast_task::lock_guard guard(glob.task_timer_safety);
+                makeTimeWait_unsafe(time_point);
                 values.resume_task.emplace_back(loc.curr_task, get_data(loc.curr_task).awake_check);
-                swapCtxRelock(get_data(loc.curr_task).no_race, values.no_race);
+                swapCtxRelock(glob.task_timer_safety, values.no_race);
                 if (!get_data(loc.curr_task).awaked) {
                     values.current_writer_task = nullptr;
                     return false;
@@ -337,7 +337,7 @@ namespace fast_task {
                 continue;
             if (!get_data(it).time_end_flag) {
                 get_data(it).awaked = true;
-                transfer_task(it);
+                transfer_task(std::move(it));
             }
         }
     }

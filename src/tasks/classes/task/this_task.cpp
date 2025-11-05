@@ -52,18 +52,17 @@ namespace fast_task::this_task {
 
     void sleep_until(std::chrono::high_resolution_clock::time_point time_point) {
         if (loc.is_task_thread) {
-            fast_task::lock_guard guard(get_data(loc.curr_task).no_race);
-            makeTimeWait(time_point);
-            swapCtxRelock(get_data(loc.curr_task).no_race);
+            fast_task::lock_guard guard(glob.task_timer_safety);
+            makeTimeWait_unsafe(time_point);
+            swapCtxRelock(glob.task_timer_safety);
         } else
             this_thread::sleep_until(time_point);
     }
 
     void yield() {
         if (loc.is_task_thread) {
-            fast_task::lock_guard guard(glob.task_thread_safety);
-            glob.tasks.push(loc.curr_task);
-            swapCtxRelock(glob.task_thread_safety);
+            loc.yield_request = true;
+            swapCtx();
         } else
             this_thread::yield();
     }

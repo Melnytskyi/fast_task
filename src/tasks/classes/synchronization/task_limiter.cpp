@@ -147,7 +147,7 @@ namespace fast_task {
                 get_data(it.task).awaked = true;
                 auto task = values.resume_task.front().task;
                 values.resume_task.pop_front();
-                transfer_task(task);
+                transfer_task(std::move(task));
                 return;
             } else
                 values.resume_task.pop_front();

@@ -85,10 +85,10 @@ namespace fast_task {
             if (values.current_task == &*loc.curr_task)
                 return false;
             while (values.current_task) {
-                fast_task::lock_guard guard(get_data(loc.curr_task).no_race);
-                makeTimeWait(time_point);
+                fast_task::lock_guard guard(glob.task_timer_safety);
+                makeTimeWait_unsafe(time_point);
                 values.resume_task.emplace_back(loc.curr_task, get_data(loc.curr_task).awake_check);
-                swapCtxRelock(get_data(loc.curr_task).no_race, values.no_race);
+                swapCtxRelock(glob.task_timer_safety, values.no_race);
                 if (!get_data(loc.curr_task).awaked)
                     return false;
             }
@@ -147,7 +147,7 @@ namespace fast_task {
                 return;
             if (!get_data(it).time_end_flag) {
                 get_data(it).awaked = true;
-                transfer_task(it);
+                transfer_task(std::move(it));
             }
             break;
         }
