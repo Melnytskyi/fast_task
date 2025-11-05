@@ -1,18 +1,12 @@
 cmake_minimum_required(VERSION 3.31)
 
-if(MSVC)
-  project(fast_task CXX ASM_MASM)
-  set(ASM_FILE src/asm.asm)
-else(MSVC)
-  project(fast_task CXX)
-  set(ASM_FILE )
-endif(MSVC)
-
 option(FAST_TASK_STATIC "Enable static build for fast task library" ON)
 option(FAST_TASK_ENABLE_DEBUG_API "Enable the debugging and introspection API" OFF)
 option(FAST_TASK_ENABLE_ABORT_IF_ALREADY_STARTED "Abort if the task already started" OFF)
 option(FAST_TASK_ENABLE_ABORT_IF_NEVER_STARTED "Abort if task's destructor called before the task even started" OFF)
 option(FAST_TASK_ENABLE_PREEMPTIVE_SCHEDULER "Enables time sliced preemption for tasks, the tasks should use interrupt_unsafe_region on regions where preemption should be disabled." OFF)
+option(FAST_TASK_INCLUDE_THREAD_INTERRUPT_CODE "Allows the code to stop the thread and execute custom function on top of its stack, doesn't have effect if FAST_TASK_ENABLE_PREEMPTIVE_SCHEDULER enabled" ON)
+
 
 set(FAST_TASK_EXCEPTION_POLICY "NONE" CACHE 
 STRING 
@@ -23,6 +17,16 @@ STRING
 
 set_property(CACHE FAST_TASK_EXCEPTION_POLICY PROPERTY STRINGS "NONE" "CHECK" "PRESERVE")
 mark_as_advanced(FAST_TASK_EXCEPTION_POLICY)
+
+
+
+if(MSVC AND (FAST_TASK_INCLUDE_THREAD_INTERRUPT_CODE OR FAST_TASK_ENABLE_PREEMPTIVE_SCHEDULER))
+  project(fast_task CXX ASM_MASM)
+  set(ASM_FILE src/asm.asm)
+else()
+  project(fast_task CXX)
+  set(ASM_FILE )
+endif()
 
 
 set(fast_task_INCLUDE_DIR "src" "include")
@@ -67,6 +71,9 @@ if(FAST_TASK_ENABLE_DEBUG_API)
   target_link_libraries(fast_task PRIVATE cpptrace::cpptrace)
 endif()
 
+if(FAST_TASK_INCLUDE_THREAD_INTERRUPT_CODE OR FAST_TASK_ENABLE_PREEMPTIVE_SCHEDULER)
+  target_compile_definitions(fast_task PRIVATE FT_INCLUDE_THREAD_INTERRUPT_CODE)
+endif()
 if(FAST_TASK_ENABLE_ABORT_IF_ALREADY_STARTED)
   target_compile_definitions(fast_task PRIVATE FT_ENABLE_ABORT_IF_ALREADY_STARTED)
 endif()
