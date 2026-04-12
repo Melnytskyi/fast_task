@@ -31,13 +31,9 @@ endif()
 
 set(fast_task_INCLUDE_DIR "src" "include")
 
-FILE(GLOB SRCFILES 
-        ${ASM_FILE}
-        src/*.cpp
-        src/*/*.cpp
-        src/*/*/*.cpp
-        src/*/*/*/*.cpp
-)
+file(GLOB_RECURSE SRCFILES CONFIGURE_DEPENDS "src/*.cpp")
+list(APPEND SRCFILES ${ASM_FILE})
+
 if(FAST_TASK_STATIC)
   add_library(fast_task STATIC ${SRCFILES})
   target_compile_definitions(fast_task PUBLIC FT_API_STATIC)
@@ -46,6 +42,7 @@ else()
 endif()
 
 include(GenerateExportHeader)
+include(FetchContent)
 generate_export_header(
   fast_task
   BASE_NAME fast_task
@@ -67,7 +64,15 @@ endif()
 
 if(FAST_TASK_ENABLE_DEBUG_API)
   target_compile_definitions(fast_task PRIVATE FT_DEBUG_API_ENABLED)
-  find_package(cpptrace CONFIG REQUIRED)
+  find_package(cpptrace CONFIG)
+  if(NOT cpptrace_FOUND)
+    FetchContent_Declare(
+      cpptrace
+      GIT_REPOSITORY https://github.com/jeremy-rifkin/cpptrace.git
+      GIT_TAG        v1.0.4
+    )
+    FetchContent_MakeAvailable(cpptrace)
+  endif()
   target_link_libraries(fast_task PRIVATE cpptrace::cpptrace)
 endif()
 
@@ -89,15 +94,31 @@ elseif(FAST_TASK_EXCEPTION_POLICY STREQUAL "PRESERVE")
   target_compile_definitions(fast_task PRIVATE FT_EXCEPTION_POLICY_PRESERVE)
 endif()
 
-find_package(Boost REQUIRED COMPONENTS context)
-find_package(concurrentqueue CONFIG REQUIRED)
+find_package(Boost COMPONENTS context)
+if(NOT Boost_FOUND)
+  FetchContent_Declare(
+    Boost
+    URL "https://github.com/boostorg/boost/releases/download/boost-1.90.0/boost-1.90.0-cmake.tar.xz"
+  )
+  FetchContent_MakeAvailable(Boost)
+endif()
+
+find_package(concurrentqueue CONFIG)
+if(NOT concurrentqueue_FOUND)
+  FetchContent_Declare(
+    concurrentqueue
+    GIT_REPOSITORY https://github.com/cameron314/concurrentqueue.git
+    GIT_TAG        v1.0.5
+  )
+  FetchContent_MakeAvailable(concurrentqueue)
+endif()
 target_include_directories(fast_task PRIVATE ${Boost_INCLUDE_DIRS} ${fast_task_INCLUDE_DIR} ${concurrentqueue_INCLUDE_DIRS})
 set_target_properties(fast_task
   PROPERTIES
   CXX_STANDARD 23
   CXX_EXTENSIONS OFF
 )
-target_link_libraries(fast_task PRIVATE ${Boost_LIBRARIES})
+target_link_libraries(fast_task PRIVATE Boost::context concurrentqueue::concurrentqueue)
 
 if(MSVC)
   set_property(TARGET fast_task PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
@@ -117,10 +138,26 @@ if(MSVC)
   target_compile_options(fast_task PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/permissive->)
 else()
   find_package(PkgConfig REQUIRED)
-  pkg_check_modules(LIBURING REQUIRED IMPORTED_TARGET liburing)
-  target_include_directories(fast_task PRIVATE ${LIBURING_INCLUDE_DIRS})
-
-  target_link_libraries(fast_task PRIVATE PkgConfig::LIBURING)
+  pkg_check_modules(LIBURING IMPORTED_TARGET liburing)
+  if(LIBURING_FOUND)
+    target_include_directories(fast_task PRIVATE ${LIBURING_INCLUDE_DIRS})
+    target_link_libraries(fast_task PRIVATE PkgConfig::LIBURING)
+  else()
+    include(ExternalProject)
+    ExternalProject_Add(
+      liburing
+      GIT_REPOSITORY https://github.com/axboe/liburing.git
+      GIT_TAG        liburing-2.13
+      CONFIGURE_COMMAND <SOURCE_DIR>/configure
+      BUILD_COMMAND make -C <SOURCE_DIR> src/liburing.a
+      INSTALL_COMMAND ""
+      BUILD_IN_SOURCE 1
+)
+    ExternalProject_Get_Property(liburing SOURCE_DIR)
+    target_include_directories(fast_task PRIVATE ${SOURCE_DIR}/src/include)
+    add_dependencies(fast_task liburing)
+    target_link_libraries(fast_task PRIVATE ${SOURCE_DIR}/src/liburing.a)
+  endif()
   target_compile_options(fast_task PUBLIC -m64)
   target_compile_options(fast_task PRIVATE -g)
   target_compile_options(fast_task PRIVATE -Wall)
