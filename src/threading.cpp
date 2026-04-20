@@ -185,11 +185,13 @@ namespace fast_task {
 
     bool spin_lock::try_lock() {
         interrupt_unsafe_region::lock();
-        bool res = reinterpret_cast<std::atomic_flag*>(locked_storage)
+        bool prev = reinterpret_cast<std::atomic_flag*>(locked_storage)
                        ->test_and_set(std::memory_order_acquire);
-        if (!res)
+        if (prev) {
             interrupt_unsafe_region::unlock();
-        return res;
+            return false;
+        }
+        return true;
     }
 
     void spin_lock::unlock() {

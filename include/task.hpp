@@ -33,6 +33,22 @@ namespace fast_task {
         std::suspend_always final_suspend() noexcept;
     };
 
+    struct base_coro_handle {
+        std::coroutine_handle<> handle;
+        task_promise_base* promise = nullptr;
+
+        template <class Promise>
+        base_coro_handle(std::coroutine_handle<Promise> h) 
+            : handle(h), promise(&h.promise()) {}
+
+        base_coro_handle() = default;
+        base_coro_handle(const base_coro_handle&) = default;
+        base_coro_handle(base_coro_handle&& other) noexcept = default;
+
+        base_coro_handle& operator=(const base_coro_handle&) = default;
+        base_coro_handle& operator=(base_coro_handle&& other) noexcept = default;
+    };
+
     class FT_API task_mutex {
         friend class task_recursive_mutex;
         friend struct debug::_debug_collect;
@@ -48,18 +64,18 @@ namespace fast_task {
             task_mutex& mutex;
 
             bool await_ready() noexcept;
-            bool await_suspend(std::coroutine_handle<task_promise_base> h);
+            bool await_suspend(base_coro_handle h);
             void await_resume() noexcept;
         };
 
         struct FT_API [[nodiscard]] task_mutex_try_lock_awaiter {
             task_mutex& mutex;
             std::chrono::high_resolution_clock::time_point time_point;
-            std::coroutine_handle<task_promise_base> handle;
+            base_coro_handle handle;
             bool successful = false;
 
             bool await_ready() noexcept;
-            bool await_suspend(std::coroutine_handle<task_promise_base> h);
+            bool await_suspend(base_coro_handle h);
             bool await_resume() noexcept;
         };
 
@@ -89,18 +105,18 @@ namespace fast_task {
             task_recursive_mutex& mutex;
 
             bool await_ready() noexcept;
-            bool await_suspend(std::coroutine_handle<task_promise_base> h);
+            bool await_suspend(base_coro_handle h);
             void await_resume() noexcept;
         };
 
         struct FT_API [[nodiscard]] task_mutex_try_lock_awaiter {
             task_recursive_mutex& mutex;
             std::chrono::high_resolution_clock::time_point time_point;
-            std::coroutine_handle<task_promise_base> handle;
+            base_coro_handle handle;
             bool successful = false;
 
             bool await_ready() noexcept;
-            bool await_suspend(std::coroutine_handle<task_promise_base> h);
+            bool await_suspend(base_coro_handle h);
             bool await_resume() noexcept;
         };
 
@@ -138,18 +154,18 @@ namespace fast_task {
             task_rw_mutex& mutex;
 
             bool await_ready() noexcept;
-            bool await_suspend(std::coroutine_handle<task_promise_base> h);
+            bool await_suspend(base_coro_handle h);
             void await_resume() noexcept;
         };
 
         struct FT_API [[nodiscard]] task_mutex_try_write_lock_awaiter {
             task_rw_mutex& mutex;
             std::chrono::high_resolution_clock::time_point time_point;
-            std::coroutine_handle<task_promise_base> handle;
+            base_coro_handle handle;
             bool successful = false;
 
             bool await_ready() noexcept;
-            bool await_suspend(std::coroutine_handle<task_promise_base> h);
+            bool await_suspend(base_coro_handle h);
             bool await_resume() noexcept;
         };
 
@@ -157,18 +173,18 @@ namespace fast_task {
             task_rw_mutex& mutex;
 
             bool await_ready() noexcept;
-            bool await_suspend(std::coroutine_handle<task_promise_base> h);
+            bool await_suspend(base_coro_handle h);
             void await_resume() noexcept;
         };
 
         struct FT_API [[nodiscard]] task_mutex_try_read_lock_awaiter {
             task_rw_mutex& mutex;
             std::chrono::high_resolution_clock::time_point time_point;
-            std::coroutine_handle<task_promise_base> handle;
+            base_coro_handle handle;
             bool successful = false;
 
             bool await_ready() noexcept;
-            bool await_suspend(std::coroutine_handle<task_promise_base> h);
+            bool await_suspend(base_coro_handle h);
             bool await_resume() noexcept;
         };
 
@@ -407,18 +423,18 @@ namespace fast_task {
         struct FT_API [[nodiscard]] task_wait_awaiter {
             task_condition_variable& cv;
             bool await_ready() noexcept;
-            bool await_suspend(std::coroutine_handle<task_promise_base> h);
+            bool await_suspend(base_coro_handle h);
             void await_resume() noexcept;
         };
 
         struct FT_API [[nodiscard]] task_wait_util_awaiter {
             task_condition_variable& cv;
             std::chrono::high_resolution_clock::time_point time_point;
-            std::coroutine_handle<task_promise_base> handle;
+            base_coro_handle handle;
             bool successful = false;
 
             bool await_ready() noexcept;
-            bool await_suspend(std::coroutine_handle<task_promise_base> h);
+            bool await_suspend(base_coro_handle h);
             bool await_resume() noexcept;
         };
 
@@ -696,18 +712,18 @@ namespace fast_task {
             task_semaphore& sem;
 
             bool await_ready() noexcept;
-            bool await_suspend(std::coroutine_handle<task_promise_base> h);
+            bool await_suspend(base_coro_handle h);
             void await_resume() noexcept;
         };
 
         struct FT_API [[nodiscard]] task_try_lock_awaiter {
             task_semaphore& sem;
             std::chrono::high_resolution_clock::time_point time_point;
-            std::coroutine_handle<task_promise_base> handle;
+            base_coro_handle handle;
             bool successful = false;
 
             bool await_ready() noexcept;
-            bool await_suspend(std::coroutine_handle<task_promise_base> h);
+            bool await_suspend(base_coro_handle h);
             bool await_resume() noexcept;
         };
 
@@ -749,18 +765,18 @@ namespace fast_task {
             task_limiter& lim;
 
             bool await_ready() noexcept;
-            bool await_suspend(std::coroutine_handle<task_promise_base> h);
+            bool await_suspend(base_coro_handle h);
             void await_resume();
         };
 
         struct FT_API [[nodiscard]] task_try_lock_awaiter {
             task_limiter& lim;
             std::chrono::high_resolution_clock::time_point time_point;
-            std::coroutine_handle<task_promise_base> handle;
+            base_coro_handle handle;
             bool successful = false;
 
             bool await_ready() noexcept;
-            bool await_suspend(std::coroutine_handle<task_promise_base> h);
+            bool await_suspend(base_coro_handle h);
             bool await_resume();
         };
 

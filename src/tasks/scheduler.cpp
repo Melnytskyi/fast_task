@@ -211,12 +211,15 @@ namespace fast_task {
         if (get_data(loc.curr_task).callbacks.is_extended_mode) {
             if (get_data(loc.curr_task).callbacks.extended_mode.is_restartable) {
                 get_data(loc.curr_task).started = false;
-                get_data(loc.curr_task).result_notify.notify_all();
+                if (!loc.ex_ptr)
+                    get_data(loc.curr_task).result_notify.notify_all();
                 return std::move(*loc.stack_current_context);
             }
         }
-        get_data(loc.curr_task).end_of_life = true;
-        get_data(loc.curr_task).result_notify.notify_all();
+        if (!loc.ex_ptr) {
+            get_data(loc.curr_task).end_of_life = true;
+            get_data(loc.curr_task).result_notify.notify_all();
+        }
         return std::move(*loc.stack_current_context);
     }
 
@@ -226,8 +229,10 @@ namespace fast_task {
             if (!checkCancellation()) {
                 flush_interput_data;
                 timer_reinit();
-                if (!get_data(loc.curr_task).callbacks.is_extended_mode)
-                    get_data(loc.curr_task).callbacks.normal_mode.ex_handle(loc.ex_ptr);
+                if (!get_data(loc.curr_task).callbacks.is_extended_mode) {
+                    if (get_data(loc.curr_task).callbacks.normal_mode.ex_handle)
+                        get_data(loc.curr_task).callbacks.normal_mode.ex_handle(loc.ex_ptr);
+                }
             } else
                 this_task::the_coroutine_ended();
         } catch (task_cancellation& cancel) {
@@ -638,6 +643,7 @@ namespace fast_task {
         context.completions.emplace_back(0);
         auto& completions = context.completions.back();
         auto completions_remove = --context.completions.end();
+        context.executors++;
         initializer_guard.unlock();
         {
             fast_task::unique_lock lock(context.no_race);
@@ -649,7 +655,6 @@ namespace fast_task {
         }
         _set_name_thread_dbg("Binded worker " + std::to_string(_thread_id()) + ": " + std::to_string(id));
 
-        context.executors++;
         while (true) {
             if (!loadTaskBinded(context))
                 break;

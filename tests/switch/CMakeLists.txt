@@ -1,0 +1,2 @@
+add_ft_test(test_context_switch   test_context_switch.cpp)
+add_ft_test(test_exception_policy test_exception_policy.cpp)

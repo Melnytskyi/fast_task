@@ -22,7 +22,26 @@ namespace fast_task {
 
     void task_semaphore::set_max_threshold(size_t val) {
         fast_task::lock_guard guard(values.no_race);
-        release_all();
+        if (values.allow_threshold != values.max_threshold) {
+            values.allow_threshold = values.max_threshold;
+            values.native_notify.notify_all();
+            while (values.resume_task.size()) {
+                auto& it = values.resume_task.front();
+                fast_task::lock_guard lg2(get_data(it.task).no_race);
+                if (!get_data(it.task).time_end_flag) {
+                    if (get_data(it.task).awake_check != it.awake_check) {
+                        values.resume_task.pop_front();
+                        continue;
+                    }
+                    get_data(it.task).awaked = true;
+                    auto task = values.resume_task.front().task;
+                    values.resume_task.pop_front();
+                    transfer_task(std::move(task));
+                } else {
+                    values.resume_task.pop_front();
+                }
+            }
+        }
         values.max_threshold = val;
         values.allow_threshold = values.max_threshold;
     }
@@ -86,15 +105,18 @@ namespace fast_task {
             auto& it = values.resume_task.front();
             fast_task::lock_guard lg2(get_data(it.task).no_race);
             if (!get_data(it.task).time_end_flag) {
-                if (get_data(it.task).awake_check != it.awake_check)
+                if (get_data(it.task).awake_check != it.awake_check) {
+                    values.resume_task.pop_front();
                     continue;
+                }
                 get_data(it.task).awaked = true;
                 auto task = values.resume_task.front().task;
                 values.resume_task.pop_front();
                 transfer_task(std::move(task));
                 return;
-            } else
+            } else {
                 values.resume_task.pop_front();
+            }
         }
     }
 
@@ -105,34 +127,37 @@ namespace fast_task {
         values.allow_threshold = values.max_threshold;
         values.native_notify.notify_all();
         while (values.resume_task.size()) {
-            auto& it = values.resume_task.back();
+            auto& it = values.resume_task.front();
             fast_task::lock_guard lg2(get_data(it.task).no_race);
             if (!get_data(it.task).time_end_flag) {
-                if (get_data(it.task).awake_check != it.awake_check)
+                if (get_data(it.task).awake_check != it.awake_check) {
+                    values.resume_task.pop_front();
                     continue;
+                }
                 get_data(it.task).awaked = true;
                 auto task = values.resume_task.front().task;
                 values.resume_task.pop_front();
                 transfer_task(std::move(task));
-            } else
+            } else {
                 values.resume_task.pop_front();
+            }
         }
     }
 
     bool task_semaphore::is_locked() {
         if (try_lock()) {
             release();
-            return true;
+            return false;
         }
-        return false;
+        return true;
     }
 
     bool task_semaphore::task_lock_awaiter::await_ready() noexcept {
         return sem.try_lock();
     }
 
-    bool task_semaphore::task_lock_awaiter::await_suspend(std::coroutine_handle<task_promise_base> h) {
-        auto& task_ptr = h.promise().task_object;
+    bool task_semaphore::task_lock_awaiter::await_suspend(base_coro_handle h) {
+        auto& task_ptr = h.promise->task_object;
         fast_task::unique_lock keeper(sem.values.no_race);
         if (!sem.values.allow_threshold) {
             sem.values.resume_task.emplace_back(task_ptr, get_data(task_ptr).awake_check);
@@ -149,9 +174,9 @@ namespace fast_task {
         return successful;
     }
 
-    bool task_semaphore::task_try_lock_awaiter::await_suspend(std::coroutine_handle<task_promise_base> h) {
+    bool task_semaphore::task_try_lock_awaiter::await_suspend(base_coro_handle h) {
         handle = h;
-        auto& task_ptr = h.promise().task_object;
+        auto& task_ptr = h.promise->task_object;
         fast_task::unique_lock keeper(sem.values.no_race);
         if (!sem.values.allow_threshold) {
             sem.values.resume_task.emplace_back(task_ptr, get_data(task_ptr).awake_check);
@@ -165,7 +190,7 @@ namespace fast_task {
     bool task_semaphore::task_try_lock_awaiter::await_resume() noexcept {
         if (successful)
             return true;
-        auto& task_ptr = handle.promise().task_object;
+        auto& task_ptr = handle.promise->task_object;
         if (get_data(task_ptr).time_end_flag) {
             successful = false;
         } else

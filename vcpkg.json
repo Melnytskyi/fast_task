@@ -1,11 +1,13 @@
 {
     "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
-    "name": "attach-a",
-    "version": "0.1.0",
+    "name": "fast-task",
+    "version": "1.0.0-beta-001",
     "dependencies": [
         "boost-context",
+        "boost-lockfree",
         "concurrentqueue",
         "cpptrace",
+        "gtest",
         {
             "name": "liburing",
             "platform": "linux"

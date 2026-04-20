@@ -38,7 +38,8 @@ namespace fast_task {
         }
 
         [[nodiscard]] T* deallocate(T* p, size_type _) {
-            return fast_task::free(p);
+            fast_task::free(p);
+            return nullptr;
         }
     };
 }

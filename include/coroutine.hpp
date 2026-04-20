@@ -133,7 +133,7 @@ namespace fast_task {
         template <class Ret>
             requires std::is_constructible_v<T, Ret&&>
         void return_value(Ret&& val) noexcept(std::is_nothrow_constructible_v<T, Ret&&>) {
-            results.emplace(val);
+            results.emplace(std::move(val));
         }
 
         T& result() {
@@ -291,7 +291,7 @@ namespace fast_task {
 
                         auto handle = std::coroutine_handle<fast_task::task_promise<T>>::from_address(handle_address);
                         fast_task::task_promise<T>& promise = handle.promise();
-                        return std.move(promise.result());
+                        return std::move(promise.result());
                     }
                 }
             };

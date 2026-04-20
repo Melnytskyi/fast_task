@@ -1,0 +1,3 @@
+add_ft_test(test_stackfull_basic test_stackfull_basic.cpp)
+add_ft_test(test_stackfull_sleep test_stackfull_sleep.cpp)
+add_ft_test(test_stackfull_sync  test_stackfull_sync.cpp)

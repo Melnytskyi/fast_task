@@ -148,7 +148,7 @@ namespace fast_task {
                 }
                 fast_task::lock_guard lg1(get_data(item).no_race);
                 if (get_data(item).awake_check != awake_check)
-                    return;
+                    continue;
                 if (!get_data(item).time_end_flag) {
                     get_data(item).awaked = true;
                     transfer_task(std::move(item));
@@ -388,8 +388,8 @@ namespace fast_task {
         return mutex.try_lock();
     }
 
-    bool task_rw_mutex::task_mutex_write_lock_awaiter::await_suspend(std::coroutine_handle<task_promise_base> h) {
-        auto& task_ptr = h.promise().task_object;
+    bool task_rw_mutex::task_mutex_write_lock_awaiter::await_suspend(base_coro_handle h) {
+        auto& task_ptr = h.promise->task_object;
 
         fast_task::unique_lock ul(mutex.values.no_race);
 
@@ -413,9 +413,9 @@ namespace fast_task {
         return false;
     }
 
-    bool task_rw_mutex::task_mutex_try_write_lock_awaiter::await_suspend(std::coroutine_handle<task_promise_base> h) {
+    bool task_rw_mutex::task_mutex_try_write_lock_awaiter::await_suspend(base_coro_handle h) {
         handle = h;
-        auto& task_ptr = h.promise().task_object;
+        auto& task_ptr = h.promise->task_object;
 
         fast_task::unique_lock ul(mutex.values.no_race);
 
@@ -434,7 +434,7 @@ namespace fast_task {
     bool task_rw_mutex::task_mutex_try_write_lock_awaiter::await_resume() noexcept {
         if (successful)
             return true;
-        auto& task_ptr = handle.promise().task_object;
+        auto& task_ptr = handle.promise->task_object;
         if (get_data(task_ptr).time_end_flag) {
             successful = false;
         } else
@@ -446,8 +446,8 @@ namespace fast_task {
         return mutex.try_lock();
     }
 
-    bool task_rw_mutex::task_mutex_read_lock_awaiter::await_suspend(std::coroutine_handle<task_promise_base> h) {
-        auto& task_ptr = h.promise().task_object;
+    bool task_rw_mutex::task_mutex_read_lock_awaiter::await_suspend(base_coro_handle h) {
+        auto& task_ptr = h.promise->task_object;
         fast_task::unique_lock ul(mutex.values.no_race);
         if (mutex.values.current_writer_task == nullptr) {
             task* self_mask;
@@ -477,9 +477,9 @@ namespace fast_task {
         return false;
     }
 
-    bool task_rw_mutex::task_mutex_try_read_lock_awaiter::await_suspend(std::coroutine_handle<task_promise_base> h) {
+    bool task_rw_mutex::task_mutex_try_read_lock_awaiter::await_suspend(base_coro_handle h) {
         handle = h;
-        auto& task_ptr = h.promise().task_object;
+        auto& task_ptr = h.promise->task_object;
         fast_task::unique_lock ul(mutex.values.no_race);
         if (mutex.values.current_writer_task == nullptr) {
             task* self_mask;
@@ -504,7 +504,7 @@ namespace fast_task {
     bool task_rw_mutex::task_mutex_try_read_lock_awaiter::await_resume() noexcept {
         if (successful)
             return true;
-        auto& task_ptr = handle.promise().task_object;
+        auto& task_ptr = handle.promise->task_object;
         if (get_data(task_ptr).time_end_flag) {
             successful = false;
         } else

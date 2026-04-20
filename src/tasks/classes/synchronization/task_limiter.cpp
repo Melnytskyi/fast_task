@@ -162,8 +162,8 @@ namespace fast_task {
         return lim.try_lock();
     }
 
-    bool task_limiter::task_lock_awaiter::await_suspend(std::coroutine_handle<task_promise_base> h) {
-        auto& task_ptr = h.promise().task_object;
+    bool task_limiter::task_lock_awaiter::await_suspend(base_coro_handle h) {
+        auto& task_ptr = h.promise->task_object;
         fast_task::unique_lock keeper(lim.values.no_race);
         if (!lim.values.allow_threshold) {
             lim.values.resume_task.emplace_back(task_ptr, get_data(task_ptr).awake_check);
@@ -189,9 +189,9 @@ namespace fast_task {
         return successful;
     }
 
-    bool task_limiter::task_try_lock_awaiter::await_suspend(std::coroutine_handle<task_promise_base> h) {
+    bool task_limiter::task_try_lock_awaiter::await_suspend(base_coro_handle h) {
         handle = h;
-        auto& task_ptr = h.promise().task_object;
+        auto& task_ptr = h.promise->task_object;
         fast_task::unique_lock keeper(lim.values.no_race);
         if (!lim.values.allow_threshold) {
             lim.values.resume_task.emplace_back(task_ptr, get_data(task_ptr).awake_check);
@@ -206,7 +206,7 @@ namespace fast_task {
     bool task_limiter::task_try_lock_awaiter::await_resume() {
         if (successful)
             return true;
-        auto& task_ptr = handle.promise().task_object;
+        auto& task_ptr = handle.promise->task_object;
         if (get_data(task_ptr).time_end_flag) {
             successful = false;
         } else

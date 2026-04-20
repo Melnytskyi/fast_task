@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.31)
 
 option(FAST_TASK_STATIC "Enable static build for fast task library" ON)
+option(FAST_TASK_BUILD_TESTS "Build the test suite" OFF)
 option(FAST_TASK_ENABLE_DEBUG_API "Enable the debugging and introspection API" OFF)
 option(FAST_TASK_ENABLE_ABORT_IF_ALREADY_STARTED "Abort if the task already started" OFF)
 option(FAST_TASK_ENABLE_ABORT_IF_NEVER_STARTED "Abort if task's destructor called before the task even started" OFF)
@@ -20,11 +21,15 @@ mark_as_advanced(FAST_TASK_EXCEPTION_POLICY)
 
 
 
-if(MSVC AND (FAST_TASK_INCLUDE_THREAD_INTERRUPT_CODE OR FAST_TASK_ENABLE_PREEMPTIVE_SCHEDULER))
+if(WIN32 AND (FAST_TASK_INCLUDE_THREAD_INTERRUPT_CODE OR FAST_TASK_ENABLE_PREEMPTIVE_SCHEDULER))
   project(fast_task CXX ASM_MASM)
-  set(ASM_FILE src/asm.asm)
 else()
   project(fast_task CXX)
+endif()
+
+if(MSVC AND (FAST_TASK_INCLUDE_THREAD_INTERRUPT_CODE OR FAST_TASK_ENABLE_PREEMPTIVE_SCHEDULER))
+  set(ASM_FILE src/asm.asm)
+else()
   set(ASM_FILE )
 endif()
 
@@ -94,7 +99,7 @@ elseif(FAST_TASK_EXCEPTION_POLICY STREQUAL "PRESERVE")
   target_compile_definitions(fast_task PRIVATE FT_EXCEPTION_POLICY_PRESERVE)
 endif()
 
-find_package(Boost COMPONENTS context)
+find_package(Boost COMPONENTS context lockfree)
 if(NOT Boost_FOUND)
   FetchContent_Declare(
     Boost
@@ -171,4 +176,9 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
   if(MSVC)
     target_compile_options(fast_task PRIVATE /clang:-ftemplate-backtrace-limit=0)
   endif(MSVC)
+endif()
+
+if(FAST_TASK_BUILD_TESTS)
+  enable_testing()
+  add_subdirectory(tests)
 endif()

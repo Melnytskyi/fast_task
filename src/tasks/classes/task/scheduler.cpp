@@ -85,13 +85,13 @@ namespace fast_task::scheduler {
 
     void assign_bind_only_executor(uint16_t id, uint16_t fixed_count, bool allow_implicit_start, executor_policy policy) {
         fast_task::lock_guard guard(glob.binded_workers_safety);
-        if (glob.binded_workers.contains(id))
-            throw std::runtime_error("Worker already assigned!");
         if (id == (uint16_t)-1)
             throw std::runtime_error("Invalid id");
-        glob.binded_workers[id].allow_implicit_start = allow_implicit_start;
-        glob.binded_workers[id].fixed_size = (bool)fixed_count;
-        glob.binded_workers[id].policy = policy;
+        if (!glob.binded_workers.contains(id)) {
+            glob.binded_workers[id].allow_implicit_start = allow_implicit_start;
+            glob.binded_workers[id].fixed_size = (bool)fixed_count;
+            glob.binded_workers[id].policy = policy;
+        }
         for (size_t i = 0; i < fixed_count; i++) {
             ++glob.thread_count;
             fast_task::thread(bindedTaskExecutor, id).detach();

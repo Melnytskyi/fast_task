@@ -1,0 +1,8 @@
+add_ft_test(test_mutex               test_mutex.cpp)
+add_ft_test(test_rw_mutex            test_rw_mutex.cpp)
+add_ft_test(test_recursive_mutex     test_recursive_mutex.cpp)
+add_ft_test(test_timed_mutex         test_timed_mutex.cpp)
+add_ft_test(test_spin_lock           test_spin_lock.cpp)
+add_ft_test(test_condition_variable  test_condition_variable.cpp)
+add_ft_test(test_thread              test_thread.cpp)
+add_ft_test(test_lock_guards         test_lock_guards.cpp)

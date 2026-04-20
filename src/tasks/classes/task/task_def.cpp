@@ -153,7 +153,7 @@ namespace fast_task {
     }
 
     bool task::is_ended() const noexcept {
-        return !data_.end_of_life;
+        return data_.end_of_life;
     }
 
     void task::await_task() {

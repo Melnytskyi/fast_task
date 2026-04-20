@@ -169,8 +169,8 @@ namespace fast_task {
         return mutex.try_lock();
     }
 
-    bool task_recursive_mutex::task_mutex_lock_awaiter::await_suspend(std::coroutine_handle<task_promise_base> h) {
-        auto& task_ptr = h.promise().task_object;
+    bool task_recursive_mutex::task_mutex_lock_awaiter::await_suspend(base_coro_handle h) {
+        auto& task_ptr = h.promise->task_object;
 
         fast_task::lock_guard l(mutex.mutex.values.no_race);
         if (mutex.mutex.values.current_task == nullptr) {
@@ -185,6 +185,8 @@ namespace fast_task {
         return true;
     }
 
+    void task_recursive_mutex::task_mutex_lock_awaiter::await_resume() noexcept {}
+
     bool task_recursive_mutex::task_mutex_try_lock_awaiter::await_ready() noexcept {
         if (mutex.try_lock()) {
             successful = true;
@@ -193,9 +195,9 @@ namespace fast_task {
         return false;
     }
 
-    bool task_recursive_mutex::task_mutex_try_lock_awaiter::await_suspend(std::coroutine_handle<task_promise_base> h) {
+    bool task_recursive_mutex::task_mutex_try_lock_awaiter::await_suspend(base_coro_handle h) {
         handle = h;
-        auto& task_ptr = h.promise().task_object;
+        auto& task_ptr = h.promise->task_object;
         fast_task::lock_guard l(mutex.mutex.values.no_race);
         if (mutex.mutex.values.current_task == nullptr) {
             mutex.mutex.values.current_task = task_ptr.get();
@@ -213,7 +215,7 @@ namespace fast_task {
     bool task_recursive_mutex::task_mutex_try_lock_awaiter::await_resume() noexcept {
         if (successful)
             return true;
-        auto& task_ptr = handle.promise().task_object;
+        auto& task_ptr = handle.promise->task_object;
         if (get_data(task_ptr).time_end_flag) {
             successful = false;
         } else

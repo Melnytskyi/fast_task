@@ -101,7 +101,7 @@ namespace fast_task {
             fast_task::condition_variable_any cd;
             while (values.current_task) {
                 has_res = false;
-                auto rs_task = values.resume_task.emplace_back(nullptr, 0, &cd, &has_res);
+                auto& rs_task = values.resume_task.emplace_back(nullptr, 0, &cd, &has_res);
                 while (!has_res) { //-V654
                     if (cd.wait_until(ul, time_point) == cv_status::timeout) {
                         rs_task.native_cv = nullptr;
@@ -144,7 +144,7 @@ namespace fast_task {
             }
             fast_task::lock_guard lg1(get_data(it).no_race);
             if (get_data(it).awake_check != awake_check)
-                return;
+                continue;
             if (!get_data(it).time_end_flag) {
                 get_data(it).awaked = true;
                 transfer_task(std::move(it));
@@ -199,8 +199,8 @@ namespace fast_task {
         return mutex.try_lock();
     }
 
-    bool task_mutex::task_mutex_lock_awaiter::await_suspend(std::coroutine_handle<task_promise_base> h) {
-        auto& task_ptr = h.promise().task_object;
+    bool task_mutex::task_mutex_lock_awaiter::await_suspend(base_coro_handle h) {
+        auto& task_ptr = h.promise->task_object;
 
         fast_task::lock_guard l(mutex.values.no_race);
         if (mutex.values.current_task == nullptr) {
@@ -212,6 +212,8 @@ namespace fast_task {
         return true;
     }
 
+    void task_mutex::task_mutex_lock_awaiter::await_resume() noexcept {}
+
     bool task_mutex::task_mutex_try_lock_awaiter::await_ready() noexcept {
         if (mutex.try_lock()) {
             successful = true;
@@ -220,9 +222,9 @@ namespace fast_task {
         return false;
     }
 
-    bool task_mutex::task_mutex_try_lock_awaiter::await_suspend(std::coroutine_handle<task_promise_base> h) {
+    bool task_mutex::task_mutex_try_lock_awaiter::await_suspend(base_coro_handle h) {
         handle = h;
-        auto& task_ptr = h.promise().task_object;
+        auto& task_ptr = h.promise->task_object;
         fast_task::lock_guard l(mutex.values.no_race);
         if (mutex.values.current_task == nullptr) {
             mutex.values.current_task = task_ptr.get();
@@ -236,7 +238,7 @@ namespace fast_task {
     bool task_mutex::task_mutex_try_lock_awaiter::await_resume() noexcept {
         if (successful)
             return true;
-        auto& task_ptr = handle.promise().task_object;
+        auto& task_ptr = handle.promise->task_object;
         if (get_data(task_ptr).time_end_flag) {
             successful = false;
         } else

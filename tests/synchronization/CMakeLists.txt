@@ -1,0 +1,8 @@
+add_ft_test(test_task_mutex               test_task_mutex.cpp)
+add_ft_test(test_task_rw_mutex            test_task_rw_mutex.cpp)
+add_ft_test(test_task_recursive_mutex     test_task_recursive_mutex.cpp)
+add_ft_test(test_task_condition_variable  test_task_condition_variable.cpp)
+add_ft_test(test_task_semaphore           test_task_semaphore.cpp)
+add_ft_test(test_task_limiter             test_task_limiter.cpp)
+add_ft_test(test_mutex_unify              test_mutex_unify.cpp)
+add_ft_test(test_multiply_mutex           test_multiply_mutex.cpp)

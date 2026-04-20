@@ -1,5 +1,5 @@
 {
-    "version": 2,
+    "version": 3,
     "buildPresets": [
         {
             "name": "Win-Debug",
@@ -46,7 +46,7 @@
         {
             "name": "Win-Basic",
             "hidden": true,
-            "generator": "Visual Studio 17 2022",
+            "generator": "Visual Studio 18",
             "binaryDir": "${sourceDir}/out/build/${presetName}",
             "cacheVariables": {
                 "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/vcpkg/scripts/buildsystems/vcpkg.cmake",
@@ -140,12 +140,42 @@
         {
             "name": "Win-Test",
             "displayName": "Win-Test",
-            "inherits": [ "Win-Basic", "Test" ]
+            "inherits": [
+                "Win-Basic",
+                "Test"
+            ],
+            "cacheVariables": {
+                "FAST_TASK_BUILD_TESTS": "ON"
+            }
         },
         {
             "name": "Linux-Test",
             "displayName": "Linux-Test",
-            "inherits": [ "Linux-Basic", "Test" ]
+            "inherits": [
+                "Linux-Basic",
+                "Test"
+            ],
+            "cacheVariables": {
+                "FAST_TASK_BUILD_TESTS": "ON"
+            }
+        }
+    ],
+    "testPresets": [
+        {
+            "name": "Win-Test",
+            "configurePreset": "Win-Test",
+            "configuration": "Debug",
+            "output": {
+                "outputOnFailure": true
+            }
+        },
+        {
+            "name": "Linux-Test",
+            "configurePreset": "Linux-Test",
+            "configuration": "Debug",
+            "output": {
+                "outputOnFailure": true
+            }
         }
     ]
 }

@@ -208,8 +208,10 @@ namespace fast_task {
                     if (native_cv != nullptr) {
                         *native_flag = true;
                         native_cv->notify_all();
-                        continue;
+                        values.resume_task.pop_back();
+                        return;
                     }
+                    values.resume_task.pop_back();
                     continue;
                 }
                 fast_task::unique_lock ul(get_data(cur).no_race);
@@ -222,7 +224,7 @@ namespace fast_task {
                     break;
                 }
             }
-            if (values.resume_task.empty() && !tsk)
+            if (!tsk)
                 return;
         }
         bool to_yield = false;
@@ -274,8 +276,8 @@ namespace fast_task {
         return false;
     }
 
-    bool task_condition_variable::task_wait_awaiter::await_suspend(std::coroutine_handle<task_promise_base> h) {
-        auto& task_ptr = h.promise().task_object;
+    bool task_condition_variable::task_wait_awaiter::await_suspend(base_coro_handle h) {
+        auto& task_ptr = h.promise->task_object;
         if (get_data(task_ptr).relock_0 == cv.values.no_race)
             cv.values.resume_task.push_back({task_ptr, get_data(task_ptr).awake_check, nullptr, nullptr});
         else {
@@ -292,9 +294,9 @@ namespace fast_task {
         return successful;
     }
 
-    bool task_condition_variable::task_wait_util_awaiter::await_suspend(std::coroutine_handle<task_promise_base> h) {
+    bool task_condition_variable::task_wait_util_awaiter::await_suspend(base_coro_handle h) {
         handle = h;
-        auto& task_ptr = h.promise().task_object;
+        auto& task_ptr = h.promise->task_object;
         if (get_data(task_ptr).relock_0 == cv.values.no_race)
             cv.values.resume_task.push_back({task_ptr, get_data(task_ptr).awake_check, nullptr, nullptr});
         else {
@@ -308,7 +310,7 @@ namespace fast_task {
     bool task_condition_variable::task_wait_util_awaiter::await_resume() noexcept {
         if (successful)
             return true;
-        auto& task_ptr = handle.promise().task_object;
+        auto& task_ptr = handle.promise->task_object;
         if (get_data(task_ptr).time_end_flag) {
             successful = false;
         } else

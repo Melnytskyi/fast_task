@@ -1,0 +1,5 @@
+add_ft_test(test_future_basic       test_future_basic.cpp)
+add_ft_test(test_future_void        test_future_void.cpp)
+add_ft_test(test_future_callbacks   test_future_callbacks.cpp)
+add_ft_test(test_cancelable_future  test_cancelable_future.cpp)
+add_ft_test(test_future_tool        test_future_tool.cpp)
