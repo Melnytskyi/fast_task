@@ -34,7 +34,7 @@ TEST(MultiplyMutex, TryLockFailsWhenOneHeld) {
 TEST(MultiplyMutex, TryLockFor) {
     fast_task::mutex m1, m2;
     fast_task::multiply_mutex mm({m1, m2});
-    EXPECT_TRUE(mm.try_lock_for(100));
+    EXPECT_TRUE(mm.try_lock_for(std::chrono::milliseconds(100)));
     mm.unlock();
 }
 

@@ -69,7 +69,7 @@ TEST_F(TaskMutexTest, TryLockForTimeout) {
         m.lock();
 
         auto t2 = std::make_shared<fast_task::task>([&] {
-            timed_out = !m.try_lock_for(50); // 50 ms
+            timed_out = !m.try_lock_for(std::chrono::milliseconds(50)); // 50 ms
         });
         fast_task::scheduler::start(t2);
         fast_task::this_task::sleep_for(std::chrono::milliseconds(100));

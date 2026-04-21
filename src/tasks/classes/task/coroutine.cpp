@@ -11,7 +11,10 @@ namespace fast_task {
     }
 
     std::suspend_always task_promise_base::final_suspend() noexcept {
+        fast_task::lock_guard guard(get_data(task_object).no_race);
         get_data(task_object).callbacks.extended_mode.is_restartable = false;
+        get_data(task_object).end_of_life = true;
+        get_data(task_object).result_notify.notify_all();
         return {};
     }
 }

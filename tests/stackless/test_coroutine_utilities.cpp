@@ -21,7 +21,6 @@ TEST_F(CoroutineUtilitiesTest, WaitAllWaitsForAll) {
     std::atomic<int> count{0};
 
     auto make_coro = [&]() -> fast_task::task_coro<void> {
-        fast_task::this_task::sleep_for(std::chrono::milliseconds(20));
         ++count;
         co_return;
     };

@@ -87,14 +87,28 @@ namespace fast_task::scheduler {
         fast_task::lock_guard guard(glob.binded_workers_safety);
         if (id == (uint16_t)-1)
             throw std::runtime_error("Invalid id");
+
+        uint16_t current_executors = 0;
         if (!glob.binded_workers.contains(id)) {
             glob.binded_workers[id].allow_implicit_start = allow_implicit_start;
             glob.binded_workers[id].fixed_size = (bool)fixed_count;
             glob.binded_workers[id].policy = policy;
+        } else {
+            fast_task::lock_guard ctx_guard(glob.binded_workers[id].no_race);
+            if (glob.binded_workers[id].in_close)
+                throw std::runtime_error("Worker is closing");
+            current_executors = glob.binded_workers[id].executors;
+            glob.binded_workers[id].allow_implicit_start = allow_implicit_start;
+            glob.binded_workers[id].fixed_size = (bool)fixed_count;
+            glob.binded_workers[id].policy = policy;
         }
-        for (size_t i = 0; i < fixed_count; i++) {
-            ++glob.thread_count;
-            fast_task::thread(bindedTaskExecutor, id).detach();
+
+        if (fixed_count > current_executors) {
+            size_t diff = fixed_count - current_executors;
+            for (size_t i = 0; i < diff; i++) {
+                ++glob.thread_count;
+                fast_task::thread(bindedTaskExecutor, id).detach();
+            }
         }
     }
 
@@ -181,7 +195,7 @@ namespace fast_task::scheduler {
                 if (!queue)
                     return false;
                 for (auto& q : *queue)
-                    if (!q->size())
+                    if (q->size())
                         return true;
                 return false;
             };
@@ -240,6 +254,9 @@ namespace fast_task::scheduler {
             glob.executor_shutdown_notifier.wait(guard);
         glob.time_control_enabled = false;
         glob.time_notifier.notify_all();
+
+        while (glob.thread_count.load())
+            std::this_thread::yield();
     }
 
     void FT_API request_stw(const std::function<void()>& func) {

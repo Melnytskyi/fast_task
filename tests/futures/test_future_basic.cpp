@@ -41,11 +41,12 @@ TEST_F(FutureBasicTest, WaitForSuccess) {
 
 TEST_F(FutureBasicTest, WaitForTimeout) {
     auto f = fast_task::future<int>::start([] {
-        fast_task::this_task::sleep_for(std::chrono::seconds(10));
+        fast_task::this_task::sleep_for(std::chrono::milliseconds(90));
         return 0;
     });
     bool ready = f->wait_for(std::chrono::milliseconds(30));
     EXPECT_FALSE(ready);
+    f->wait(); //BUG without it segfaults
 }
 
 TEST_F(FutureBasicTest, WaitUntilSuccess) {

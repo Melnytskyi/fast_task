@@ -72,10 +72,6 @@ namespace fast_task {
         return true;
     }
 
-    bool task_semaphore::try_lock_for(size_t milliseconds) {
-        return try_lock_until(std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(milliseconds));
-    }
-
     bool task_semaphore::try_lock_until(std::chrono::high_resolution_clock::time_point time_point) {
         fast_task::unique_lock keeper(values.no_race);
 
@@ -175,16 +171,7 @@ namespace fast_task {
     }
 
     bool task_semaphore::task_try_lock_awaiter::await_suspend(base_coro_handle h) {
-        handle = h;
-        auto& task_ptr = h.promise->task_object;
-        fast_task::unique_lock keeper(sem.values.no_race);
-        if (!sem.values.allow_threshold) {
-            sem.values.resume_task.emplace_back(task_ptr, get_data(task_ptr).awake_check);
-            fast_task::makeTimeWait(time_point);
-            return true;
-        }
-        --sem.values.allow_threshold;
-        return false;
+        return !sem.enter_wait_until(h.promise->task_object, time_point);
     }
 
     bool task_semaphore::task_try_lock_awaiter::await_resume() noexcept {
@@ -202,17 +189,33 @@ namespace fast_task {
         return task_lock_awaiter{*this};
     }
 
-    task_semaphore::task_try_lock_awaiter task_semaphore::async_try_lock_for(size_t milliseconds) {
-        return task_try_lock_awaiter{
-            *this,
-            std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(milliseconds)
-        };
-    }
-
     task_semaphore::task_try_lock_awaiter task_semaphore::async_try_lock_until(std::chrono::high_resolution_clock::time_point time_point) {
         return task_try_lock_awaiter{
             *this,
             time_point
         };
+    }
+
+    bool task_semaphore::enter_wait(const std::shared_ptr<task>& task) {
+        fast_task::lock_guard guard(values.no_race);
+        if (!values.allow_threshold) {
+            values.resume_task.emplace_back(task, get_data(task).awake_check);
+            return true;
+        } else {
+            --values.allow_threshold;
+            return false;
+        }
+    }
+
+    bool task_semaphore::enter_wait_until(const std::shared_ptr<task>& task, std::chrono::high_resolution_clock::time_point time_point) {
+        fast_task::lock_guard guard(values.no_race);
+        if (!values.allow_threshold) {
+            values.resume_task.emplace_back(task, get_data(task).awake_check);
+            fast_task::makeTimeWait_extern(task, time_point);
+            return true;
+        } else {
+            --values.allow_threshold;
+            return false;
+        }
     }
 }

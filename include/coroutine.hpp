@@ -8,6 +8,7 @@
 #define FAST_TASK_COROUTINE
 #include "shared.hpp"
 #include "task.hpp"
+#include <variant>
 
 namespace fast_task {
     template <class T>
@@ -62,7 +63,7 @@ namespace fast_task {
                     else if constexpr (std::is_same_v<GotType, std::exception_ptr>)
                         std::rethrow_exception(it);
                     else
-                        throw std::runtime_error("The coroutine returned noting");
+                        throw std::runtime_error("The coroutine returned nothing");
                 },
                 results
             );
@@ -80,7 +81,7 @@ namespace fast_task {
                         else if constexpr (std::is_same_v<GotType, std::exception_ptr>)
                             std::rethrow_exception(it);
                         else
-                            throw std::runtime_error("The coroutine returned noting");
+                            throw std::runtime_error("The coroutine returned nothing");
                     },
                     results
                 )
@@ -145,7 +146,7 @@ namespace fast_task {
                     else if constexpr (std::is_same_v<GotType, std::exception_ptr>)
                         std::rethrow_exception(it);
                     else
-                        throw std::runtime_error("The coroutine returned noting");
+                        throw std::runtime_error("The coroutine returned nothing");
                 },
                 results
             );

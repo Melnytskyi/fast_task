@@ -9,10 +9,7 @@
 namespace fast_task {
     template struct FT_API future<void>;
 
-    future<void>::~future() {
-        if (ex_ptr)
-            delete ex_ptr;
-    }
+    future<void>::~future() = default;
 
     std::shared_ptr<future<void>> future<void>::start(std::move_only_function<void()>&& fn, uint16_t bind_id) {
         std::shared_ptr<future> future_ = std::make_shared<future>();
@@ -25,7 +22,7 @@ namespace fast_task {
                 future_->task_cv.notify_all();
                 throw;
             } catch (...) {
-                future_->ex_ptr = new auto(std::current_exception());
+                future_->ex_ptr = std::current_exception();
             }
             fast_task::lock_guard guard(future_->task_mt);
             future_->_is_ready = true;
@@ -48,7 +45,7 @@ namespace fast_task {
                 future_->task_cv.notify_all();
                 throw;
             } catch (...) {
-                future_->ex_ptr = new auto(std::current_exception());
+                future_->ex_ptr = std::current_exception();
             }
             fast_task::lock_guard guard(future_->task_mt);
             future_->_is_ready = true;
@@ -98,7 +95,7 @@ namespace fast_task {
         while (!_is_ready)
             task_cv.wait(lock);
         if (ex_ptr)
-            std::rethrow_exception(*ex_ptr);
+            std::rethrow_exception(ex_ptr);
     }
 
     bool future<void>::wait_for(std::chrono::milliseconds ms) {
@@ -112,7 +109,7 @@ namespace fast_task {
             if (!task_cv.wait_until(lock, time))
                 return false;
         if (ex_ptr)
-            std::rethrow_exception(*ex_ptr);
+            std::rethrow_exception(ex_ptr);
         return true;
     }
 

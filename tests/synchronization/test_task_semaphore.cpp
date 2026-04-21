@@ -88,7 +88,7 @@ TEST_F(TaskSemaphoreTest, TryLockForTimeout) {
     run_task([&] {
         sem.lock();
         auto t2 = std::make_shared<fast_task::task>([&] {
-            timed_out = !sem.try_lock_for(50);
+            timed_out = !sem.try_lock_for(std::chrono::milliseconds(50));
         });
         fast_task::scheduler::start(t2);
         fast_task::this_task::sleep_for(std::chrono::milliseconds(100));

@@ -6,7 +6,7 @@
 
 #ifndef FAST_TASK_INTERRUPT
 #define FAST_TASK_INTERRUPT
-#include <interput.hpp>
+#include <interrupt.hpp>
 #include <shared.hpp>
 //Virtualized signals for windows and proxy for posix signals
 //  implements only timer signals

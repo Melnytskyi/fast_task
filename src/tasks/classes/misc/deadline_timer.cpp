@@ -158,15 +158,6 @@ namespace fast_task {
         async_wait(std::function(cc));
     }
 
-    size_t deadline_timer::expires_from_now(std::chrono::high_resolution_clock::duration dur) {
-        if (!hh)
-            return 0;
-        fast_task::unique_lock lock(hh->no_race);
-        hh->time_point = std::chrono::high_resolution_clock::now() + dur;
-        hh->canceled_tasks.clear();
-        return hh->scheduled_tasks.size();
-    }
-
     size_t deadline_timer::expires_at(std::chrono::high_resolution_clock::time_point point) {
         if (!hh)
             return 0;

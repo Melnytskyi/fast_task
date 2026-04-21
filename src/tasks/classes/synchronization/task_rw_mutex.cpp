@@ -76,10 +76,6 @@ namespace fast_task {
         }
     }
 
-    bool task_rw_mutex::try_read_lock_for(size_t milliseconds) {
-        return try_read_lock_until(std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(milliseconds));
-    }
-
     bool task_rw_mutex::try_read_lock_until(std::chrono::high_resolution_clock::time_point time_point) {
         fast_task::unique_lock ul(values.no_race);
         if (loc.is_task_thread) {
@@ -247,10 +243,6 @@ namespace fast_task {
         return true;
     }
 
-    bool task_rw_mutex::try_write_lock_for(size_t milliseconds) {
-        return try_write_lock_until(std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(milliseconds));
-    }
-
     bool task_rw_mutex::try_write_lock_until(std::chrono::high_resolution_clock::time_point time_point) {
         fast_task::unique_lock ul(values.no_race);
 
@@ -389,18 +381,7 @@ namespace fast_task {
     }
 
     bool task_rw_mutex::task_mutex_write_lock_awaiter::await_suspend(base_coro_handle h) {
-        auto& task_ptr = h.promise->task_object;
-
-        fast_task::unique_lock ul(mutex.values.no_race);
-
-        if (mutex.values.current_writer_task || !mutex.values.readers.empty()) {
-            mutex.values.resume_task.push_back({task_ptr, get_data(task_ptr).awake_check, nullptr, nullptr});
-            return true;
-        } else if (loc.is_task_thread || loc.context_in_swap)
-            mutex.values.current_writer_task = &*loc.curr_task;
-        else
-            mutex.values.current_writer_task = reinterpret_cast<task*>((size_t)_thread_id() | native_thread_flag);
-        return false;
+        return !mutex.enter_write_wait(h.promise->task_object);
     }
 
     void task_rw_mutex::task_mutex_write_lock_awaiter::await_resume() noexcept {}
@@ -414,31 +395,14 @@ namespace fast_task {
     }
 
     bool task_rw_mutex::task_mutex_try_write_lock_awaiter::await_suspend(base_coro_handle h) {
-        handle = h;
-        auto& task_ptr = h.promise->task_object;
-
-        fast_task::unique_lock ul(mutex.values.no_race);
-
-        if (mutex.values.current_writer_task || !mutex.values.readers.empty()) {
-            mutex.values.resume_task.push_back({task_ptr, get_data(task_ptr).awake_check, nullptr, nullptr});
-            fast_task::makeTimeWait(time_point);
-            return true;
-        } else if (loc.is_task_thread || loc.context_in_swap)
-            mutex.values.current_writer_task = &*loc.curr_task;
-        else
-            mutex.values.current_writer_task = reinterpret_cast<task*>((size_t)_thread_id() | native_thread_flag);
-        successful = true;
-        return false;
+        return !mutex.enter_write_wait_until(h.promise->task_object, time_point);
     }
 
     bool task_rw_mutex::task_mutex_try_write_lock_awaiter::await_resume() noexcept {
         if (successful)
             return true;
         auto& task_ptr = handle.promise->task_object;
-        if (get_data(task_ptr).time_end_flag) {
-            successful = false;
-        } else
-            successful = true;
+        successful = !task_ptr->has_wait_timed_out();
         return successful;
     }
 
@@ -447,24 +411,7 @@ namespace fast_task {
     }
 
     bool task_rw_mutex::task_mutex_read_lock_awaiter::await_suspend(base_coro_handle h) {
-        auto& task_ptr = h.promise->task_object;
-        fast_task::unique_lock ul(mutex.values.no_race);
-        if (mutex.values.current_writer_task == nullptr) {
-            task* self_mask;
-            if (loc.is_task_thread || loc.context_in_swap)
-                self_mask = &*loc.curr_task;
-            else
-                self_mask = reinterpret_cast<task*>((size_t)_thread_id() | native_thread_flag);
-            if (std::find(mutex.values.readers.begin(), mutex.values.readers.end(), self_mask) != mutex.values.readers.end())
-                goto fail;
-            if (mutex.values.current_writer_task == &*loc.curr_task)
-                goto fail;
-            mutex.values.readers.push_back(self_mask);
-            return false;
-        }
-    fail:
-        mutex.values.resume_task.push_back({task_ptr, get_data(task_ptr).awake_check, nullptr, nullptr});
-        return true;
+        return !mutex.enter_read_wait(h.promise->task_object);
     }
 
     void task_rw_mutex::task_mutex_read_lock_awaiter::await_resume() noexcept {}
@@ -478,49 +425,19 @@ namespace fast_task {
     }
 
     bool task_rw_mutex::task_mutex_try_read_lock_awaiter::await_suspend(base_coro_handle h) {
-        handle = h;
-        auto& task_ptr = h.promise->task_object;
-        fast_task::unique_lock ul(mutex.values.no_race);
-        if (mutex.values.current_writer_task == nullptr) {
-            task* self_mask;
-            if (loc.is_task_thread || loc.context_in_swap)
-                self_mask = &*loc.curr_task;
-            else
-                self_mask = reinterpret_cast<task*>((size_t)_thread_id() | native_thread_flag);
-            if (std::find(mutex.values.readers.begin(), mutex.values.readers.end(), self_mask) != mutex.values.readers.end())
-                goto fail;
-            if (mutex.values.current_writer_task == &*loc.curr_task)
-                goto fail;
-            mutex.values.readers.push_back(self_mask);
-            successful = true;
-            return false;
-        }
-    fail:
-        mutex.values.resume_task.push_back({task_ptr, get_data(task_ptr).awake_check, nullptr, nullptr});
-        fast_task::makeTimeWait(time_point);
-        return true;
+        return !mutex.enter_read_wait_until(h.promise->task_object, time_point);
     }
 
     bool task_rw_mutex::task_mutex_try_read_lock_awaiter::await_resume() noexcept {
         if (successful)
             return true;
         auto& task_ptr = handle.promise->task_object;
-        if (get_data(task_ptr).time_end_flag) {
-            successful = false;
-        } else
-            successful = true;
+        successful = !task_ptr->has_wait_timed_out();
         return successful;
     }
 
     task_rw_mutex::task_mutex_read_lock_awaiter task_rw_mutex::async_read_lock() {
         return task_mutex_read_lock_awaiter{*this};
-    }
-
-    task_rw_mutex::task_mutex_try_read_lock_awaiter task_rw_mutex::async_try_read_lock_for(size_t milliseconds) {
-        return task_mutex_try_read_lock_awaiter{
-            *this,
-            std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(milliseconds)
-        };
     }
 
     task_rw_mutex::task_mutex_try_read_lock_awaiter task_rw_mutex::async_try_read_lock_until(std::chrono::high_resolution_clock::time_point time_point) {
@@ -534,17 +451,64 @@ namespace fast_task {
         return task_mutex_write_lock_awaiter{*this};
     }
 
-    task_rw_mutex::task_mutex_try_write_lock_awaiter task_rw_mutex::async_try_write_lock_for(size_t milliseconds) {
-        return task_mutex_try_write_lock_awaiter{
-            *this,
-            std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(milliseconds)
-        };
-    }
-
     task_rw_mutex::task_mutex_try_write_lock_awaiter task_rw_mutex::async_try_write_lock_until(std::chrono::high_resolution_clock::time_point time_point) {
         return task_mutex_try_write_lock_awaiter{
             *this,
             time_point
         };
+    }
+
+    bool task_rw_mutex::enter_read_wait(const std::shared_ptr<task>& task) {
+        fast_task::lock_guard l(values.no_race);
+        if (values.current_writer_task == nullptr) {
+            values.readers.push_back(task.get());
+            return true;
+        } else if (std::find(values.readers.begin(), values.readers.end(), task.get()) != values.readers.end()) {
+            values.readers.push_back(task.get());
+            return true;
+        } else {
+            values.resume_task.push_back({task, get_data(task).awake_check, nullptr, nullptr});
+            return false;
+        }
+    }
+
+    bool task_rw_mutex::enter_read_wait_until(const std::shared_ptr<task>& task, std::chrono::high_resolution_clock::time_point time_point) {
+        fast_task::lock_guard l(values.no_race);
+        if (values.current_writer_task == nullptr) {
+            values.readers.push_back(task.get());
+            return true;
+        } else if (std::find(values.readers.begin(), values.readers.end(), task.get()) != values.readers.end()) {
+            values.readers.push_back(task.get());
+            return true;
+        } else {
+            get_data(task).awaked = false;
+            get_data(task).time_end_flag = false;
+            values.resume_task.push_back({task, get_data(task).awake_check, nullptr, nullptr});
+            fast_task::makeTimeWait(time_point);
+            return false;
+        }
+    }
+
+    bool task_rw_mutex::enter_write_wait(const std::shared_ptr<task>& task) {
+        fast_task::lock_guard l(values.no_race);
+        if (values.current_writer_task == nullptr && values.readers.empty()) {
+            values.current_writer_task = task.get();
+            return true;
+        } else {
+            values.resume_task.push_back({task, get_data(task).awake_check, nullptr, nullptr});
+            return false;
+        }
+    }
+
+    bool task_rw_mutex::enter_write_wait_until(const std::shared_ptr<task>& task, std::chrono::high_resolution_clock::time_point time_point) {
+        fast_task::lock_guard l(values.no_race);
+        if (values.current_writer_task == nullptr && values.readers.empty()) {
+            values.current_writer_task = task.get();
+            return true;
+        } else {
+            values.resume_task.push_back({task, get_data(task).awake_check, nullptr, nullptr});
+            fast_task::makeTimeWait_extern(task, time_point);
+            return false;
+        }
     }
 }

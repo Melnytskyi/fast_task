@@ -26,7 +26,7 @@ TEST_F(TaskTimeoutTest, TimeoutBeforeCompletion) {
     auto t = std::make_shared<fast_task::task>(
         [&] {
             try {
-                fast_task::this_task::sleep_for(std::chrono::seconds(10));
+                fast_task::this_task::sleep_for(std::chrono::seconds(1));
                 completed = true;
             } catch (const fast_task::task_cancellation&) {
                 was_cancelled = true;

@@ -306,6 +306,7 @@ namespace fast_task {
     void FT_API_LOCAL swapCtxRelock(const mutex_unify& mut0, const mutex_unify& mut1);
     void FT_API_LOCAL transfer_task(std::shared_ptr<task>&& task);
     void FT_API_LOCAL makeTimeWait(std::chrono::high_resolution_clock::time_point t);
+    void FT_API_LOCAL makeTimeWait_extern(std::shared_ptr<task> _task, std::chrono::high_resolution_clock::time_point time_point);
 
     void FT_API_LOCAL makeTimeWait_unsafe(std::chrono::high_resolution_clock::time_point t);
     void FT_API_LOCAL taskExecutor(bool end_in_task_out = false, bool prevent_naming = false);

@@ -22,8 +22,6 @@ TEST_F(CombinedScenariosTest, TaskQueryMixedTasksAndCoroutines) {
     auto t2 = std::make_shared<fast_task::task>([&] { ++count; });
     query.add(t1);
     query.add(t2);
-    fast_task::scheduler::start(t1);
-    fast_task::scheduler::start(t2);
 
     // Stackless coroutine
     auto make_coro = [&]() -> fast_task::task_coro<void> {
@@ -32,7 +30,7 @@ TEST_F(CombinedScenariosTest, TaskQueryMixedTasksAndCoroutines) {
     };
     auto c = make_coro();
     query.add(c.get_task());
-    fast_task::scheduler::start(c.get_task());
+    query.enable();
 
     t1->await_task();
     t2->await_task();

@@ -5,7 +5,7 @@
 // http://www.boost.org/LICENSE_1_0.txt)
 
 #include <cassert>
-#include <interput.hpp>
+#include <interrupt.hpp>
 #include <tasks/util/cpu.hpp>
 #include <tasks/util/interrupt.hpp>
 #include <threading.hpp>

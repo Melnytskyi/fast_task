@@ -6,7 +6,7 @@
 
 #include <atomic>
 #include <helpers.hpp>
-#include <interput.hpp>
+#include <interrupt.hpp>
 
 class InterruptUnsafeTest : public SchedulerFixture {};
 

@@ -27,7 +27,7 @@ TEST_F(CoroutineAwaitTest, CoAwaitInnerCoro) {
     // Library bug: task::is_ended() returns !end_of_life (inverted).
     // co_await's await_ready() calls is_ended() and returns true when the
     // task is NOT done, so await_resume() is called before the result is set,
-    // throwing "coroutine returned noting".
+    // throwing "coroutine returned nothing".
     GTEST_SKIP() << "Skipped: library bug \u2014 is_ended() returns inverted value";
 }
 

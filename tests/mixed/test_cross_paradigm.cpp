@@ -35,9 +35,7 @@ TEST_F(CrossParadigmTest, StackfulTaskAwaitsVoidFuture) {
 
 fast_task::task_coro<int> coro_awaits_future() {
     auto f = fast_task::future<int>::start([] { return 77; });
-    // Wait for the future inside a coroutine using get()
-    // (get() is task-aware: it uses task_condition_variable internally)
-    co_return f->get();
+    co_return co_await f;
 }
 
 TEST_F(CrossParadigmTest, CoroutineAwaitsIntFuture) {

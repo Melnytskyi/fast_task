@@ -82,16 +82,16 @@ namespace fast_task {
     #define set_interruptTask() interrupt::timer_callback(interruptTask);
 
     #define stop_timer() interrupt::stop_timer()
-    #define preserve_interput_data get_execution_data(loc.curr_task).interrupt_data = interrupt_unsafe_region::lock_swap(0);
-    #define restore_interput_data interrupt_unsafe_region::lock_swap(get_execution_data(loc.curr_task).interrupt_data);
-    #define flush_interput_data interrupt_unsafe_region::lock_swap(0);
+    #define preserve_interrupt_data get_execution_data(loc.curr_task).interrupt_data = interrupt_unsafe_region::lock_swap(0);
+    #define restore_interrupt_data interrupt_unsafe_region::lock_swap(get_execution_data(loc.curr_task).interrupt_data);
+    #define flush_interrupt_data interrupt_unsafe_region::lock_swap(0);
 #else
     #define timer_reinit()
     #define set_interruptTask()
     #define stop_timer()
-    #define preserve_interput_data
-    #define restore_interput_data
-    #define flush_interput_data
+    #define preserve_interrupt_data
+    #define restore_interrupt_data
+    #define flush_interrupt_data
 #endif
 
 #pragma optimize("", off)
@@ -109,7 +109,7 @@ namespace fast_task {
             loc.context_in_swap = true;
             ++glob.tasks_in_swap;
             ++get_execution_data(loc.curr_task).context_switch_count;
-            preserve_interput_data;
+            preserve_interrupt_data;
 #ifdef FT_EXCEPTION_POLICY_CHECK
             if (std::uncaught_exceptions()) {
                 assert(false && "Unexpected exception during context switch");
@@ -122,7 +122,7 @@ namespace fast_task {
             try {
                 *loc.stack_current_context = std::move(*loc.stack_current_context).resume();
             } catch (const boost::context::detail::forced_unwind&) {
-                preserve_interput_data;
+                preserve_interrupt_data;
                 --glob.tasks_in_swap;
                 loc.context_in_swap = true;
                 auto relock_state_0 = get_data(loc.curr_task).relock_0;
@@ -142,7 +142,7 @@ namespace fast_task {
             if (get_execution_data(loc.curr_task).switch_preserve)
                 std::rethrow_exception(std::move(get_execution_data(loc.curr_task).switch_preserve));
 #endif
-            preserve_interput_data;
+            preserve_interrupt_data;
             --glob.tasks_in_swap;
             loc.context_in_swap = true;
             auto relock_state_0 = get_data(loc.curr_task).relock_0;
@@ -161,6 +161,7 @@ namespace fast_task {
                 throw invalid_switch();
             }
             timer_reinit();
+            this_task::check_cancellation();
         } else
             throw invalid_context();
     }
@@ -187,7 +188,7 @@ namespace fast_task {
         *loc.stack_current_context = std::move(sink);
         try {
             if (!checkCancellation()) {
-                flush_interput_data;
+                flush_interrupt_data;
                 timer_reinit();
                 if (get_data(loc.curr_task).callbacks.is_extended_mode) {
                     if (get_data(loc.curr_task).callbacks.extended_mode.on_start)
@@ -205,7 +206,7 @@ namespace fast_task {
             loc.ex_ptr = std::current_exception();
         }
         stop_timer();
-        flush_interput_data;
+        flush_interrupt_data;
         fast_task::lock_guard l(get_data(loc.curr_task).no_race);
         --glob.in_run_tasks;
         if (get_data(loc.curr_task).callbacks.is_extended_mode) {
@@ -227,7 +228,7 @@ namespace fast_task {
         *loc.stack_current_context = std::move(sink);
         try {
             if (!checkCancellation()) {
-                flush_interput_data;
+                flush_interrupt_data;
                 timer_reinit();
                 if (!get_data(loc.curr_task).callbacks.is_extended_mode) {
                     if (get_data(loc.curr_task).callbacks.normal_mode.ex_handle)
@@ -244,7 +245,7 @@ namespace fast_task {
             loc.ex_ptr = std::current_exception();
         }
         stop_timer();
-        flush_interput_data;
+        flush_interrupt_data;
         mutex_unify uni(get_data(loc.curr_task).no_race);
         fast_task::unique_lock l(uni);
         get_data(loc.curr_task).end_of_life = true;
@@ -292,6 +293,17 @@ namespace fast_task {
     }
 
     void transfer_task(std::shared_ptr<task>&& task) {
+        if (get_data(task).is_on_scheduler && get_data(task).relock_0) {
+            auto mut = std::move(get_data(task).relock_0);
+
+            get_data(task).relock_0 = nullptr;
+            get_data(task).relock_1 = nullptr;
+            get_data(task).relock_2 = nullptr;
+
+            if (!mut.enter_wait(task))
+                return;
+        }
+
         if (get_data(task).bind_to_worker_id == (uint16_t)-1) {
             if (get_data(task).auto_bind_worker) {
                 fast_task::shared_lock global_guard(glob.binded_workers_safety);
@@ -618,10 +630,13 @@ namespace fast_task {
 
 
             if (!context.tasks.try_dequeue(loc.curr_task)) {
+                fast_task::unique_lock guard(context.no_race);
                 if (context.in_close)
                     break;
-                fast_task::unique_lock guard(context.no_race);
-                context.new_task_notifier.wait(guard);
+                if (!context.tasks.try_dequeue(loc.curr_task)) {
+                    context.new_task_notifier.wait(guard);
+                } else
+                    return true;
             } else
                 return true;
         }
@@ -674,6 +689,18 @@ namespace fast_task {
 
         {
             fast_task::unique_lock guard(context.no_race);
+            context.completions.erase(completions_remove);
+            auto old_queues_ptr = context.executors_queues.load();
+            auto new_queues = std::make_shared<std::vector<std::shared_ptr<work_stealing_deque<std::shared_ptr<task>>>>>();
+            new_queues->reserve(old_queues_ptr->size());
+
+            for (const auto& q_ptr : *old_queues_ptr) {
+                if (q_ptr.get() != loc.local_tasks.get())
+                    new_queues->push_back(q_ptr);
+            }
+
+            context.executors_queues.store(new_queues);
+
             --context.executors;
             if (context.executors == 0) {
                 if (context.in_close) {
@@ -690,17 +717,6 @@ namespace fast_task {
                     std::abort();
                 }
             }
-            context.completions.erase(completions_remove);
-            auto old_queues_ptr = context.executors_queues.load();
-            auto new_queues = std::make_shared<std::vector<std::shared_ptr<work_stealing_deque<std::shared_ptr<task>>>>>();
-            new_queues->reserve(old_queues_ptr->size());
-
-            for (const auto& q_ptr : *old_queues_ptr) {
-                if (q_ptr.get() != loc.local_tasks.get())
-                    new_queues->push_back(q_ptr);
-            }
-
-            context.executors_queues.store(new_queues);
         }
         --glob.thread_count;
     }
@@ -786,6 +802,8 @@ namespace fast_task {
             else
                 glob.time_notifier.wait_until(guard, glob.cold_timed_tasks.front().wait_timepoint);
         }
+
+        --glob.thread_count;
     }
 
 #if defined(__GNUC__) && !defined(__clang__)
@@ -824,6 +842,19 @@ namespace fast_task {
         }
         if (i != (size_t)-1)
             queue.emplace_back(timing(t, task, get_data(task).awake_check));
+    }
+
+    void makeTimeWait_extern(std::shared_ptr<task> _task, std::chrono::high_resolution_clock::time_point time_point) {
+        if (!glob.time_control_enabled)
+            startTimeController();
+        get_data(loc.curr_task).awaked = false;
+        get_data(loc.curr_task).time_end_flag = false;
+        fast_task::lock_guard guard(glob.task_timer_safety);
+        if (can_be_scheduled_task_to_hot())
+            unsafe_put_task_to_timed_queue(glob.timed_tasks, time_point, _task);
+        else
+            unsafe_put_task_to_timed_queue(glob.cold_timed_tasks, time_point, _task);
+        glob.tasks_notifier.notify_one();
     }
 
     void makeTimeWait(std::chrono::high_resolution_clock::time_point t) {

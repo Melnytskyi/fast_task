@@ -4,8 +4,8 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
-#ifndef FAST_TASK_INCLUDE_INTERPUT
-#define FAST_TASK_INCLUDE_INTERPUT
+#ifndef FAST_TASK_INCLUDE_INTERRUPT
+#define FAST_TASK_INCLUDE_INTERRUPT
 #include "shared.hpp"
 #include <cstddef>
 #include <cstdint>
@@ -19,4 +19,4 @@ namespace fast_task {
         static std::size_t lock_swap(std::size_t);
     };
 }
-#endif /* FAST_TASK_INCLUDE_INTERPUT */
+#endif /* FAST_TASK_INCLUDE_INTERRUPT */

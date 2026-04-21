@@ -24,7 +24,7 @@ namespace fast_task {
 
         if (!tqh->tasks.empty() && tqh->is_running) {
             tqh->now_at_execution--;
-            while (tqh->now_at_execution <= tqh->at_execution_max) {
+            while (tqh->now_at_execution < tqh->at_execution_max) {
                 tqh->now_at_execution++;
                 auto awake_task = tqh->tasks.front();
                 tqh->tasks.pop_front();
@@ -75,7 +75,7 @@ namespace fast_task {
             throw std::runtime_error("Task already started");
         auto new_task = redefine_start_function(querying_task, handle);
         fast_task::lock_guard lock(handle->no_race);
-        if (handle->is_running && handle->now_at_execution <= handle->at_execution_max) {
+        if (handle->is_running && handle->now_at_execution < handle->at_execution_max) {
             scheduler::start(std::move(new_task));
             handle->now_at_execution++;
         } else
@@ -87,7 +87,7 @@ namespace fast_task {
             throw std::runtime_error("Task already started");
         auto new_task = redefine_start_function(querying_task, handle);
         fast_task::lock_guard lock(handle->no_race);
-        if (handle->is_running && handle->now_at_execution <= handle->at_execution_max) {
+        if (handle->is_running && handle->now_at_execution < handle->at_execution_max) {
             scheduler::start(new_task);
             handle->now_at_execution++;
         } else
@@ -132,10 +132,6 @@ namespace fast_task {
         fast_task::unique_lock lock(unify);
         while (handle->now_at_execution != 0 && !handle->tasks.empty())
             handle->end_of_query.wait(lock);
-    }
-
-    bool task_query::wait_for(size_t milliseconds) {
-        return wait_until(std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(milliseconds));
     }
 
     bool task_query::wait_until(std::chrono::high_resolution_clock::time_point time_point) {

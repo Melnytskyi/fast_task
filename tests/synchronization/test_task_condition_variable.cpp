@@ -80,11 +80,7 @@ TEST_F(TaskCvTest, WaitForTimeout) {
     run_task([&] {
         fast_task::mutex_unify um(m);
         fast_task::unique_lock<fast_task::mutex_unify> lock(um);
-        timed_out = !cv.wait_for(lock, 50); // 50 ms, no notifier
-        // Library bug: wait_until does not remove the task from resume_task on
-        // timeout, so the cv destructor would assert. Call notify_one() to drain
-        // the stale entry (silently ignored due to awake_check mismatch).
-        cv.notify_one();
+        timed_out = !cv.wait_for(lock, std::chrono::milliseconds(50));
     });
 
     EXPECT_TRUE(timed_out);
@@ -130,23 +126,24 @@ TEST_F(TaskCvTest, AsyncWait) {
     bool completed = false;
 
     run_task([&] {
-        auto coro = [&]() -> fast_task::task_coro<void> {
+        auto coro = [](auto& m, auto& cv, auto& ready, auto& completed) -> fast_task::task_coro<void> {
             fast_task::mutex_unify um(m);
-            fast_task::unique_lock<fast_task::mutex_unify> lock(um);
+            co_await m.async_lock();
+            fast_task::unique_lock<fast_task::mutex_unify> lock(um, fast_task::adopt_lock);
             while (!ready)
-                cv.wait(lock);
+                co_await cv.async_wait(lock);
             completed = true;
             co_return;
-        }();
+        }(m, cv, ready, completed);
         fast_task::scheduler::start(coro.get_task());
 
-        fast_task::this_task::sleep_for(std::chrono::milliseconds(20));
+        fast_task::this_task::sleep_for(std::chrono::milliseconds(50));
         {
             fast_task::lock_guard<fast_task::task_mutex> lg(m);
             ready = true;
         }
         cv.notify_one();
-        coro->await_task();
+        coro->await_task(); //BUG the function returns before the coroutine completes
     });
 
     EXPECT_TRUE(completed);

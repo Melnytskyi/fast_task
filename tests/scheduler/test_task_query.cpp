@@ -11,6 +11,7 @@ class TaskQueryTest : public SchedulerFixture {};
 
 TEST_F(TaskQueryTest, AddAndWait) {
     fast_task::task_query q;
+    q.enable();
     std::atomic<int> done{0};
 
     auto make_task = [&] {
@@ -24,8 +25,6 @@ TEST_F(TaskQueryTest, AddAndWait) {
     auto t2 = make_task();
     q.add(t1);
     q.add(t2);
-    fast_task::scheduler::start(t1);
-    fast_task::scheduler::start(t2);
     q.wait();
 
     EXPECT_EQ(done.load(), 2);
@@ -33,15 +32,14 @@ TEST_F(TaskQueryTest, AddAndWait) {
 
 TEST_F(TaskQueryTest, WaitFor) {
     fast_task::task_query q;
+    q.enable();
     auto t = std::make_shared<fast_task::task>([&] {
-        fast_task::this_task::sleep_for(std::chrono::milliseconds(500));
+        fast_task::this_task::sleep_for(std::chrono::milliseconds(100));
     });
     q.add(t);
-    fast_task::scheduler::start(t);
 
-    bool completed = q.wait_for(50); // should time out
+    bool completed = q.wait_for(std::chrono::milliseconds(50)); // should time out
     EXPECT_FALSE(completed);
-    t->notify_cancel();
     q.wait();
 }
 
@@ -52,13 +50,14 @@ TEST_F(TaskQueryTest, InQuery) {
     });
     q.add(t);
     EXPECT_TRUE(q.in_query(t));
-    fast_task::scheduler::start(t);
+    q.enable();
     q.wait();
     EXPECT_FALSE(q.in_query(t));
 }
 
 TEST_F(TaskQueryTest, MaxAtExecution) {
     fast_task::task_query q;
+    q.enable();
     q.set_max_at_execution(1);
     EXPECT_EQ(q.get_max_at_execution(), 1u);
 
@@ -79,7 +78,6 @@ TEST_F(TaskQueryTest, MaxAtExecution) {
     for (int i = 0; i < 4; ++i) {
         auto t = make_worker();
         q.add(t);
-        fast_task::scheduler::start(t);
     }
     q.wait();
     EXPECT_LE(max_concurrent.load(), 1);
@@ -87,15 +85,14 @@ TEST_F(TaskQueryTest, MaxAtExecution) {
 
 TEST_F(TaskQueryTest, EnableDisable) {
     fast_task::task_query q;
-    q.disable();
     std::atomic<bool> ran{false};
     auto t = std::make_shared<fast_task::task>([&] { ran = true; });
     q.add(t);
-    fast_task::scheduler::start(t);
 
     fast_task::this_thread::sleep_for(std::chrono::milliseconds(50));
     // Disabled query shouldn't let tasks complete via query's throttle
     // re-enable and wait
+    EXPECT_FALSE(ran.load());
     q.enable();
     q.wait();
     EXPECT_TRUE(ran.load());

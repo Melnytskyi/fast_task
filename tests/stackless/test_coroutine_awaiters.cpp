@@ -43,13 +43,16 @@ TEST_F(CoroutineAwaitersTest, AsyncLockMutex) {
 // ---- async_try_lock_for on task_mutex ----
 
 fast_task::task_coro<bool> coro_try_lock_for_timeout(fast_task::task_mutex& mtx) {
-    bool result = co_await mtx.async_try_lock_for(20); // 20 ms
+    bool result = co_await mtx.async_try_lock_for(std::chrono::milliseconds(20));
+    if (result) {
+        mtx.unlock();
+    }
     co_return result;
 }
 
 TEST_F(CoroutineAwaitersTest, AsyncTryLockForTimesOut) {
     fast_task::task_mutex mtx;
-    mtx.lock();  // held forever (no unlock)
+    mtx.lock();
 
     auto coro = coro_try_lock_for_timeout(mtx);
     fast_task::scheduler::start(coro.get_task());
@@ -61,6 +64,7 @@ TEST_F(CoroutineAwaitersTest, AsyncTryLockForTimesOut) {
         locked = h.promise().result();
     });
     EXPECT_FALSE(locked);
+    mtx.unlock();
 }
 
 // ---- async_wait on task_condition_variable ----

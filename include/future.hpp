@@ -19,14 +19,11 @@ namespace fast_task {
         task_condition_variable task_cv;
         std::optional<T> result;
         bool _is_ready = false;
-        std::exception_ptr* ex_ptr = nullptr;
+        std::exception_ptr ex_ptr;
 
         future() = default;
 
-        ~future() {
-            if (ex_ptr)
-                delete ex_ptr;
-        }
+        ~future() = default;
 
         static std::shared_ptr<future> start(std::move_only_function<T()>&& fn, uint16_t bind_id = (uint16_t)-1) {
             std::shared_ptr<future> future_ = std::make_shared<future>();
@@ -39,7 +36,7 @@ namespace fast_task {
                     future_->task_cv.notify_all();
                     throw;
                 } catch (...) {
-                    future_->ex_ptr = new auto(std::current_exception());
+                    future_->ex_ptr = std::current_exception();
                 }
                 fast_task::lock_guard guard(future_->task_mt);
                 future_->_is_ready = true;
@@ -62,7 +59,7 @@ namespace fast_task {
                     future_->task_cv.notify_all();
                     throw;
                 } catch (...) {
-                    future_->ex_ptr = new auto(std::current_exception());
+                    future_->ex_ptr = std::current_exception();
                 }
                 fast_task::lock_guard guard(future_->task_mt);
                 future_->_is_ready = true;
@@ -94,7 +91,7 @@ namespace fast_task {
             while (!_is_ready)
                 task_cv.wait(lock);
             if (ex_ptr)
-                std::rethrow_exception(*ex_ptr);
+                std::rethrow_exception(ex_ptr);
             return *result;
         }
 
@@ -104,7 +101,7 @@ namespace fast_task {
             while (!_is_ready)
                 task_cv.wait(lock);
             if (ex_ptr)
-                std::rethrow_exception(*ex_ptr);
+                std::rethrow_exception(ex_ptr);
             return std::move(*result);
         }
 
@@ -126,6 +123,25 @@ namespace fast_task {
             }
         }
 
+        void when_ready(std::move_only_function<void()>&& fn) {
+            mutex_unify um(task_mt);
+            fast_task::unique_lock lock(um);
+            if (_is_ready) {
+                lock.unlock();
+                fn();
+            } else {
+                task_cv.callback(
+                    lock,
+                    std::make_shared<task>(
+                        [this, fn = std::move(fn)]() mutable {
+                            wait();
+                            fn();
+                        }
+                    )
+                );
+            }
+        }
+
         bool is_ready() {
             fast_task::unique_lock lock(task_mt);
             return _is_ready;
@@ -137,7 +153,7 @@ namespace fast_task {
             while (!_is_ready)
                 task_cv.wait(lock);
             if (ex_ptr)
-                std::rethrow_exception(*ex_ptr);
+                std::rethrow_exception(ex_ptr);
         }
 
         template <class Lock>
@@ -150,7 +166,7 @@ namespace fast_task {
                     task_cv.wait(l);
             }
             if (ex_ptr)
-                std::rethrow_exception(*ex_ptr);
+                std::rethrow_exception(ex_ptr);
         }
 
         template <class Lock>
@@ -163,7 +179,7 @@ namespace fast_task {
                     task_cv.wait(l);
             }
             if (ex_ptr)
-                std::rethrow_exception(*ex_ptr);
+                std::rethrow_exception(ex_ptr);
         }
 
         bool wait_for(std::chrono::milliseconds ms) {
@@ -177,7 +193,7 @@ namespace fast_task {
                 if (!task_cv.wait_until(lock, time))
                     return false;
             if (ex_ptr)
-                std::rethrow_exception(*ex_ptr);
+                std::rethrow_exception(ex_ptr);
             return true;
         }
 
@@ -211,7 +227,7 @@ namespace fast_task {
         task_mutex task_mt;
         task_condition_variable task_cv;
         bool _is_ready = false;
-        std::exception_ptr* ex_ptr = nullptr;
+        std::exception_ptr ex_ptr;
 
         future() = default;
         ~future();
@@ -235,7 +251,7 @@ namespace fast_task {
                     task_cv.wait(l);
             }
             if (ex_ptr) {
-                std::rethrow_exception(*ex_ptr);
+                std::rethrow_exception(ex_ptr);
             }
         }
 
@@ -249,7 +265,7 @@ namespace fast_task {
                     task_cv.wait(l);
             }
             if (ex_ptr)
-                std::rethrow_exception(*ex_ptr);
+                std::rethrow_exception(ex_ptr);
         }
 
         bool wait_for(std::chrono::milliseconds ms);
@@ -280,7 +296,7 @@ namespace fast_task {
                     future_->task_cv.notify_all();
                     throw;
                 } catch (...) {
-                    future_->ex_ptr = new auto(std::current_exception());
+                    future_->ex_ptr = std::current_exception();
                 }
                 fast_task::lock_guard guard(future_->task_mt);
                 future_->_is_ready = true;
@@ -306,7 +322,7 @@ namespace fast_task {
                     future_->task_cv.notify_all();
                     throw;
                 } catch (...) {
-                    future_->ex_ptr = new auto(std::current_exception());
+                    future_->ex_ptr = std::current_exception();
                 }
                 fast_task::lock_guard guard(future_->task_mt);
                 future_->_is_ready = true;
@@ -342,7 +358,7 @@ namespace fast_task {
             while (!future<T>::_is_ready)
                 future<T>::task_cv.wait(lock);
             if (future<T>::ex_ptr)
-                std::rethrow_exception(*future<T>::ex_ptr);
+                std::rethrow_exception(future<T>::ex_ptr);
             if (task_)
                 if (task_->is_cancellation_requested())
                     throw std::runtime_error("Task has been canceled. Can not receive result.");
@@ -356,7 +372,7 @@ namespace fast_task {
             while (!future<T>::_is_ready)
                 future<T>::task_cv.wait(lock);
             if (future<T>::ex_ptr)
-                std::rethrow_exception(*future<T>::ex_ptr);
+                std::rethrow_exception(future<T>::ex_ptr);
             if (task_)
                 if (task_->is_cancellation_requested())
                     throw std::runtime_error("Task has been canceled. Can not receive result.");
@@ -374,6 +390,76 @@ namespace fast_task {
 
     template <class T>
     using cancelable_future_ptr = std::shared_ptr<cancelable_future<T>>;
+
+    template <class T>
+    inline auto operator co_await(const future_ptr<T>& t) noexcept {
+        struct FT_API result_awaiter {
+            future_ptr<T> t;
+
+            bool await_ready() noexcept {
+                return t->is_ready();
+            }
+
+            bool await_suspend(std::coroutine_handle<> h) {
+                auto on_start_resume = [](void* handle_addr) {
+                    auto awaiting_handle = std::coroutine_handle<>::from_address(handle_addr);
+                    awaiting_handle.resume();
+                };
+
+                auto on_nop = [](void* handle_addr) {};
+
+                if (t->is_ready())
+                    return false;
+                t->when_ready([h = h.address(), on_start_resume, on_nop] {
+                    fast_task::scheduler::start(std::make_shared<fast_task::task>(h, on_start_resume, on_nop, on_nop, on_nop, false, true));
+                });
+                return true;
+            }
+
+            T await_resume() {
+                if constexpr (!std::is_same_v<T, void>) {
+                    return t->take();
+                }
+            }
+        };
+
+        return result_awaiter{t};
+    }
+
+    template <class T>
+    inline auto operator co_await(const cancelable_future_ptr<T>& t) noexcept {
+        struct FT_API result_awaiter {
+            cancelable_future_ptr<T> t;
+
+            bool await_ready() noexcept {
+                return t->is_ready();
+            }
+
+            bool await_suspend(std::coroutine_handle<> h) {
+                auto on_start_resume = [](void* handle_addr) {
+                    auto awaiting_handle = std::coroutine_handle<>::from_address(handle_addr);
+                    awaiting_handle.resume();
+                };
+
+                auto on_nop = [](void* handle_addr) {};
+
+                if (t->is_ready())
+                    return false;
+                t->when_ready([h = h.address(), on_start_resume, on_nop] {
+                    fast_task::scheduler::start(std::make_shared<fast_task::task>(h, on_start_resume, on_nop, on_nop, on_nop, false, true));
+                });
+                return true;
+            }
+
+            T await_resume() {
+                if constexpr (!std::is_same_v<T, void>) {
+                    return t->take();
+                }
+            }
+        };
+
+        return result_awaiter{t};
+    }
 
     namespace future_tool {
         template <class T, class FN>
@@ -559,7 +645,7 @@ namespace fast_task {
                         new_future->result = std::make_optional<Ret>(fn(std::move(a)));
                 } catch (...) {
                     fast_task::lock_guard guard(new_future->task_mt);
-                    new_future->ex_ptr = new auto(std::current_exception());
+                    new_future->ex_ptr = std::current_exception();
                     new_future->_is_ready = true;
                     new_future->task_cv.notify_all();
                     return;
@@ -582,7 +668,7 @@ namespace fast_task {
                         new_future->result = std::make_optional<Ret>(fn());
                 } catch (...) {
                     fast_task::lock_guard guard(new_future->task_mt);
-                    new_future->ex_ptr = new auto(std::current_exception());
+                    new_future->ex_ptr = std::current_exception();
                     new_future->_is_ready = true;
                     new_future->task_cv.notify_all();
                     return;
@@ -601,10 +687,10 @@ namespace fast_task {
             return future<std::vector<Ret>>::start([fut = futures] {
                 std::vector<Ret> res;
                 res.resize(fut.size());
-                fut.for_each([&](size_t pos, auto& it) {
-                    if (it)
-                        res[pos] = it->take();
-                });
+                for (size_t pos = 0; pos < fut.size(); ++pos) {
+                    if (fut[pos])
+                        res[pos] = fut[pos]->take();
+                }
                 return res;
             });
         }
@@ -616,10 +702,10 @@ namespace fast_task {
             return future<std::vector<Ret>>::start(query, [fut = futures] {
                 std::vector<Ret> res;
                 res.resize(fut.size());
-                fut.for_each([&](size_t pos, auto& it) {
-                    if (it)
-                        res[pos] = it->take();
-                });
+                for (size_t pos = 0; pos < fut.size(); ++pos) {
+                    if (fut[pos])
+                        res[pos] = fut[pos]->take();
+                }
                 return res;
             });
         }
@@ -631,10 +717,10 @@ namespace fast_task {
             return future<std::vector<Ret>>::start([fut = std::move(futures)] {
                 std::vector<Ret> res;
                 res.resize(fut.size());
-                fut.for_each([&](size_t pos, auto& it) {
-                    if (it)
-                        res[pos] = it->take();
-                });
+                for (size_t pos = 0; pos < fut.size(); ++pos) {
+                    if (fut[pos])
+                        res[pos] = fut[pos]->take();
+                }
                 return res;
             });
         }
@@ -646,10 +732,10 @@ namespace fast_task {
             return future<std::vector<Ret>>::start(query, [fut = std::move(futures)] {
                 std::vector<Ret> res;
                 res.resize(fut.size());
-                fut.for_each([&](size_t pos, auto& it) {
-                    if (it)
-                        res[pos] = it->take();
-                });
+                for (size_t pos = 0; pos < fut.size(); ++pos) {
+                    if (fut[pos])
+                        res[pos] = fut[pos]->take();
+                }
                 return res;
             });
         }

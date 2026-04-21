@@ -40,8 +40,10 @@ namespace fast_task::this_task {
     void the_coroutine_ended() noexcept {
         if (loc.is_task_thread)
             if (loc.curr_task)
-                if (get_data(loc.curr_task).callbacks.is_extended_mode)
+                if (get_data(loc.curr_task).callbacks.is_extended_mode) {
                     get_data(loc.curr_task).callbacks.extended_mode.is_restartable = false;
+                    get_data(loc.curr_task).end_of_life = true;
+                }
     }
 
 #pragma optimize("", off)

@@ -1544,7 +1544,7 @@ namespace fast_task::networking {
             }
             util::native_workers_singleton::register_handle((HANDLE)clientSocket, nullptr);
             if (config.connection_timeout_ms > 0) {
-                if (!op->cv.wait_for(lock, config.connection_timeout_ms)) {
+                if (!op->cv.wait_for(lock, std::chrono::milliseconds(config.connection_timeout_ms))) {
                     corrupted = true;
                     _handle->reset();
                     return;
@@ -1588,7 +1588,7 @@ namespace fast_task::networking {
             }
             util::native_workers_singleton::register_handle((HANDLE)clientSocket, nullptr);
             if (config.connection_timeout_ms > 0) {
-                if (!op->cv.wait_for(lock, config.connection_timeout_ms)) {
+                if (!op->cv.wait_for(lock, std::chrono::milliseconds(config.connection_timeout_ms))) {
                     corrupted = true;
                     _handle->reset();
                     return;
@@ -2916,7 +2916,7 @@ namespace fast_task::networking {
             auto op = std::make_unique<tcp_handle_2::operation>(_handle, _handle->cv_mutex, this);
             util::native_workers_singleton::post_connect(op.get(), clientSocket, (sockaddr*)&connectionAddress, sizeof(connectionAddress));
             if (config.connection_timeout_ms > 0) {
-                if (!op->cv.wait_for(lock, config.connection_timeout_ms)) {
+                if (!op->cv.wait_for(lock, std::chrono::milliseconds(config.connection_timeout_ms))) {
                     corrupted = true;
                     _handle->reset();
                     return;
@@ -2985,7 +2985,7 @@ namespace fast_task::networking {
             auto op = std::make_unique<tcp_handle_2::operation>(_handle, _handle->cv_mutex, this);
             util::native_workers_singleton::post_sendto(op.get(), clientSocket, data, len, MSG_FASTOPEN, (sockaddr*)&connectionAddress, sizeof(connectionAddress));
             if (config.connection_timeout_ms > 0) {
-                if (!op->cv.wait_for(lock, config.connection_timeout_ms)) {
+                if (!op->cv.wait_for(lock, std::chrono::milliseconds(config.connection_timeout_ms))) {
                     corrupted = true;
                     _handle->reset();
                     return;

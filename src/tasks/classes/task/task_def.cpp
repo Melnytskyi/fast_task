@@ -148,6 +148,10 @@ namespace fast_task {
         return std::chrono::high_resolution_clock::time_point(std::chrono::high_resolution_clock::duration(data_.timeout));
     }
 
+    bool task::has_wait_timed_out() const noexcept {
+        return data_.time_end_flag;
+    }
+
     bool task::is_cancellation_requested() const noexcept {
         return data_.make_cancel;
     }
@@ -160,15 +164,14 @@ namespace fast_task {
         if (!scheduler::total_executors())
             scheduler::create_executor(1);
 
-        if (!data_.started)
-            throw std::runtime_error("Task is not started");
         if (data_.callbacks.is_extended_mode) {
             data_.callbacks.extended_mode.on_await(data_.callbacks.extended_mode.data);
             if (!data_.callbacks.extended_mode.on_start)
                 return;
             if (!data_.started) //started could change after `on_await`, better to be safe than oops
                 return;
-        }
+        } else if (!data_.started)
+            throw std::runtime_error("Task is not started");
         mutex_unify uni(data_.no_race);
         fast_task::unique_lock l(uni);
         awaitEnd(l);
