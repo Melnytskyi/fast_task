@@ -210,6 +210,7 @@ namespace fast_task {
     }
 
     bool task_mutex::task_mutex_try_lock_awaiter::await_suspend(base_coro_handle h) {
+        handle = h;
         return !mutex.enter_wait_until(h.promise->task_object, time_point);
     }
 

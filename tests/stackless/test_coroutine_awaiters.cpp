@@ -73,7 +73,8 @@ fast_task::task_coro<void> coro_cv_wait(
     fast_task::task_mutex& mtx, fast_task::task_condition_variable& cv, bool& ready)
 {
     fast_task::mutex_unify mu(mtx);
-    fast_task::unique_lock<fast_task::mutex_unify> lk(mu);
+    co_await mtx.async_lock();
+    fast_task::unique_lock<fast_task::mutex_unify> lk(mu, fast_task::adopt_lock);
     while (!ready)
         co_await cv.async_wait(lk);
     co_return;

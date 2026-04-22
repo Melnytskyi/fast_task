@@ -46,7 +46,7 @@ TEST_F(TaskTimeoutTest, TimeoutBeforeCompletion) {
 
 TEST_F(TaskTimeoutTest, NoTimeoutWhenCompletesEarly) {
     std::atomic<bool> completed{false};
-    auto deadline = std::chrono::high_resolution_clock::now() + std::chrono::seconds(60);
+    auto deadline = std::chrono::high_resolution_clock::now() + std::chrono::seconds(6);
     auto t = std::make_shared<fast_task::task>(
         [&] { completed = true; },
         nullptr,

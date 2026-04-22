@@ -161,7 +161,9 @@ namespace fast_task {
                 throw invalid_switch();
             }
             timer_reinit();
-            this_task::check_cancellation();
+            if (get_data(loc.curr_task).timeout != std::chrono::high_resolution_clock::time_point::min().time_since_epoch().count())
+                if (get_data(loc.curr_task).timeout <= std::chrono::high_resolution_clock::now().time_since_epoch().count())
+                    throw task_cancellation();
         } else
             throw invalid_context();
     }

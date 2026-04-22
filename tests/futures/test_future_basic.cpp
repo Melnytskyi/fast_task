@@ -34,7 +34,7 @@ TEST_F(FutureBasicTest, IsReadyAfterCompletion) {
 
 TEST_F(FutureBasicTest, WaitForSuccess) {
     auto f = fast_task::future<int>::start([] { return 5; });
-    bool ready = f->wait_for(std::chrono::seconds(5));
+    bool ready = f->wait_for(std::chrono::seconds(1));
     EXPECT_TRUE(ready);
     EXPECT_EQ(f->get(), 5);
 }
@@ -51,7 +51,7 @@ TEST_F(FutureBasicTest, WaitForTimeout) {
 
 TEST_F(FutureBasicTest, WaitUntilSuccess) {
     auto f = fast_task::future<int>::start([] { return 3; });
-    auto until = std::chrono::high_resolution_clock::now() + std::chrono::seconds(5);
+    auto until = std::chrono::high_resolution_clock::now() + std::chrono::seconds(1);
     bool ready = f->wait_until(until);
     EXPECT_TRUE(ready);
 }

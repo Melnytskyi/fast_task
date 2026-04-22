@@ -18,22 +18,39 @@ TEST_F(TaskMutexTest, BasicLockUnlock) {
 }
 
 TEST_F(TaskMutexTest, IsLockedAndIsOwn) {
-    // Library bug: task_mutex::try_lock() leaks the internal spin_lock on success
-    // (spin_lock::try_lock() returns false on acquire, causing inverted logic).
-    // is_locked() calls try_lock() and is therefore permanently broken.
-    GTEST_SKIP() << "Skipped: library bug — task_mutex::try_lock()/is_locked() spin_lock leak";
+    fast_task::task_mutex m;
+    run_task([&] {
+        EXPECT_FALSE(m.is_locked());
+        m.lock();
+        EXPECT_TRUE(m.is_locked());
+        EXPECT_TRUE(m.is_own());
+        m.unlock();
+        EXPECT_FALSE(m.is_locked());
+    });
 }
 
 TEST_F(TaskMutexTest, TryLockSucceeds) {
-    // Library bug: task_mutex::try_lock() leaks the internal spin_lock,
-    // causing all subsequent mutex operations to deadlock.
-    GTEST_SKIP() << "Skipped: library bug — task_mutex::try_lock() spin_lock leak";
+    fast_task::task_mutex m;
+    run_task([&] {
+        EXPECT_TRUE(m.try_lock());
+        EXPECT_TRUE(m.is_own());
+        m.unlock();
+    });
 }
 
 TEST_F(TaskMutexTest, TryLockFailsWhenHeld) {
-    // Library bug: task_mutex::try_lock() leaks the internal spin_lock,
-    // causing the subsequent m.unlock() call to deadlock.
-    GTEST_SKIP() << "Skipped: library bug — task_mutex::try_lock() spin_lock leak";
+    fast_task::task_mutex m;
+    bool failed = false;
+    run_task([&] {
+        m.lock();
+        auto t2 = std::make_shared<fast_task::task>([&] {
+            failed = !m.try_lock();
+        });
+        fast_task::scheduler::start(t2);
+        t2->await_task();
+        m.unlock();
+    });
+    EXPECT_TRUE(failed);
 }
 
 TEST_F(TaskMutexTest, Contention) {

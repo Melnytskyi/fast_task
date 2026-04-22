@@ -41,8 +41,10 @@ namespace fast_task {
                 values.max_threshold = val;
                 while (unlocks-- >= 1)
                     unchecked_unlock();
-            } else
+            } else {
                 values.allow_threshold += val - values.max_threshold;
+                values.max_threshold = val;
+            }
         }
     }
 
@@ -133,13 +135,16 @@ namespace fast_task {
         if (values.allow_threshold >= values.max_threshold)
             return;
         values.allow_threshold++;
+        values.locked = false;
         values.native_notify.notify_one();
         while (values.resume_task.size()) {
-            auto& it = values.resume_task.back();
+            auto& it = values.resume_task.front();
             fast_task::lock_guard lg2(get_data(it.task).no_race);
             if (!get_data(it.task).time_end_flag) {
-                if (get_data(it.task).awake_check != it.awake_check)
+                if (get_data(it.task).awake_check != it.awake_check) {
+                    values.resume_task.pop_front();
                     continue;
+                }
                 get_data(it.task).awaked = true;
                 auto task = values.resume_task.front().task;
                 values.resume_task.pop_front();

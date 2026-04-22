@@ -62,9 +62,16 @@ TEST(ConditionVariable, NotifyAll) {
 }
 
 TEST(ConditionVariable, WaitForTimeout) {
-    // Library bug: condition_variable::wait_until() always returns no_timeout
-    // on Windows (SleepConditionVariableSRW timeout branch is inverted).
-    GTEST_SKIP() << "Skipped: library bug — wait_until always returns no_timeout";
+    fast_task::mutex m;
+    fast_task::condition_variable cv;
+    bool timed_out = false;
+
+    m.lock();
+    auto status = cv.wait_for(m, std::chrono::milliseconds(50));
+    timed_out = (status == fast_task::cv_status::timeout);
+    m.unlock();
+
+    EXPECT_TRUE(timed_out);
 }
 
 TEST(ConditionVariable, WaitForSucceeds) {

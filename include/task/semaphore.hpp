@@ -76,7 +76,7 @@ namespace fast_task {
             std::list<resume_task> resume_task;
             fast_task::spin_lock no_race;
             fast_task::condition_variable_any native_notify;
-            size_t allow_threshold = 0;
+            size_t allow_threshold = 1;
             size_t max_threshold = 1;
             bool locked = false;
         } values;

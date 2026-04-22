@@ -18,9 +18,11 @@ TEST_F(TaskBasicTest, RunAndAwait) {
 }
 
 TEST_F(TaskBasicTest, IsEndedAfterCompletion) {
-    // Library bug: task::is_ended() returns !end_of_life (inverted),
-    // so it returns false after the task has ended.
-    GTEST_SKIP() << "Skipped: library bug — is_ended() returns inverted value";
+    auto t = std::make_shared<fast_task::task>([] {});
+    EXPECT_FALSE(t->is_ended());
+    fast_task::scheduler::start(t);
+    t->await_task();
+    EXPECT_TRUE(t->is_ended());
 }
 
 TEST_F(TaskBasicTest, ReturnValueViaCapture) {

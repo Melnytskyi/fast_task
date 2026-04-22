@@ -237,17 +237,13 @@ namespace fast_task {
             DWORD wait_time = sleep_ms.count() > 0x7FFFFFFF ? 0x7FFFFFFF : (DWORD)sleep_ms.count();
             interrupt_unsafe_region region;
             if (SleepConditionVariableSRW((PCONDITION_VARIABLE)&_cond, (PSRWLOCK)&mtx._mutex, wait_time, 0)) {
-                auto err = GetLastError();
-                switch (err) {
-                case ERROR_TIMEOUT:
-                    return cv_status::timeout;
-                case ERROR_SUCCESS:
-                    return cv_status::no_timeout;
-                default:
-                    throw std::system_error(err, std::system_category());
-                }
-            } else
                 return cv_status::no_timeout;
+            } else {
+                auto err = GetLastError();
+                if (err == ERROR_TIMEOUT)
+                    return cv_status::timeout;
+                throw std::system_error(err, std::system_category());
+            }
         }
     }
 
@@ -279,22 +275,12 @@ namespace fast_task {
                 return cv_status::timeout;
             DWORD wait_time = sleep_ms.count() > 0x7FFFFFFF ? 0x7FFFFFFF : (DWORD)sleep_ms.count();
             bool res = SleepConditionVariableSRW((PCONDITION_VARIABLE)&_cond, (PSRWLOCK)&mtx.actual_mutex._mutex, wait_time, 0);
-            cv_status status = cv_status::no_timeout;
+            DWORD err = res ? 0 : GetLastError();
+            cv_status status = res ? cv_status::no_timeout : (err == ERROR_TIMEOUT ? cv_status::timeout : cv_status::no_timeout);
             mtx.lock();
             mtx.relock_end(state);
-            if (res) {
-                auto err = GetLastError();
-                switch (err) {
-                case ERROR_TIMEOUT:
-                    status = cv_status::timeout;
-                    break;
-                default:
-                    throw std::system_error(err, std::system_category());
-
-                case ERROR_SUCCESS:
-                    break;
-                }
-            }
+            if (!res && err != ERROR_TIMEOUT)
+                throw std::system_error(err, std::system_category());
             return status;
         }
     }

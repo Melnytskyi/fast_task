@@ -14,10 +14,9 @@ TEST_F(TaskCancellationTest, CheckCancellationThrows) {
     std::atomic<bool> started{false};
     auto t = std::make_shared<fast_task::task>([&] {
         started = true;
-        // spin until cancellation is requested from outside
-        while (!fast_task::this_task::is_cancellation_requested())
-            fast_task::this_task::yield();
         try {
+            while (!fast_task::this_task::is_cancellation_requested())
+                fast_task::this_task::yield();
             fast_task::this_task::check_cancellation();
         } catch (const fast_task::task_cancellation&) {
             caught = true;

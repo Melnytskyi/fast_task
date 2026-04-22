@@ -16,10 +16,21 @@ TEST_F(DeadlineTimerTest, WaitTimesOut) {
 }
 
 TEST_F(DeadlineTimerTest, CancelBeforeTimeout) {
-    // Library bug: deadline_timer::cancel() only cancels if the timer has
-    // already expired (time_point < now check is inverted), so cancelling
-    // a pending timer before expiry does nothing.
-    GTEST_SKIP() << "Skipped: library bug \u2014 cancel() cannot cancel a pending timer";
+    fast_task::deadline_timer timer(std::chrono::milliseconds(500));
+    fast_task::deadline_timer::status received_status{};
+
+    run_task([&] {
+        auto waiter = std::make_shared<fast_task::task>([&] {
+            received_status = timer.wait();
+        });
+        fast_task::scheduler::start(waiter);
+        fast_task::this_task::sleep_for(std::chrono::milliseconds(20));
+        size_t cancelled = timer.cancel();
+        EXPECT_GT(cancelled, 0u);
+        waiter->await_task();
+    });
+
+    EXPECT_EQ(received_status, fast_task::deadline_timer::status::canceled);
 }
 
 TEST_F(DeadlineTimerTest, TimedOut) {

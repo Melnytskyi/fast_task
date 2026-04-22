@@ -61,21 +61,28 @@ TEST_F(TaskSemaphoreTest, WaiterUnblocked) {
     fast_task::task_semaphore sem;
     sem.set_max_threshold(1);
     std::atomic<bool> second_done{false};
+    std::atomic<bool> holder_locked{false};
 
-    run_task([&] {
+    auto holder = std::make_shared<fast_task::task>([&] {
         sem.lock(); // fill the semaphore
-
-        auto waiter = std::make_shared<fast_task::task>([&] {
-            sem.lock(); // should block until release
-            second_done = true;
-            sem.release();
-        });
-        fast_task::scheduler::start(waiter);
-
+        holder_locked = true;
         fast_task::this_task::sleep_for(std::chrono::milliseconds(20));
         sem.release(); // unblock waiter
-        waiter->await_task();
     });
+    fast_task::scheduler::start(holder);
+
+    while (!holder_locked.load())
+        fast_task::this_thread::yield();
+
+    auto waiter = std::make_shared<fast_task::task>([&] {
+        sem.lock(); // should block until release
+        second_done = true;
+        sem.release();
+    });
+    fast_task::scheduler::start(waiter);
+
+    std::vector<std::shared_ptr<fast_task::task>> tasks{holder, waiter};
+    fast_task::task::await_multiple(tasks, true);
 
     EXPECT_TRUE(second_done.load());
 }

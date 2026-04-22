@@ -104,7 +104,8 @@ namespace fast_task {
         task_mutex no_race;
         std::chrono::high_resolution_clock::time_point time_point;
         std::unordered_set<void*> canceled_tasks; //fast_task::task
-        std::list<task*> scheduled_tasks;
+        std::list<task*> scheduled_tasks;         // tasks registered via async_wait(task)
+        std::list<std::shared_ptr<task>> sleeping_tasks; // tasks blocked in wait()
         bool shutdown = false;
 
         static handle* create() {
@@ -216,6 +217,7 @@ namespace fast_task {
         fast_task::rw_mutex no_race;
         fast_task::condition_variable_any new_task_notifier;
         uint16_t executors = 0;
+        uint16_t expected_executors = 0;
         bool in_close : 1 = false;
         bool allow_implicit_start : 1 = false;
         bool fixed_size : 1 = false;

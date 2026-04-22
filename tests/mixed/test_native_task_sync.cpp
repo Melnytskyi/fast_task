@@ -17,12 +17,18 @@ TEST_F(NativeTaskSyncTest, NativeThreadAndTaskShareMutex) {
 
     // Native thread holds the lock for a while
     std::atomic<bool> native_done{false};
+    std::atomic<bool> native_holds_lock{false};
     fast_task::thread native([&] {
         fast_task::unique_lock<fast_task::task_mutex> lk(mtx);
+        native_holds_lock = true;
         fast_task::this_thread::sleep_for(std::chrono::milliseconds(20));
         value = 10;
         native_done = true;
     });
+
+    while (!native_holds_lock.load()) {
+        fast_task::this_thread::yield();
+    }
 
     // Task tries to acquire the same mutex
     std::atomic<int> task_value{0};

@@ -407,7 +407,7 @@ namespace fast_task {
     }
 
     bool task_rw_mutex::task_mutex_read_lock_awaiter::await_ready() noexcept {
-        return mutex.try_lock();
+        return mutex.try_read_lock();
     }
 
     bool task_rw_mutex::task_mutex_read_lock_awaiter::await_suspend(base_coro_handle h) {

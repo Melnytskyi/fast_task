@@ -1,7 +1,7 @@
 {
     "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
     "name": "fast-task",
-    "version": "1.0.0-beta-002",
+    "version": "1.0.0-beta-003",
     "dependencies": [
         "boost-context",
         "boost-lockfree",

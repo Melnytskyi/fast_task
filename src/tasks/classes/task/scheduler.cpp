@@ -76,6 +76,7 @@ namespace fast_task::scheduler {
         glob.binded_workers[id].allow_implicit_start = allow_implicit_start;
         glob.binded_workers[id].fixed_size = (bool)fixed_count;
         glob.binded_workers[id].policy = policy;
+        glob.binded_workers[id].expected_executors = fixed_count;
         for (size_t i = 0; i < fixed_count; i++) {
             ++glob.thread_count;
             fast_task::thread(bindedTaskExecutor, id).detach();
@@ -101,6 +102,7 @@ namespace fast_task::scheduler {
             glob.binded_workers[id].allow_implicit_start = allow_implicit_start;
             glob.binded_workers[id].fixed_size = (bool)fixed_count;
             glob.binded_workers[id].policy = policy;
+            glob.binded_workers[id].expected_executors = fixed_count;
         }
 
         if (fixed_count > current_executors) {
@@ -120,6 +122,18 @@ namespace fast_task::scheduler {
             throw std::runtime_error("Binded worker not found");
         } else {
             auto& context = glob.binded_workers[id];
+            // Wait for all spawned executor threads to start before closing.
+            // They acquire binded_workers_safety before incrementing context.executors,
+            // so we must release our lock temporarily to avoid deadlock.
+            {
+                uint16_t expected = context.expected_executors;
+                while (context.executors < expected) {
+                    guard.unlock();
+                    std::this_thread::yield();
+                    guard.lock();
+                }
+            }
+
             fast_task::unique_lock context_lock(context.no_race);
             if (context.in_close)
                 return;
@@ -200,10 +214,10 @@ namespace fast_task::scheduler {
                 return false;
             };
 
-            while (tasks_present() || glob.cold_tasks.size_approx() || glob.timed_tasks.size() || glob.cold_timed_tasks.size()) {
+            while (tasks_present() || glob.cold_tasks.size_approx() || glob.timed_tasks.size() || glob.cold_timed_tasks.size() || glob.executing_tasks) {
                 if (!total_executors())
                     create_executor(1);
-                glob.no_tasks_notifier.wait(l);
+                glob.no_tasks_execute_notifier.wait(l);
             }
         }
     }

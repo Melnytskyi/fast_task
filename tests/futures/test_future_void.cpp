@@ -31,12 +31,12 @@ TEST_F(FutureVoidTest, IsReady) {
 
 TEST_F(FutureVoidTest, WaitForSuccess) {
     auto f = fast_task::future<void>::start([] {});
-    EXPECT_TRUE(f->wait_for(std::chrono::seconds(5)));
+    EXPECT_TRUE(f->wait_for(std::chrono::seconds(1)));
 }
 
 TEST_F(FutureVoidTest, WaitForTimeout) {
     auto f = fast_task::future<void>::start([] {
-        fast_task::this_task::sleep_for(std::chrono::seconds(10));
+        fast_task::this_task::sleep_for(std::chrono::seconds(1));
     });
     EXPECT_FALSE(f->wait_for(std::chrono::milliseconds(30)));
 }

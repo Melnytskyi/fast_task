@@ -74,11 +74,20 @@ namespace fast_task {
         if (!hh)
             return 0;
         fast_task::unique_lock lock(hh->no_race);
-        if (hh->time_point < std::chrono::high_resolution_clock::now()) {
-            hh->time_point = std::chrono::high_resolution_clock::time_point();
-            size_t res = hh->scheduled_tasks.size();
+        if (hh->time_point > std::chrono::high_resolution_clock::now()) {
+            size_t res = hh->scheduled_tasks.size() + hh->sleeping_tasks.size();
+            // cancel async_wait(task) registrations
+            for (auto* t : hh->scheduled_tasks)
+                hh->canceled_tasks.insert(t);
             hh->scheduled_tasks.clear();
-            hh->canceled_tasks.clear();
+            // wake up tasks sleeping in wait()
+            for (auto& t : hh->sleeping_tasks) {
+                hh->canceled_tasks.insert(t.get());
+                fast_task::lock_guard task_guard(get_data(t).no_race);
+                get_data(t).awaked = true;
+                transfer_task(std::move(t));
+            }
+            hh->sleeping_tasks.clear();
             return res;
         } else
             return 0;
@@ -86,15 +95,25 @@ namespace fast_task {
 
     bool deadline_timer::cancel_one() {
         if (!hh)
-            return 0;
+            return false;
         fast_task::unique_lock lock(hh->no_race);
-        auto& st = hh->scheduled_tasks;
-        if (hh->time_point < std::chrono::high_resolution_clock::now() && !st.empty()) {
-            hh->canceled_tasks.insert(st.front());
-            st.pop_front();
-            return true;
-        } else
-            return 0;
+        if (hh->time_point > std::chrono::high_resolution_clock::now()) {
+            if (!hh->sleeping_tasks.empty()) {
+                auto& t = hh->sleeping_tasks.front();
+                hh->canceled_tasks.insert(t.get());
+                fast_task::lock_guard task_guard(get_data(t).no_race);
+                get_data(t).awaked = true;
+                transfer_task(std::move(t));
+                hh->sleeping_tasks.pop_front();
+                return true;
+            }
+            if (!hh->scheduled_tasks.empty()) {
+                hh->canceled_tasks.insert(hh->scheduled_tasks.front());
+                hh->scheduled_tasks.pop_front();
+                return true;
+            }
+        }
+        return false;
     }
 
     void deadline_timer::async_wait(const std::shared_ptr<task>& t) {
@@ -164,7 +183,7 @@ namespace fast_task {
         fast_task::unique_lock lock(hh->no_race);
         hh->time_point = point;
         hh->canceled_tasks.clear();
-        return hh->scheduled_tasks.size();
+        return hh->scheduled_tasks.size() + hh->sleeping_tasks.size();
     }
 
     deadline_timer::status deadline_timer::wait() {
@@ -174,11 +193,16 @@ namespace fast_task {
             return status::timeouted;
         else {
             fast_task::unique_lock lock(hh->no_race);
-            hh->scheduled_tasks.push_back(loc.curr_task.get());
+            hh->sleeping_tasks.push_back(loc.curr_task);
             auto timeout_time = hh->time_point;
             lock.unlock();
             this_task::sleep_until(hh->time_point);
             lock.lock();
+            // Remove from sleeping_tasks if still present (not removed by cancel())
+            auto& st = hh->sleeping_tasks;
+            auto sit = std::find(st.begin(), st.end(), loc.curr_task);
+            if (sit != st.end())
+                st.erase(sit);
             auto& ct = hh->canceled_tasks;
             if (ct.find(loc.curr_task.get()) == ct.end()) {
                 if (hh->time_point == timeout_time)
