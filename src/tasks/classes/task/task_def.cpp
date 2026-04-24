@@ -149,7 +149,10 @@ namespace fast_task {
     }
 
     bool task::has_wait_timed_out() const noexcept {
-        return data_.time_end_flag;
+        fast_task::lock_guard lock(data_.no_race);
+        auto time_end_flag = data_.time_end_flag;
+        resetTimeWait();
+        return time_end_flag;
     }
 
     bool task::is_cancellation_requested() const noexcept {
@@ -168,12 +171,14 @@ namespace fast_task {
             data_.callbacks.extended_mode.on_await(data_.callbacks.extended_mode.data);
             if (!data_.callbacks.extended_mode.on_start)
                 return;
+        }
+        mutex_unify uni(data_.no_race);
+        fast_task::unique_lock l(uni);
+        if (data_.callbacks.is_extended_mode) {
             if (!data_.started && !data_.callbacks.extended_mode.is_restartable)
                 return;
         } else if (!data_.started)
             throw std::runtime_error("Task is not started");
-        mutex_unify uni(data_.no_race);
-        fast_task::unique_lock l(uni);
         awaitEnd(l);
     }
 
@@ -222,12 +227,16 @@ namespace fast_task {
             lgr_task->data_.callbacks.extended_mode.on_await(lgr_task->data_.callbacks.extended_mode.data);
             if (!lgr_task->data_.callbacks.extended_mode.on_start)
                 return;
-            if (!(make_start || lgr_task->data_.started || lgr_task->data_.callbacks.extended_mode.is_restartable))
-                return;
         }
 
         mutex_unify uni(lgr_task->data_.no_race);
         fast_task::unique_lock l(uni);
+        if (lgr_task->data_.callbacks.is_extended_mode) {
+            if (!(make_start || lgr_task->data_.started || lgr_task->data_.callbacks.extended_mode.is_restartable))
+                return;
+        } else if (!lgr_task->data_.started) {
+            throw std::runtime_error("Task is not started");
+        }
         lgr_task->awaitEnd(l);
     }
 

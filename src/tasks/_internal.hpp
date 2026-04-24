@@ -242,6 +242,7 @@ namespace fast_task {
         fast_task::condition_variable_any executor_shutdown_notifier;
 
         bool time_control_enabled = false;
+        std::atomic<bool> shutdown_requested{false};
 
         std::atomic_size_t interrupts = 0; //debug counter of the usermode fast_task interrupts
         std::atomic_size_t executors = 0;
@@ -311,6 +312,8 @@ namespace fast_task {
     void FT_API_LOCAL makeTimeWait_extern(std::shared_ptr<task> _task, std::chrono::high_resolution_clock::time_point time_point);
 
     void FT_API_LOCAL makeTimeWait_unsafe(std::chrono::high_resolution_clock::time_point t);
+    void FT_API_LOCAL resetTimeWait();
+
     void FT_API_LOCAL taskExecutor(bool end_in_task_out = false, bool prevent_naming = false);
     void FT_API_LOCAL bindedTaskExecutor(uint16_t id);
     void FT_API_LOCAL unsafe_put_task_to_timed_queue(std::deque<timing>& queue, std::chrono::high_resolution_clock::time_point t, std::shared_ptr<task>& task);

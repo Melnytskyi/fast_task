@@ -271,23 +271,26 @@ namespace fast_task {
                 get_data(loc.curr_task).relock_2.relock_start();
             } else
                 this_task::the_coroutine_ended();
-            if (get_data(loc.curr_task).callbacks.is_extended_mode) {
-                if (get_data(loc.curr_task).callbacks.extended_mode.is_restartable)
-                    get_data(loc.curr_task).started = false;
-                else {
+            {
+                fast_task::lock_guard guard(get_data(loc.curr_task).no_race);
+                if (get_data(loc.curr_task).callbacks.is_extended_mode) {
+                    if (get_data(loc.curr_task).callbacks.extended_mode.is_restartable)
+                        get_data(loc.curr_task).started = false;
+                    else
+                        get_data(loc.curr_task).end_of_life = true;
+                } else {
                     get_data(loc.curr_task).end_of_life = true;
                 }
-            } else {
-                get_data(loc.curr_task).end_of_life = true;
+                get_data(loc.curr_task).result_notify.notify_all();
             }
-
-            get_data(loc.curr_task).result_notify.notify_all();
         } catch (const task_cancellation& cancel) {
             forceCancelCancellation(cancel);
+            fast_task::lock_guard guard(get_data(loc.curr_task).no_race);
             get_data(loc.curr_task).end_of_life = true;
             get_data(loc.curr_task).result_notify.notify_all();
         } catch (...) {
             loc.ex_ptr = std::current_exception(); //TODO pass this to the callback
+            fast_task::lock_guard guard(get_data(loc.curr_task).no_race);
             get_data(loc.curr_task).end_of_life = true;
             get_data(loc.curr_task).result_notify.notify_all();
         }
@@ -441,19 +444,24 @@ namespace fast_task {
             return false;
         if (!get_data(loc.curr_task).callbacks.is_extended_mode) {
             if (!get_data(loc.curr_task).callbacks.normal_mode.func) {
+                fast_task::lock_guard guard(get_data(loc.curr_task).no_race);
                 get_data(loc.curr_task).end_of_life = true;
                 loc.curr_task = nullptr;
                 return true;
             }
 
         } else if (!get_data(loc.curr_task).callbacks.extended_mode.on_start) {
+            fast_task::lock_guard guard(get_data(loc.curr_task).no_race);
             get_data(loc.curr_task).end_of_life = true;
             get_data(loc.curr_task).result_notify.notify_all();
             goto end_task;
         }
 
-        if (get_data(loc.curr_task).end_of_life)
-            goto end_task;
+        {
+            fast_task::lock_guard guard(get_data(loc.curr_task).no_race);
+            if (get_data(loc.curr_task).end_of_life)
+                goto end_task;
+        }
 
         loc.is_task_thread = true;
 
@@ -495,15 +503,21 @@ namespace fast_task {
     end_task:
         loc.stack_current_context = nullptr;
         loc.is_task_thread = false;
-        if (!get_data(loc.curr_task).end_of_life && loc.curr_task.use_count() == 1 && !loc.yield_request) {
+        bool end_of_life = false;
+        {
+            fast_task::lock_guard guard(get_data(loc.curr_task).no_race);
+            end_of_life = get_data(loc.curr_task).end_of_life;
+        }
+        if (!end_of_life && loc.curr_task.use_count() == 1 && !loc.yield_request) {
             get_data(loc.curr_task).invalid_switch_caught = true;
             transfer_task(std::move(loc.curr_task));
         } else if (loc.yield_request) {
             transfer_task(std::move(loc.curr_task));
             loc.yield_request = false;
-        } else if (get_data(loc.curr_task).end_of_life) {
+        } else if (end_of_life) {
             --glob.executing_tasks;
             glob.no_tasks_execute_notifier.notify_all();
+            fast_task::lock_guard guard(get_data(loc.curr_task).no_race);
             get_data(loc.curr_task).completed = true;
         }
 
@@ -733,7 +747,30 @@ namespace fast_task {
         std::list<std::shared_ptr<task>> cached_wake_ups;
         std::list<std::shared_ptr<task>> cached_cold;
         while (glob.time_control_enabled) {
-            if (glob.timed_tasks.size()) {
+            if (glob.shutdown_requested.load(std::memory_order_acquire)) {
+                while (!glob.timed_tasks.empty()) {
+                    timing& tmng = glob.timed_tasks.front();
+                    if (tmng.check_id == get_data(tmng.awake_task).awake_check) {
+                        fast_task::lock_guard task_guard(get_data(tmng.awake_task).no_race);
+                        if (!get_data(tmng.awake_task).awaked) {
+                            get_data(tmng.awake_task).time_end_flag = true;
+                            cached_wake_ups.push_back(std::move(tmng.awake_task));
+                        }
+                    }
+                    glob.timed_tasks.pop_front();
+                }
+                while (!glob.cold_timed_tasks.empty()) {
+                    timing& tmng = glob.cold_timed_tasks.front();
+                    if (tmng.check_id == get_data(tmng.awake_task).awake_check) {
+                        fast_task::lock_guard task_guard(get_data(tmng.awake_task).no_race);
+                        if (!get_data(tmng.awake_task).awaked) {
+                            get_data(tmng.awake_task).time_end_flag = true;
+                            cached_cold.push_back(std::move(tmng.awake_task));
+                        }
+                    }
+                    glob.cold_timed_tasks.pop_front();
+                }
+            } else if (glob.timed_tasks.size()) {
                 auto current_now = std::chrono::high_resolution_clock::now();
                 while (glob.timed_tasks.front().wait_timepoint <= current_now) {
                     timing& tmng = glob.timed_tasks.front();
@@ -790,9 +827,13 @@ namespace fast_task {
                 }
             }
 
+            glob.no_tasks_execute_notifier.notify_all();
+
             check_stw();
             guard.lock();
-            if (glob.timed_tasks.empty() && glob.cold_timed_tasks.empty())
+            if (glob.shutdown_requested.load(std::memory_order_acquire))
+                glob.time_notifier.wait(guard);
+            else if (glob.timed_tasks.empty() && glob.cold_timed_tasks.empty())
                 glob.time_notifier.wait(guard);
             else if (glob.timed_tasks.size() && glob.cold_timed_tasks.size()) {
                 if (glob.timed_tasks.front().wait_timepoint < glob.cold_timed_tasks.front().wait_timepoint)
@@ -870,7 +911,7 @@ namespace fast_task {
         glob.time_notifier.notify_one();
     }
 
-    void FT_API_LOCAL makeTimeWait_unsafe(std::chrono::high_resolution_clock::time_point t) {
+    void makeTimeWait_unsafe(std::chrono::high_resolution_clock::time_point t) {
         if (!glob.time_control_enabled)
             startTimeController_unsafe();
         get_data(loc.curr_task).awaked = false;
@@ -878,5 +919,10 @@ namespace fast_task {
 
         unsafe_put_task_to_timed_queue(glob.timed_tasks, t, loc.curr_task);
         glob.time_notifier.notify_one();
+    }
+
+    void resetTimeWait() {
+        get_data(loc.curr_task).awaked = false;
+        get_data(loc.curr_task).time_end_flag = false;
     }
 }

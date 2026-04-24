@@ -162,6 +162,8 @@ namespace fast_task {
             return true;
         auto& task_ptr = handle.promise->task_object;
         successful = !task_ptr->has_wait_timed_out();
+        if (successful)
+            resetTimeWait();
         return successful;
     }
 

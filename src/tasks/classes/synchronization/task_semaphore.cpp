@@ -81,7 +81,9 @@ namespace fast_task {
                 values.resume_task.emplace_back(loc.curr_task, get_data(loc.curr_task).awake_check);
                 makeTimeWait_unsafe(time_point);
                 swapCtxRelock(glob.task_timer_safety, values.no_race);
-                if (!get_data(loc.curr_task).awaked)
+                auto awaked = get_data(loc.curr_task).awaked;
+                resetTimeWait();
+                if (!awaked)
                     return false;
             } else if (values.native_notify.wait_until(keeper, time_point) == fast_task::cv_status::timeout)
                 return false;

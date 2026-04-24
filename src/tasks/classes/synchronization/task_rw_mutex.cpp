@@ -85,7 +85,9 @@ namespace fast_task {
                 values.resume_task.emplace_back(loc.curr_task, get_data(loc.curr_task).awake_check);
                 makeTimeWait(time_point);
                 swapCtxRelock(get_data(loc.curr_task).no_race, values.no_race);
-                if (!get_data(loc.curr_task).awaked)
+                auto awaked = get_data(loc.curr_task).awaked;
+                resetTimeWait();
+                if (!awaked)
                     return false;
             }
         } else {
@@ -254,7 +256,9 @@ namespace fast_task {
                 makeTimeWait_unsafe(time_point);
                 values.resume_task.emplace_back(loc.curr_task, get_data(loc.curr_task).awake_check);
                 swapCtxRelock(glob.task_timer_safety, values.no_race);
-                if (!get_data(loc.curr_task).awaked)
+                auto awaked = get_data(loc.curr_task).awaked;
+                resetTimeWait();
+                if (!awaked)
                     return false;
             }
             values.current_writer_task = &*loc.curr_task;
@@ -264,7 +268,9 @@ namespace fast_task {
                 makeTimeWait_unsafe(time_point);
                 values.resume_task.emplace_back(loc.curr_task, get_data(loc.curr_task).awake_check);
                 swapCtxRelock(glob.task_timer_safety, values.no_race);
-                if (!get_data(loc.curr_task).awaked) {
+                auto awaked = get_data(loc.curr_task).awaked;
+                resetTimeWait();
+                if (!awaked) {
                     values.current_writer_task = nullptr;
                     return false;
                 }
@@ -484,7 +490,7 @@ namespace fast_task {
             get_data(task).awaked = false;
             get_data(task).time_end_flag = false;
             values.resume_task.push_back({task, get_data(task).awake_check, nullptr, nullptr});
-            fast_task::makeTimeWait(time_point);
+            fast_task::makeTimeWait_extern(task, time_point);
             return false;
         }
     }

@@ -41,6 +41,7 @@ namespace fast_task::this_task {
         if (loc.is_task_thread)
             if (loc.curr_task)
                 if (get_data(loc.curr_task).callbacks.is_extended_mode) {
+                    fast_task::lock_guard guard(get_data(loc.curr_task).no_race);
                     get_data(loc.curr_task).callbacks.extended_mode.is_restartable = false;
                     get_data(loc.curr_task).end_of_life = true;
                 }
@@ -57,6 +58,7 @@ namespace fast_task::this_task {
             fast_task::lock_guard guard(glob.task_timer_safety);
             makeTimeWait_unsafe(time_point);
             swapCtxRelock(glob.task_timer_safety);
+            resetTimeWait();
         } else
             this_thread::sleep_until(time_point);
     }

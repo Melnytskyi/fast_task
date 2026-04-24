@@ -85,8 +85,11 @@ namespace fast_task {
                 makeTimeWait_unsafe(time_point);
                 values.resume_task.emplace_back(loc.curr_task, get_data(loc.curr_task).awake_check);
                 swapCtxRelock(glob.task_timer_safety, values.no_race);
-                if (!get_data(loc.curr_task).awaked)
+                auto awaked = get_data(loc.curr_task).awaked;
+                resetTimeWait();
+                if (!awaked) {
                     return false;
+                }
             }
             values.current_task = &*loc.curr_task;
             return true;

@@ -18,10 +18,17 @@ namespace fast_task::scheduler {
         std::shared_ptr<task> lgr_task = _task;
         if (get_data(lgr_task).started)
             return;
+        get_data(lgr_task).started = true;
+        ++glob.executing_tasks;
+
+        if (glob.shutdown_requested.load(std::memory_order_acquire)) {
+            transfer_task(std::move(lgr_task));
+            return;
+        }
+
         if (!glob.time_control_enabled)
             startTimeController();
         fast_task::unique_lock guard(glob.task_timer_safety);
-        get_data(lgr_task).started = true;
         if (can_be_scheduled_task_to_hot())
             unsafe_put_task_to_timed_queue(glob.timed_tasks, time_point, lgr_task);
         else
@@ -217,6 +224,25 @@ namespace fast_task::scheduler {
             while (tasks_present() || glob.cold_tasks.size_approx() || glob.timed_tasks.size() || glob.cold_timed_tasks.size() || glob.executing_tasks) {
                 if (!total_executors())
                     create_executor(1);
+
+                if (glob.shutdown_requested.load(std::memory_order_acquire)) {
+                    //BUG
+                    // If shutdown is requested and there is no runnable/waiting task state
+                    // left in scheduler queues or runtime, do not block forever on a leaked
+                    // accounting value in glob.executing_tasks.
+                    // This solution is bad and just reduces the amount of stuck tasks. I would like to fix this in other way.
+                    //TODO
+                    // find the reason and way to safely shutdown the tasks
+                    if (!tasks_present() &&
+                        glob.cold_tasks.size_approx() == 0 &&
+                        glob.timed_tasks.empty() &&
+                        glob.cold_timed_tasks.empty() &&
+                        glob.in_run_tasks.load() == 0 &&
+                        glob.tasks_in_swap.load() == 0) {
+                        break;
+                    }
+                }
+
                 glob.no_tasks_execute_notifier.wait(l);
             }
         }
@@ -256,6 +282,15 @@ namespace fast_task::scheduler {
     }
 
     void shut_down() {
+        {
+            fast_task::unique_lock guard(glob.task_thread_safety);
+            fast_task::unique_lock lock(glob.task_timer_safety);
+            glob.shutdown_requested.store(true, std::memory_order_release);
+            glob.time_notifier.notify_all();
+        }
+        await_no_tasks();
+        glob.shutdown_requested.store(false, std::memory_order_release);
+
         while (!glob.binded_workers.empty())
             close_bind_only_executor(glob.binded_workers.begin()->first);
 

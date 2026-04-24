@@ -59,7 +59,9 @@ namespace fast_task {
                 values.resume_task.emplace_back(loc.curr_task, get_data(loc.curr_task).awake_check);
             }
             swapCtxRelock(glob.task_timer_safety);
-            if (get_data(loc.curr_task).time_end_flag) {
+            auto time_end_flag = get_data(loc.curr_task).time_end_flag;
+            resetTimeWait();
+            if (time_end_flag) {
                 fast_task::lock_guard _guard(values.no_race);
                 values.resume_task.erase(std::find_if(values.resume_task.begin(), values.resume_task.end(), [](const auto& a){ return a.task == loc.curr_task; }));
                 return false;
@@ -128,7 +130,9 @@ namespace fast_task {
                 values.resume_task.emplace_back(loc.curr_task, get_data(loc.curr_task).awake_check);
             }
             swapCtxRelock(glob.task_timer_safety);
-            if (get_data(loc.curr_task).time_end_flag){
+            auto time_end_flag = get_data(loc.curr_task).time_end_flag;
+            resetTimeWait();
+            if (time_end_flag) {
                 fast_task::lock_guard _guard(values.no_race);
                 values.resume_task.erase(std::find_if(values.resume_task.begin(), values.resume_task.end(), [](const auto& a){ return a.task == loc.curr_task; }));//find itself and remove
                 return false;
@@ -256,6 +260,7 @@ namespace fast_task {
             values.resume_task.emplace_back(task, get_data(task).awake_check);
         }
         get_data(task).started = true;
+        ++glob.executing_tasks;
     }
 
     void task_condition_variable::callback(std::unique_lock<mutex_unify>& mut, const std::shared_ptr<task>& task) {
@@ -268,6 +273,7 @@ namespace fast_task {
             values.resume_task.emplace_back(task, get_data(task).awake_check);
         }
         get_data(task).started = true;
+        ++glob.executing_tasks;
     }
 
     bool task_condition_variable::task_wait_awaiter::await_ready() noexcept {

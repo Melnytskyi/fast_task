@@ -33,8 +33,6 @@ public:
 
     static void TearDownTestSuite() {
         fast_task::scheduler::shut_down();
-        // Allow timer thread and any remaining threads to exit
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 };
 

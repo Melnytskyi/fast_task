@@ -68,7 +68,7 @@ namespace fast_task {
             } callbacks;
 
             task_condition_variable result_notify;
-            fast_task::spin_lock no_race;
+            mutable fast_task::spin_lock no_race;
             mutex_unify relock_0;
             mutex_unify relock_1;
             mutex_unify relock_2;
@@ -115,7 +115,7 @@ namespace fast_task {
         size_t get_counter_interrupt() const noexcept;
         size_t get_counter_context_switch() const noexcept;
         std::chrono::high_resolution_clock::time_point get_timeout() const noexcept;
-        bool has_wait_timed_out() const noexcept; // for timed enter_wait_until, allows to check if the operation timed out
+        bool has_wait_timed_out() const noexcept; // for timed enter_wait_until, allows to check if the operation timed out. Also resets the flag(locks)
         bool is_cancellation_requested() const noexcept;
         bool is_ended() const noexcept;
         void await_task();
