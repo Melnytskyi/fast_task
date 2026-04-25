@@ -37,14 +37,14 @@ namespace fast_task::this_task {
             throw invalid_context();
     }
 
-    void the_coroutine_ended() noexcept {
-        if (loc.is_task_thread)
-            if (loc.curr_task)
-                if (get_data(loc.curr_task).callbacks.is_extended_mode) {
-                    fast_task::lock_guard guard(get_data(loc.curr_task).no_race);
-                    get_data(loc.curr_task).callbacks.extended_mode.is_restartable = false;
-                    get_data(loc.curr_task).end_of_life = true;
-                }
+    void the_coroutine_ended(const std::shared_ptr<task>& task) noexcept {
+        if (task) {
+            fast_task::lock_guard guard(get_data(task).no_race);
+            get_data(task).callbacks.is_restartable = false;
+            get_data(task).end_of_life = true;
+            get_data(task).started = true;
+            get_data(task).result_notify.notify_all();
+        }
     }
 
 #pragma optimize("", off)
@@ -61,6 +61,22 @@ namespace fast_task::this_task {
             resetTimeWait();
         } else
             this_thread::sleep_until(time_point);
+    }
+
+    bool FT_API enter_sleep_until(std::chrono::high_resolution_clock::time_point time_point) {
+        if (loc.is_task_thread) {
+            if (std::chrono::high_resolution_clock::now() >= time_point)
+                return true;
+            fast_task::lock_guard guard(glob.task_timer_safety);
+            makeTimeWait_unsafe(time_point);
+            return false;
+        } else
+            throw invalid_context();
+    }
+
+    bool FT_API enter_yield() {
+        transfer_task(auto{loc.curr_task});
+        return false;
     }
 
     void yield() {

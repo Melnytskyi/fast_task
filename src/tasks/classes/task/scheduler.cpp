@@ -308,7 +308,11 @@ namespace fast_task::scheduler {
             std::this_thread::yield();
     }
 
-    void FT_API request_stw(const std::function<void()>& func) {
+    const std::shared_ptr<task>& current_context_task() {
+        return loc.curr_task;
+    }
+
+    void request_stw(const std::function<void()>& func) {
         if (!loc.is_task_thread)
             unsafe_perform_stop_the_world(func);
         else

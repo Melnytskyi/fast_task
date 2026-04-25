@@ -86,6 +86,17 @@ fast_task::task_coro<int> pipeline() {
 }
 
 TEST_F(CoroutineAwaitTest, SequentialPipeline) {
-    // Library bug: is_ended() is inverted; co_await reads result before set.
-    GTEST_SKIP() << "Skipped: library bug \u2014 is_ended() returns inverted value";
+    std::atomic<bool> done{false};
+    auto coro = [&done]() -> fast_task::task_coro<void> {
+        auto p = pipeline();
+        fast_task::scheduler::start(p.get_task());
+        int result = co_await p;
+        EXPECT_EQ(result, 3);
+        done = true;
+        co_return;
+    }();
+
+    fast_task::scheduler::start(coro.get_task());
+    coro->await_task();
+    EXPECT_TRUE(done.load());
 }

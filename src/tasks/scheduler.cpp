@@ -192,13 +192,12 @@ namespace fast_task {
             if (!checkCancellation()) {
                 flush_interrupt_data;
                 timer_reinit();
-                if (get_data(loc.curr_task).callbacks.is_extended_mode) {
-                    if (get_data(loc.curr_task).callbacks.extended_mode.on_start)
-                        get_data(loc.curr_task).callbacks.extended_mode.on_start(get_data(loc.curr_task).callbacks.extended_mode.data);
-                } else
-                    get_data(loc.curr_task).callbacks.normal_mode.func();
+                if (get_data(loc.curr_task).callbacks.on_start_override)
+                    get_data(loc.curr_task).callbacks.on_start_override(get_data(loc.curr_task).callbacks);
+                else if (get_data(loc.curr_task).callbacks.on_start)
+                    get_data(loc.curr_task).callbacks.on_start(get_data(loc.curr_task).callbacks.get_data());
             } else
-                this_task::the_coroutine_ended();
+                this_task::the_coroutine_ended(loc.curr_task);
         } catch (const task_cancellation& cancel) {
             forceCancelCancellation(cancel);
         } catch (const boost::context::detail::forced_unwind&) {
@@ -211,14 +210,13 @@ namespace fast_task {
         flush_interrupt_data;
         fast_task::lock_guard l(get_data(loc.curr_task).no_race);
         --glob.in_run_tasks;
-        if (get_data(loc.curr_task).callbacks.is_extended_mode) {
-            if (get_data(loc.curr_task).callbacks.extended_mode.is_restartable) {
-                get_data(loc.curr_task).started = false;
-                if (!loc.ex_ptr)
-                    get_data(loc.curr_task).result_notify.notify_all();
-                return std::move(*loc.stack_current_context);
-            }
+        if (get_data(loc.curr_task).callbacks.is_restartable) {
+            get_data(loc.curr_task).started = false;
+            if (!loc.ex_ptr)
+                get_data(loc.curr_task).result_notify.notify_all();
+            return std::move(*loc.stack_current_context);
         }
+
         if (!loc.ex_ptr) {
             get_data(loc.curr_task).end_of_life = true;
             get_data(loc.curr_task).result_notify.notify_all();
@@ -232,12 +230,10 @@ namespace fast_task {
             if (!checkCancellation()) {
                 flush_interrupt_data;
                 timer_reinit();
-                if (!get_data(loc.curr_task).callbacks.is_extended_mode) {
-                    if (get_data(loc.curr_task).callbacks.normal_mode.ex_handle)
-                        get_data(loc.curr_task).callbacks.normal_mode.ex_handle(loc.ex_ptr);
-                }
+                if (get_data(loc.curr_task).callbacks.on_exception)
+                    get_data(loc.curr_task).callbacks.on_exception(get_data(loc.curr_task).callbacks.get_data(), loc.ex_ptr);
             } else
-                this_task::the_coroutine_ended();
+                this_task::the_coroutine_ended(loc.curr_task);
         } catch (task_cancellation& cancel) {
             forceCancelCancellation(cancel);
         } catch (const boost::context::detail::forced_unwind&) {
@@ -248,8 +244,7 @@ namespace fast_task {
         }
         stop_timer();
         flush_interrupt_data;
-        mutex_unify uni(get_data(loc.curr_task).no_race);
-        fast_task::unique_lock l(uni);
+        fast_task::unique_lock l(get_data(loc.curr_task).no_race);
         get_data(loc.curr_task).end_of_life = true;
         get_data(loc.curr_task).result_notify.notify_all();
         --glob.in_run_tasks;
@@ -260,27 +255,21 @@ namespace fast_task {
         ++glob.in_run_tasks;
         try {
             if (!checkCancellation()) {
-                if (get_data(loc.curr_task).callbacks.is_extended_mode) {
-                    if (get_data(loc.curr_task).callbacks.extended_mode.on_start) {
-                        get_data(loc.curr_task).callbacks.extended_mode.on_start(get_data(loc.curr_task).callbacks.extended_mode.data);
-                    }
-                } else
-                    get_data(loc.curr_task).callbacks.normal_mode.func();
+                if (get_data(loc.curr_task).callbacks.on_start_override)
+                    get_data(loc.curr_task).callbacks.on_start_override(get_data(loc.curr_task).callbacks);
+                else if (get_data(loc.curr_task).callbacks.on_start)
+                    get_data(loc.curr_task).callbacks.on_start(get_data(loc.curr_task).callbacks.get_data());
                 get_data(loc.curr_task).relock_0.relock_start();
                 get_data(loc.curr_task).relock_1.relock_start();
                 get_data(loc.curr_task).relock_2.relock_start();
             } else
-                this_task::the_coroutine_ended();
+                this_task::the_coroutine_ended(loc.curr_task);
             {
                 fast_task::lock_guard guard(get_data(loc.curr_task).no_race);
-                if (get_data(loc.curr_task).callbacks.is_extended_mode) {
-                    if (get_data(loc.curr_task).callbacks.extended_mode.is_restartable)
-                        get_data(loc.curr_task).started = false;
-                    else
-                        get_data(loc.curr_task).end_of_life = true;
-                } else {
+                if (get_data(loc.curr_task).callbacks.is_restartable)
+                    get_data(loc.curr_task).started = false;
+                else
                     get_data(loc.curr_task).end_of_life = true;
-                }
                 get_data(loc.curr_task).result_notify.notify_all();
             }
         } catch (const task_cancellation& cancel) {
@@ -442,15 +431,12 @@ namespace fast_task {
     bool execute_task(const std::string& old_name) {
         if (!loc.curr_task)
             return false;
-        if (!get_data(loc.curr_task).callbacks.is_extended_mode) {
-            if (!get_data(loc.curr_task).callbacks.normal_mode.func) {
-                fast_task::lock_guard guard(get_data(loc.curr_task).no_race);
-                get_data(loc.curr_task).end_of_life = true;
-                loc.curr_task = nullptr;
-                return true;
-            }
-
-        } else if (!get_data(loc.curr_task).callbacks.extended_mode.on_start) {
+        if (get_data(loc.curr_task).callbacks.on_start == nullptr && get_data(loc.curr_task).callbacks.on_destruct == nullptr) {
+            fast_task::lock_guard guard(get_data(loc.curr_task).no_race);
+            get_data(loc.curr_task).end_of_life = true;
+            loc.curr_task = nullptr;
+            return true;
+        } else if (!get_data(loc.curr_task).callbacks.on_start) {
             fast_task::lock_guard guard(get_data(loc.curr_task).no_race);
             get_data(loc.curr_task).end_of_life = true;
             get_data(loc.curr_task).result_notify.notify_all();

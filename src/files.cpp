@@ -123,9 +123,9 @@ namespace fast_task::files {
                 fullifed = true;
                 if (awaiter) {
                     if (is_read && !required_full)
-                        awaiter->end_dummy([&](auto&) {});
+                        awaiter->end_dummy([&](auto) {});
                     else
-                        awaiter->end_dummy([&](auto& data) { ((completion_struct*)data)->error = io_errors::operation_canceled; });
+                        awaiter->end_dummy([&](auto data) { ((completion_struct*)data)->error = io_errors::operation_canceled; });
                 }
                 awaiters.notify_all();
                 awaiter = nullptr;
@@ -145,9 +145,9 @@ namespace fast_task::files {
             fullifed = true;
             if (awaiter) {
                 if (is_read)
-                    awaiter->end_dummy([&](auto& data) { auto tt = (completion_struct*)data; tt->completed_bytes = fullifed_bytes; tt->data = buffer; });
+                    awaiter->end_dummy([&](auto data) { auto tt = (completion_struct*)data; tt->completed_bytes = fullifed_bytes; tt->data = buffer; });
                 else
-                    awaiter->end_dummy([&](auto& data) { auto tt = (completion_struct*)data; tt->completed_bytes = fullifed_bytes; });
+                    awaiter->end_dummy([&](auto data) { auto tt = (completion_struct*)data; tt->completed_bytes = fullifed_bytes; });
             }
             awaiters.notify_all();
             awaiter = nullptr;
@@ -160,11 +160,11 @@ namespace fast_task::files {
             if (awaiter) {
                 if (fullifed_bytes) {
                     if (is_read)
-                        awaiter->end_dummy([&](auto& data) { auto tt = (completion_struct*)data; tt->completed_bytes = fullifed_bytes; tt->data = buffer; tt->error = e; });
+                        awaiter->end_dummy([&](auto data) { auto tt = (completion_struct*)data; tt->completed_bytes = fullifed_bytes; tt->data = buffer; tt->error = e; });
                     else
-                        awaiter->end_dummy([&](auto& data) { auto tt = (completion_struct*)data; tt->completed_bytes = fullifed_bytes; tt->error = e; });
+                        awaiter->end_dummy([&](auto data) { auto tt = (completion_struct*)data; tt->completed_bytes = fullifed_bytes; tt->error = e; });
                 } else
-                    awaiter->end_dummy([&](auto& data) { auto tt = (completion_struct*)data; tt->error = e; });
+                    awaiter->end_dummy([&](auto data) { auto tt = (completion_struct*)data; tt->error = e; });
             }
             awaiters.notify_all();
             awaiter = nullptr;
@@ -919,9 +919,9 @@ namespace fast_task::files {
                     fullifed = true;
                     if (awaiter) {
                         if (is_read && !required_full)
-                            awaiter->end_dummy([&](auto&) {});
+                            awaiter->end_dummy([&](auto) {});
                         else
-                            awaiter->end_dummy([&](auto& data) { ((completion_struct*)data)->error = io_errors::operation_canceled; });
+                            awaiter->end_dummy([&](auto data) { ((completion_struct*)data)->error = io_errors::operation_canceled; });
                     }
                     awaiters.notify_all();
                 }
@@ -941,9 +941,9 @@ namespace fast_task::files {
             fullifed = true;
             if (awaiter) {
                 if (is_read)
-                    awaiter->end_dummy([&](auto& data) { auto tt = (completion_struct*)data; tt->completed_bytes = fullifed_bytes; tt->data = buffer; });
+                    awaiter->end_dummy([&](auto data) { auto tt = (completion_struct*)data; tt->completed_bytes = fullifed_bytes; tt->data = buffer; });
                 else
-                    awaiter->end_dummy([&](auto& data) { auto tt = (completion_struct*)data; tt->completed_bytes = fullifed_bytes; });
+                    awaiter->end_dummy([&](auto data) { auto tt = (completion_struct*)data; tt->completed_bytes = fullifed_bytes; });
             }
             awaiters.notify_all();
             awaiter = nullptr;
@@ -956,11 +956,11 @@ namespace fast_task::files {
             if (awaiter) {
                 if (fullifed_bytes) {
                     if (is_read)
-                        awaiter->end_dummy([&](auto& data) { auto tt = (completion_struct*)data; tt->completed_bytes = fullifed_bytes; tt->data = buffer; tt->error = e; });
+                        awaiter->end_dummy([&](auto data) { auto tt = (completion_struct*)data; tt->completed_bytes = fullifed_bytes; tt->data = buffer; tt->error = e; });
                     else
-                        awaiter->end_dummy([&](auto& data) { auto tt = (completion_struct*)data; tt->completed_bytes = fullifed_bytes; tt->error = e; });
+                        awaiter->end_dummy([&](auto data) { auto tt = (completion_struct*)data; tt->completed_bytes = fullifed_bytes; tt->error = e; });
                 } else
-                    awaiter->end_dummy([&](auto& data) { auto tt = (completion_struct*)data; tt->error = e; });
+                    awaiter->end_dummy([&](auto data) { auto tt = (completion_struct*)data; tt->error = e; });
             }
             awaiters.notify_all();
             awaiter = nullptr;

@@ -161,44 +161,6 @@ namespace fast_task {
         return values.locked;
     }
 
-    bool task_limiter::task_lock_awaiter::await_ready() noexcept {
-        return lim.try_lock();
-    }
-
-    bool task_limiter::task_lock_awaiter::await_suspend(base_coro_handle h) {
-        return !lim.enter_wait(h.promise->task_object);
-    }
-
-    void task_limiter::task_lock_awaiter::await_resume() {}
-
-    bool task_limiter::task_try_lock_awaiter::await_ready() noexcept {
-        successful = lim.try_lock();
-        return successful;
-    }
-
-    bool task_limiter::task_try_lock_awaiter::await_suspend(base_coro_handle h) {
-        return !lim.enter_wait_until(h.promise->task_object, time_point);
-    }
-
-    bool task_limiter::task_try_lock_awaiter::await_resume() {
-        if (successful)
-            return true;
-        auto& task_ptr = handle.promise->task_object;
-        successful = !task_ptr->has_wait_timed_out();
-        return successful;
-    }
-
-    task_limiter::task_lock_awaiter task_limiter::async_lock() {
-        return task_lock_awaiter{*this};
-    }
-
-    task_limiter::task_try_lock_awaiter task_limiter::async_try_lock_until(std::chrono::high_resolution_clock::time_point time_point) {
-        return task_try_lock_awaiter{
-            *this,
-            time_point
-        };
-    }
-
     bool task_limiter::enter_wait(const std::shared_ptr<task>& task) {
         fast_task::lock_guard guard(values.no_race);
 

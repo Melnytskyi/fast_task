@@ -1,13 +1,20 @@
-#ifndef INCLUDE_TASK_PROMISE
-#define INCLUDE_TASK_PROMISE
+#ifndef INCLUDE_COROUTINE_PROMISE
+#define INCLUDE_COROUTINE_PROMISE
 
-#include "fwd.hpp"
+#include "../task/fwd.hpp"
+#include "../task/this_task.hpp"
 
 namespace fast_task {
-    struct FT_API_LOCAL task_promise_base {
+    struct FT_API task_promise_base {
         std::shared_ptr<task> task_object;
-        std::suspend_always initial_suspend() noexcept;
-        std::suspend_always final_suspend() noexcept;
+        std::suspend_always initial_suspend() noexcept {
+            return {};
+        }
+
+        std::suspend_always final_suspend() noexcept {
+            fast_task::this_task::the_coroutine_ended(task_object);
+            return {};
+        }
     };
 
     struct FT_API base_coro_handle {

@@ -173,67 +173,16 @@ namespace fast_task {
     void task_mutex::lifecycle_lock(std::shared_ptr<task>&& lock_task) {
         if (get_data(lock_task).started)
             throw std::logic_error("Task already started");
-        if (get_data(lock_task).callbacks.is_extended_mode) {
-            if (!get_data(lock_task).callbacks.extended_mode.on_start)
-                throw std::logic_error("lifecycle_lock requires in extended mode the on_start variable to be set");
-            else if (!get_data(lock_task).callbacks.extended_mode.is_restartable)
-                throw std::logic_error("lifecycle_lock requires in extended mode the restartable mode to be disabled");
-            else {
-                task::run([lock_task, this]() {
-                    fast_task::lock_guard guard(*this);
-                    task::await_task(lock_task, true);
-                });
-            }
-        } else {
-            auto old_func = std::move(get_data(lock_task).callbacks.normal_mode.func);
-            get_data(lock_task).callbacks.normal_mode.func = [old_func = std::move(old_func), this]() mutable {
+        if (!get_data(lock_task).callbacks.on_start)
+            throw std::logic_error("lifecycle_lock requires the on_start variable to be set");
+        else if (!get_data(lock_task).callbacks.is_restartable)
+            throw std::logic_error("lifecycle_lock requires the restartable mode to be disabled");
+        else {
+            task::run([lock_task, this]() {
                 fast_task::lock_guard guard(*this);
-                old_func();
-            };
-            scheduler::start(lock_task);
+                task::await_task(lock_task, true);
+            });
         }
-    }
-
-    bool task_mutex::task_mutex_lock_awaiter::await_ready() noexcept {
-        return mutex.try_lock();
-    }
-
-    bool task_mutex::task_mutex_lock_awaiter::await_suspend(base_coro_handle h) {
-        return !mutex.enter_wait(h.promise->task_object);
-    }
-
-    void task_mutex::task_mutex_lock_awaiter::await_resume() noexcept {}
-
-    bool task_mutex::task_mutex_try_lock_awaiter::await_ready() noexcept {
-        if (mutex.try_lock()) {
-            successful = true;
-            return true;
-        }
-        return false;
-    }
-
-    bool task_mutex::task_mutex_try_lock_awaiter::await_suspend(base_coro_handle h) {
-        handle = h;
-        return !mutex.enter_wait_until(h.promise->task_object, time_point);
-    }
-
-    bool task_mutex::task_mutex_try_lock_awaiter::await_resume() noexcept {
-        if (successful)
-            return true;
-        auto& task_ptr = handle.promise->task_object;
-        successful = !task_ptr->has_wait_timed_out();
-        return successful;
-    }
-
-    task_mutex::task_mutex_lock_awaiter task_mutex::async_lock() {
-        return task_mutex_lock_awaiter{*this};
-    }
-
-    task_mutex::task_mutex_try_lock_awaiter task_mutex::async_try_lock_until(std::chrono::high_resolution_clock::time_point time_point) {
-        return task_mutex_try_lock_awaiter{
-            *this,
-            time_point
-        };
     }
 
     bool task_mutex::enter_wait(const std::shared_ptr<task>& task) {

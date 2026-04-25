@@ -276,62 +276,18 @@ namespace fast_task {
         ++glob.executing_tasks;
     }
 
-    bool task_condition_variable::task_wait_awaiter::await_ready() noexcept {
-        return false;
-    }
-
-    bool task_condition_variable::task_wait_awaiter::await_suspend(base_coro_handle h) {
-        return !cv.enter_wait(h.promise->task_object);
-    }
-
-    void task_condition_variable::task_wait_awaiter::await_resume() noexcept {
-        get_data(loc.curr_task).relock_0 = nullptr;
-        get_data(loc.curr_task).relock_1 = nullptr;
-        get_data(loc.curr_task).relock_2 = nullptr;
-    }
-
-    bool task_condition_variable::task_wait_until_awaiter::await_ready() noexcept {
-        successful = std::chrono::high_resolution_clock::now() >= time_point;
-        return successful;
-    }
-
-    bool task_condition_variable::task_wait_until_awaiter::await_suspend(base_coro_handle h) {
-        return !cv.enter_wait_until(h.promise->task_object, time_point);
-    }
-
-    bool task_condition_variable::task_wait_until_awaiter::await_resume() noexcept {
-        get_data(loc.curr_task).relock_0 = nullptr;
-        get_data(loc.curr_task).relock_1 = nullptr;
-        get_data(loc.curr_task).relock_2 = nullptr;
-
-        if (successful)
-            return true;
-
-        successful = !loc.curr_task->has_wait_timed_out();
-        return successful;
-    }
-
-    task_condition_variable::task_wait_awaiter task_condition_variable::async_wait(fast_task::unique_lock<mutex_unify>& lock) {
-        get_data(loc.curr_task).relock_0 = *lock.mutex();
-        return task_wait_awaiter{*this};
-    }
-
-    task_condition_variable::task_wait_until_awaiter task_condition_variable::async_wait_until(fast_task::unique_lock<mutex_unify>& lock, std::chrono::high_resolution_clock::time_point time_point) {
-        get_data(loc.curr_task).relock_0 = *lock.mutex();
-        return task_wait_until_awaiter{
-            *this,
-            time_point
-        };
-    }
-
-    bool task_condition_variable::enter_wait(const std::shared_ptr<task>& task) {
+    bool task_condition_variable::enter_wait(mutex_unify& mut, const std::shared_ptr<task>& task) {
         fast_task::lock_guard l(values.no_race);
+        get_data(loc.curr_task).relock_0 = mut;
         values.resume_task.push_back({task, get_data(task).awake_check, nullptr, nullptr});
         return false;
     }
 
-    bool task_condition_variable::enter_wait_until(const std::shared_ptr<task>& task, std::chrono::high_resolution_clock::time_point time_point) {
+    bool task_condition_variable::enter_wait_until(mutex_unify& mut, const std::shared_ptr<task>& task, std::chrono::high_resolution_clock::time_point time_point) {
+        if (std::chrono::high_resolution_clock::now() >= time_point)
+            return true;
         fast_task::lock_guard l(values.no_race);
+        get_data(loc.curr_task).relock_0 = mut;
         values.resume_task.push_back({task, get_data(task).awake_check, nullptr, nullptr});
         fast_task::makeTimeWait_extern(task, time_point);
         return false;

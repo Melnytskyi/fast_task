@@ -135,49 +135,6 @@ namespace fast_task {
         return false;
     }
 
-    bool task_recursive_mutex::task_mutex_lock_awaiter::await_ready() noexcept {
-        return mutex.try_lock();
-    }
-
-    bool task_recursive_mutex::task_mutex_lock_awaiter::await_suspend(base_coro_handle h) {
-        return !mutex.enter_wait(h.promise->task_object);
-    }
-
-    void task_recursive_mutex::task_mutex_lock_awaiter::await_resume() noexcept {}
-
-    bool task_recursive_mutex::task_mutex_try_lock_awaiter::await_ready() noexcept {
-        if (mutex.try_lock()) {
-            successful = true;
-            return true;
-        }
-        return false;
-    }
-
-    bool task_recursive_mutex::task_mutex_try_lock_awaiter::await_suspend(base_coro_handle h) {
-        return !mutex.enter_wait_until(h.promise->task_object, time_point);
-    }
-
-    bool task_recursive_mutex::task_mutex_try_lock_awaiter::await_resume() noexcept {
-        if (successful)
-            return true;
-        auto& task_ptr = handle.promise->task_object;
-        successful = !task_ptr->has_wait_timed_out();
-        if (successful)
-            resetTimeWait();
-        return successful;
-    }
-
-    task_recursive_mutex::task_mutex_lock_awaiter task_recursive_mutex::async_lock() {
-        return task_mutex_lock_awaiter{*this};
-    }
-
-    task_recursive_mutex::task_mutex_try_lock_awaiter task_recursive_mutex::async_try_lock_until(std::chrono::high_resolution_clock::time_point time_point) {
-        return task_mutex_try_lock_awaiter{
-            *this,
-            time_point
-        };
-    }
-
     bool task_recursive_mutex::enter_wait(const std::shared_ptr<task>& task) {
         fast_task::lock_guard l(mutex.values.no_race);
         if (mutex.values.current_task == task.get()) {

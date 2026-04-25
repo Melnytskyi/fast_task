@@ -106,9 +106,7 @@ Timing is implemented using a dedicated time controller thread (`taskTimer`). Al
 
 The synchronization primitives create their own condition variables with a flag for each awaiting native thread. This effectively solves the issue of spurious wakeups by allowing the thread to confirm it was intentionally notified.
 
-The `task` class has two modes:
-1.  A **normal mode**, which creates stackful tasks using `std::move_only_function` callbacks.
-2.  An **extended mode**, which allows setting custom await, cancel, or destruct operations. This mode enables the creation of tasks that execute directly on worker threads without allocating separate stacks (stackless). It also allows tasks to be restartable, enabling yield-like behavior for both stackful and stackless tasks. This mode is used to implement coroutines, network I/O, and file I/O.
+The `task` class utilizes a unified callback architecture with manual type erasure and Small Buffer Optimization (SBO). This design efficiently stores task states (like capturing lambdas) without unnecessary heap allocations and ensures C++17 compatibility by avoiding standard library function wrappers. It provides the flexibility to set custom await, cancel, exception handling, or destruct operations. This architecture allows tasks to execute directly on worker threads without allocating separate stacks (stackless) or to run with separate stacks (stackful). It also allows tasks to be restartable, enabling yield-like behavior for both stackful and stackless tasks. This mechanism forms the foundation for implementing coroutines, network I/O, and file I/O.
 
 Time-slicing interrupts are processed outside the main time controller. On Windows, when a timer expires, an `interrupt_processor` thread uses `fast_task::thread::insert_context` to execute the `interruptTask` function. On Linux, it uses a custom signal (`PREEMPTION_SIGNAL`) for the same purpose. On both platforms, `interruptTask` checks if preemption is safe and then uses `swapCtx` to switch back to the scheduler. Stackless tasks do not support preemption as they execute directly on the scheduler's thread.
 

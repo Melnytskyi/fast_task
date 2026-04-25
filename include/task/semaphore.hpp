@@ -1,3 +1,9 @@
+// Copyright Danyil Melnytskyi 2024-Present
+//
+// Distributed under the Boost Software License, Version 1.0.
+// (See accompanying file LICENSE or copy at
+// http://www.boost.org/LICENSE_1_0.txt)
+
 #ifndef INCLUDE_TASK_SEMAPHORE
 #define INCLUDE_TASK_SEMAPHORE
 
@@ -18,30 +24,9 @@ namespace fast_task {
             size_t max_threshold = 0;
         } values;
 
-        struct FT_API [[nodiscard]] task_lock_awaiter {
-            task_semaphore& sem;
-
-            bool await_ready() noexcept;
-            bool await_suspend(base_coro_handle h);
-            void await_resume() noexcept;
-        };
-
-        struct FT_API [[nodiscard]] task_try_lock_awaiter {
-            task_semaphore& sem;
-            std::chrono::high_resolution_clock::time_point time_point;
-            base_coro_handle handle;
-            bool successful = false;
-
-            bool await_ready() noexcept;
-            bool await_suspend(base_coro_handle h);
-            bool await_resume() noexcept;
-        };
-
     public:
         task_semaphore();
         ~task_semaphore();
-        task_lock_awaiter async_lock();
-        task_try_lock_awaiter async_try_lock_until(std::chrono::high_resolution_clock::time_point time_point);
 
         void set_max_threshold(size_t val);
         void lock();
@@ -57,11 +42,6 @@ namespace fast_task {
         template <class Rep, class Period>
         bool try_lock_for(const std::chrono::duration<Rep, Period>& duration) {
             return try_lock_until(std::chrono::high_resolution_clock::now() + duration);
-        }
-
-        template <class Rep, class Period>
-        task_try_lock_awaiter async_try_lock_for(const std::chrono::duration<Rep, Period>& duration) {
-            return async_try_lock_until(std::chrono::high_resolution_clock::now() + duration);
         }
     };
 
@@ -83,30 +63,9 @@ namespace fast_task {
 
         void unchecked_unlock();
 
-        struct FT_API [[nodiscard]] task_lock_awaiter {
-            task_limiter& lim;
-
-            bool await_ready() noexcept;
-            bool await_suspend(base_coro_handle h);
-            void await_resume();
-        };
-
-        struct FT_API [[nodiscard]] task_try_lock_awaiter {
-            task_limiter& lim;
-            std::chrono::high_resolution_clock::time_point time_point;
-            base_coro_handle handle;
-            bool successful = false;
-
-            bool await_ready() noexcept;
-            bool await_suspend(base_coro_handle h);
-            bool await_resume();
-        };
-
     public:
         task_limiter();
         ~task_limiter();
-        task_lock_awaiter async_lock();
-        task_try_lock_awaiter async_try_lock_until(std::chrono::high_resolution_clock::time_point time_point);
 
         void set_max_threshold(size_t val);
         void lock();
@@ -121,11 +80,6 @@ namespace fast_task {
         template <class Rep, class Period>
         bool try_lock_for(const std::chrono::duration<Rep, Period>& duration) {
             return try_lock_until(std::chrono::high_resolution_clock::now() + duration);
-        }
-
-        template <class Rep, class Period>
-        task_try_lock_awaiter async_try_lock_for(const std::chrono::duration<Rep, Period>& duration) {
-            return async_try_lock_until(std::chrono::high_resolution_clock::now() + duration);
         }
     };
 }
