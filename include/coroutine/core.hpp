@@ -281,19 +281,21 @@ namespace fast_task {
                     return true;
                 }
 
-                T await_resume() {
+                auto await_resume() {
+                    void* handle_address = nullptr;
+                    task_handle->access_dummy([&](void* data) {
+                        handle_address = data;
+                    });
+
+                    if (!handle_address)
+                        throw std::runtime_error("Coroutine task has no valid handle address.");
+
+                    auto handle = std::coroutine_handle<fast_task::task_promise<T>>::from_address(handle_address);
+                    fast_task::task_promise<T>& promise = handle.promise();
                     if constexpr (!std::is_same_v<T, void>) {
-                        void* handle_address = nullptr;
-                        task_handle->access_dummy([&](void* data) {
-                            handle_address = data;
-                        });
-
-                        if (!handle_address)
-                            throw std::runtime_error("Coroutine task has no valid handle address.");
-
-                        auto handle = std::coroutine_handle<fast_task::task_promise<T>>::from_address(handle_address);
-                        fast_task::task_promise<T>& promise = handle.promise();
                         return std::move(promise.result());
+                    } else {
+                        promise.result();
                     }
                 }
             };

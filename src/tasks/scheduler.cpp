@@ -212,8 +212,6 @@ namespace fast_task {
         --glob.in_run_tasks;
         if (get_data(loc.curr_task).callbacks.is_restartable) {
             get_data(loc.curr_task).started = false;
-            if (!loc.ex_ptr)
-                get_data(loc.curr_task).result_notify.notify_all();
             return std::move(*loc.stack_current_context);
         }
 
@@ -266,11 +264,12 @@ namespace fast_task {
                 this_task::the_coroutine_ended(loc.curr_task);
             {
                 fast_task::lock_guard guard(get_data(loc.curr_task).no_race);
-                if (get_data(loc.curr_task).callbacks.is_restartable)
+                if (get_data(loc.curr_task).callbacks.is_restartable) {
                     get_data(loc.curr_task).started = false;
-                else
+                } else {
                     get_data(loc.curr_task).end_of_life = true;
-                get_data(loc.curr_task).result_notify.notify_all();
+                    get_data(loc.curr_task).result_notify.notify_all();
+                }
             }
         } catch (const task_cancellation& cancel) {
             forceCancelCancellation(cancel);
