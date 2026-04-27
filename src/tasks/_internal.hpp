@@ -243,6 +243,7 @@ namespace fast_task {
 
         std::atomic<bool> time_control_enabled{false};
         std::atomic<bool> shutdown_requested{false};
+        std::atomic<bool> executor_shutting_down{false};
 
         std::atomic_size_t interrupts = 0; //debug counter of the usermode fast_task interrupts
         std::atomic_size_t executors = 0;

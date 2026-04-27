@@ -302,12 +302,19 @@ namespace fast_task::scheduler {
         glob.tasks_notifier.notify_all();
         while (glob.executors)
             glob.executor_shutdown_notifier.wait(guard);
+        // Signal any executor threads that started after the null-task send above
+        // so they exit instead of waiting forever for work.
+        glob.executor_shutting_down.store(true, std::memory_order_release);
+        glob.tasks_notifier.notify_all();
+        while (glob.executors)
+            glob.executor_shutdown_notifier.wait(guard);
         glob.time_control_enabled = false;
         glob.time_notifier.notify_all();
         guard.unlock();
 
         while (glob.thread_count.load())
             std::this_thread::yield();
+        glob.executor_shutting_down.store(false, std::memory_order_release);
     }
 
     const std::shared_ptr<task>& current_context_task() {

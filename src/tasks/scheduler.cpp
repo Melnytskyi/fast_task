@@ -546,7 +546,11 @@ namespace fast_task {
                 else {
                     fast_task::unique_lock guard(glob.task_thread_safety);
                     if (glob.tasks.size_approx() == 0 && glob.cold_tasks.size_approx() == 0) {
+                        if (glob.executor_shutting_down.load(std::memory_order_acquire))
+                            goto exit_path;
                         glob.tasks_notifier.wait(guard);
+                        if (glob.executor_shutting_down.load(std::memory_order_acquire))
+                            goto exit_path;
                     }
                 }
                 continue;
@@ -731,7 +735,6 @@ namespace fast_task {
 #pragma endregion
 
     void taskTimer() {
-        glob.time_control_enabled = true;
         _set_name_thread_dbg("task time controller");
 
         fast_task::unique_lock guard(glob.task_timer_safety);
@@ -852,16 +855,16 @@ namespace fast_task {
         if (glob.time_control_enabled)
             return;
         ++glob.thread_count;
-        fast_task::thread(taskTimer).detach();
         glob.time_control_enabled = true;
+        fast_task::thread(taskTimer).detach();
     }
 
     void startTimeController_unsafe() {
         if (glob.time_control_enabled)
             return;
         ++glob.thread_count;
-        fast_task::thread(taskTimer).detach();
         glob.time_control_enabled = true;
+        fast_task::thread(taskTimer).detach();
     }
 
     void unsafe_put_task_to_timed_queue(std::deque<timing>& queue, std::chrono::high_resolution_clock::time_point t, std::shared_ptr<task>& task) {
