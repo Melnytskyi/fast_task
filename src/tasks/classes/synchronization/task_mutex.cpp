@@ -88,7 +88,7 @@ namespace fast_task {
                 auto awaked = get_data(loc.curr_task).awaked;
                 resetTimeWait();
                 if (!awaked) {
-                    auto it = std::find_if(values.resume_task.begin(), values.resume_task.end(), [](const auto& a) { return a.it == loc.curr_task; });
+                    auto it = std::find_if(values.resume_task.begin(), values.resume_task.end(), [](const auto& a) { return a.task == loc.curr_task; });
                     if (it != values.resume_task.end())
                         values.resume_task.erase(it);
                     return false;
