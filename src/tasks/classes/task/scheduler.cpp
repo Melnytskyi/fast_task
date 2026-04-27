@@ -304,6 +304,7 @@ namespace fast_task::scheduler {
             glob.executor_shutdown_notifier.wait(guard);
         glob.time_control_enabled = false;
         glob.time_notifier.notify_all();
+        guard.unlock();
 
         while (glob.thread_count.load())
             std::this_thread::yield();
