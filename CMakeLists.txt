@@ -116,6 +116,9 @@ if(NOT concurrentqueue_FOUND)
     GIT_TAG        v1.0.5
   )
   FetchContent_MakeAvailable(concurrentqueue)
+  if(NOT TARGET concurrentqueue::concurrentqueue)
+    add_library(concurrentqueue::concurrentqueue ALIAS concurrentqueue)
+  endif()
 endif()
 target_include_directories(fast_task PRIVATE ${Boost_INCLUDE_DIRS} ${fast_task_INCLUDE_DIR} ${concurrentqueue_INCLUDE_DIRS})
 set_target_properties(fast_task
