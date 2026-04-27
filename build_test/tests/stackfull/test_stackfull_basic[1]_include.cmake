@@ -1,0 +1,5 @@
+if(EXISTS "/home/runner/work/fast_task/fast_task/build_test/tests/stackfull/test_stackfull_basic[1]_tests.cmake")
+  include("/home/runner/work/fast_task/fast_task/build_test/tests/stackfull/test_stackfull_basic[1]_tests.cmake")
+else()
+  add_test(test_stackfull_basic_NOT_BUILT test_stackfull_basic_NOT_BUILT)
+endif()

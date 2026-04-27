@@ -1,0 +1,8 @@
+# ninja log v7
+2	5	1777284625150475676	/home/runner/work/fast_task/fast_task/build_test/CMakeFiles/cmake.verify_globs	c2e6602e150febc7
+6	72	1777284625153115555	CMakeFiles/fast_task.dir/src/allocator.cpp.o	e3fee63ad2fa57c2
+3	6	1777284647448586302	/home/runner/work/fast_task/fast_task/build_test/CMakeFiles/cmake.verify_globs	c2e6602e150febc7
+3	6	1777284664989954654	/home/runner/work/fast_task/fast_task/build_test/CMakeFiles/cmake.verify_globs	c2e6602e150febc7
+3	37	1777284683130336195	/home/runner/work/fast_task/fast_task/build_test/CMakeFiles/cmake.verify_globs	c2e6602e150febc7
+3	6	1777284689792475496	/home/runner/work/fast_task/fast_task/build_test/CMakeFiles/cmake.verify_globs	c2e6602e150febc7
+3	6	1777284696615617575	/home/runner/work/fast_task/fast_task/build_test/CMakeFiles/cmake.verify_globs	c2e6602e150febc7

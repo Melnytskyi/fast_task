@@ -1,0 +1,14 @@
+prefix=${pcfiledir}/../..
+
+exec_prefix="${prefix}"
+libdir="${prefix}/lib"
+includedir="${prefix}/../include/libdwarf"
+
+Name: libdwarf
+Description: DWARF debug symbols library
+Version: 2.3.1
+
+
+Libs: "-L${libdir}" -ldwarf
+Requires: zlib libzstd
+Cflags: "-I${includedir}"

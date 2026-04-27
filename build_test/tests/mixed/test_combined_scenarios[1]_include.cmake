@@ -1,0 +1,5 @@
+if(EXISTS "/home/runner/work/fast_task/fast_task/build_test/tests/mixed/test_combined_scenarios[1]_tests.cmake")
+  include("/home/runner/work/fast_task/fast_task/build_test/tests/mixed/test_combined_scenarios[1]_tests.cmake")
+else()
+  add_test(test_combined_scenarios_NOT_BUILT test_combined_scenarios_NOT_BUILT)
+endif()

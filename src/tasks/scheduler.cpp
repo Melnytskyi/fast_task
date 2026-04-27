@@ -574,7 +574,6 @@ namespace fast_task {
         }
     exit_path:
         --glob.executors;
-        --glob.thread_count;
         glob.executor_shutdown_notifier.notify_all();
         if (!prevent_naming)
             _set_name_thread_dbg(old_name);
@@ -597,6 +596,7 @@ namespace fast_task {
             while (loc.local_tasks->pop(loc.curr_task))
                 glob.tasks.enqueue(std::move(loc.curr_task));
         glob.tasks_notifier.unsafe_notify_all();
+        --glob.thread_count;
     }
 
     bool loadTaskBinded(binded_context& context) {
@@ -831,6 +831,8 @@ namespace fast_task {
 
             check_stw();
             guard.lock();
+            if (!glob.time_control_enabled)
+                break;
             if (glob.shutdown_requested.load(std::memory_order_acquire))
                 glob.time_notifier.wait(guard);
             else if (glob.timed_tasks.empty() && glob.cold_timed_tasks.empty())

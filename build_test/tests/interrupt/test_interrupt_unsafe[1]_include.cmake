@@ -1,0 +1,5 @@
+if(EXISTS "/home/runner/work/fast_task/fast_task/build_test/tests/interrupt/test_interrupt_unsafe[1]_tests.cmake")
+  include("/home/runner/work/fast_task/fast_task/build_test/tests/interrupt/test_interrupt_unsafe[1]_tests.cmake")
+else()
+  add_test(test_interrupt_unsafe_NOT_BUILT test_interrupt_unsafe_NOT_BUILT)
+endif()

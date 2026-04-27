@@ -1,0 +1,5 @@
+if(EXISTS "/home/runner/work/fast_task/fast_task/build_test/tests/threading/test_timed_mutex[1]_tests.cmake")
+  include("/home/runner/work/fast_task/fast_task/build_test/tests/threading/test_timed_mutex[1]_tests.cmake")
+else()
+  add_test(test_timed_mutex_NOT_BUILT test_timed_mutex_NOT_BUILT)
+endif()

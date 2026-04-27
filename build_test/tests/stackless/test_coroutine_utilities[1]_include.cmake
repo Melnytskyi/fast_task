@@ -1,0 +1,5 @@
+if(EXISTS "/home/runner/work/fast_task/fast_task/build_test/tests/stackless/test_coroutine_utilities[1]_tests.cmake")
+  include("/home/runner/work/fast_task/fast_task/build_test/tests/stackless/test_coroutine_utilities[1]_tests.cmake")
+else()
+  add_test(test_coroutine_utilities_NOT_BUILT test_coroutine_utilities_NOT_BUILT)
+endif()

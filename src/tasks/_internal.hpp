@@ -241,7 +241,7 @@ namespace fast_task {
         fast_task::condition_variable time_notifier;
         fast_task::condition_variable_any executor_shutdown_notifier;
 
-        bool time_control_enabled = false;
+        std::atomic<bool> time_control_enabled{false};
         std::atomic<bool> shutdown_requested{false};
 
         std::atomic_size_t interrupts = 0; //debug counter of the usermode fast_task interrupts
