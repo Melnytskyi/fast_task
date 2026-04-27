@@ -431,8 +431,10 @@ namespace fast_task {
         if (!loc.curr_task)
             return false;
         if (get_data(loc.curr_task).callbacks.on_start == nullptr && get_data(loc.curr_task).callbacks.on_destruct == nullptr) {
-            fast_task::lock_guard guard(get_data(loc.curr_task).no_race);
-            get_data(loc.curr_task).end_of_life = true;
+            {
+                fast_task::lock_guard guard(get_data(loc.curr_task).no_race);
+                get_data(loc.curr_task).end_of_life = true;
+            }
             loc.curr_task = nullptr;
             return true;
         } else if (!get_data(loc.curr_task).callbacks.on_start) {
@@ -636,10 +638,14 @@ namespace fast_task {
                     break;
                 if (!context.tasks.try_dequeue(loc.curr_task)) {
                     context.new_task_notifier.wait(guard);
-                } else
+                } else {
+                    loc.stack_current_context = &get_execution_data(loc.curr_task).context;
                     return true;
-            } else
+                }
+            } else {
+                loc.stack_current_context = &get_execution_data(loc.curr_task).context;
                 return true;
+            }
         }
         return false;
     }
