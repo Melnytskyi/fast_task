@@ -1,5 +1,0 @@
-if(EXISTS "/home/runner/work/fast_task/fast_task/build_test/tests/mixed/test_native_task_sync[1]_tests.cmake")
-  include("/home/runner/work/fast_task/fast_task/build_test/tests/mixed/test_native_task_sync[1]_tests.cmake")
-else()
-  add_test(test_native_task_sync_NOT_BUILT test_native_task_sync_NOT_BUILT)
-endif()

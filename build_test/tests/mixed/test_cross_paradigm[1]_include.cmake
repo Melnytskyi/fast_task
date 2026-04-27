@@ -1,5 +1,0 @@
-if(EXISTS "/home/runner/work/fast_task/fast_task/build_test/tests/mixed/test_cross_paradigm[1]_tests.cmake")
-  include("/home/runner/work/fast_task/fast_task/build_test/tests/mixed/test_cross_paradigm[1]_tests.cmake")
-else()
-  add_test(test_cross_paradigm_NOT_BUILT test_cross_paradigm_NOT_BUILT)
-endif()

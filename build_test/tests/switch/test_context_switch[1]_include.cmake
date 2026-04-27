@@ -1,5 +1,0 @@
-if(EXISTS "/home/runner/work/fast_task/fast_task/build_test/tests/switch/test_context_switch[1]_tests.cmake")
-  include("/home/runner/work/fast_task/fast_task/build_test/tests/switch/test_context_switch[1]_tests.cmake")
-else()
-  add_test(test_context_switch_NOT_BUILT test_context_switch_NOT_BUILT)
-endif()

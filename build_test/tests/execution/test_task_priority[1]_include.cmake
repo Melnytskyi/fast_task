@@ -1,5 +1,0 @@
-if(EXISTS "/home/runner/work/fast_task/fast_task/build_test/tests/execution/test_task_priority[1]_tests.cmake")
-  include("/home/runner/work/fast_task/fast_task/build_test/tests/execution/test_task_priority[1]_tests.cmake")
-else()
-  add_test(test_task_priority_NOT_BUILT test_task_priority_NOT_BUILT)
-endif()

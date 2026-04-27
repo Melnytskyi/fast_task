@@ -1,5 +1,0 @@
-if(EXISTS "/home/runner/work/fast_task/fast_task/build_test/tests/threading/test_spin_lock[1]_tests.cmake")
-  include("/home/runner/work/fast_task/fast_task/build_test/tests/threading/test_spin_lock[1]_tests.cmake")
-else()
-  add_test(test_spin_lock_NOT_BUILT test_spin_lock_NOT_BUILT)
-endif()

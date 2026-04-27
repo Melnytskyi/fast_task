@@ -1,5 +1,0 @@
-if(EXISTS "/home/runner/work/fast_task/fast_task/build_test/tests/scheduler/test_bind_executor[1]_tests.cmake")
-  include("/home/runner/work/fast_task/fast_task/build_test/tests/scheduler/test_bind_executor[1]_tests.cmake")
-else()
-  add_test(test_bind_executor_NOT_BUILT test_bind_executor_NOT_BUILT)
-endif()

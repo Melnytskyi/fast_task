@@ -1,5 +1,0 @@
-if(EXISTS "/home/runner/work/fast_task/fast_task/build_test/tests/threading/test_condition_variable[1]_tests.cmake")
-  include("/home/runner/work/fast_task/fast_task/build_test/tests/threading/test_condition_variable[1]_tests.cmake")
-else()
-  add_test(test_condition_variable_NOT_BUILT test_condition_variable_NOT_BUILT)
-endif()
