@@ -11,29 +11,29 @@
 #include "detail/lock_misc.hpp"
 
 namespace fast_task {
-    inline [[nodiscard]] auto async_lock(mutex_unify& mut) {
+    [[nodiscard]] inline auto async_lock(mutex_unify& mut) {
         return detail::async_lock(mut);
     }
 
-    inline [[nodiscard]] auto async_try_lock_until(mutex_unify& mut, std::chrono::high_resolution_clock::time_point time_point) {
+    [[nodiscard]] inline auto async_try_lock_until(mutex_unify& mut, std::chrono::high_resolution_clock::time_point time_point) {
         return detail::async_try_lock_until(mut, time_point);
     }
 
     template <class Rep, class Period>
-    inline [[nodiscard]] auto async_try_lock_for(mutex_unify& mut, const std::chrono::duration<Rep, Period>& duration) {
+    [[nodiscard]] inline auto async_try_lock_for(mutex_unify& mut, const std::chrono::duration<Rep, Period>& duration) {
         return detail::async_try_lock_until(mut, std::chrono::high_resolution_clock::now() + duration);
     }
 
-    inline [[nodiscard]] auto async_lock(multiply_mutex& mut) {
+    [[nodiscard]] inline auto async_lock(multiply_mutex& mut) {
         return detail::async_lock(mut);
     }
 
-    inline [[nodiscard]] auto async_try_lock_until(multiply_mutex& mut, std::chrono::high_resolution_clock::time_point time_point) {
+    [[nodiscard]] inline auto async_try_lock_until(multiply_mutex& mut, std::chrono::high_resolution_clock::time_point time_point) {
         return detail::async_try_lock_until(mut, time_point);
     }
 
     template <class Rep, class Period>
-    inline [[nodiscard]] auto async_try_lock_for(multiply_mutex& mut, const std::chrono::duration<Rep, Period>& duration) {
+    [[nodiscard]] inline auto async_try_lock_for(multiply_mutex& mut, const std::chrono::duration<Rep, Period>& duration) {
         return detail::async_try_lock_until(mut, std::chrono::high_resolution_clock::now() + duration);
     }
 }

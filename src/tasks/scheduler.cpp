@@ -387,7 +387,7 @@ namespace fast_task {
         }
 
         {
-            auto queues = glob.executors_queues.load(std::memory_order::memory_order_relaxed);
+            auto queues = glob.executors_queues.load(std::memory_order_relaxed);
             if (queues) {
                 if (!queues->empty()) {
                     auto& engine = get_thread_local_random_engine();

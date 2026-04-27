@@ -22,7 +22,7 @@ namespace fast_task::interrupt {
         std::atomic_size_t guard_zones = 0;
         bool enabled_timers = true;
         bool initialized = false; //used in linux
-        std::shared_ptr<handle> handle;
+        std::shared_ptr<struct handle> handle;
 
         timer_handle();
 

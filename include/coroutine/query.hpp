@@ -11,7 +11,7 @@
 #include "core.hpp"
 
 namespace fast_task {
-    inline [[nodiscard]] auto async_wait(task_query& query) {
+    [[nodiscard]] inline auto async_wait(task_query& query) {
         struct awaiter {
             task_query& query;
 
@@ -29,7 +29,7 @@ namespace fast_task {
         return awaiter{query};
     }
 
-    inline [[nodiscard]] auto async_wait_until(task_query& query, std::chrono::high_resolution_clock::time_point time_point) {
+    [[nodiscard]] inline auto async_wait_until(task_query& query, std::chrono::high_resolution_clock::time_point time_point) {
         struct awaiter {
             task_query& query;
             std::chrono::high_resolution_clock::time_point time_point;
@@ -56,7 +56,7 @@ namespace fast_task {
     }
 
     template <class Rep, class Period>
-    inline [[nodiscard]] auto async_wait_for(task_query& query, const std::chrono::duration<Rep, Period>& duration) {
+    [[nodiscard]] inline auto async_wait_for(task_query& query, const std::chrono::duration<Rep, Period>& duration) {
         return async_wait_until(query, std::chrono::high_resolution_clock::now() + duration);
     }
 } // namespace fast_task

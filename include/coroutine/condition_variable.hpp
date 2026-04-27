@@ -11,7 +11,7 @@
 #include "core.hpp"
 
 namespace fast_task {
-    inline [[nodiscard]] auto async_wait(task_condition_variable& cv, fast_task::unique_lock<mutex_unify>& lock) {
+    [[nodiscard]] inline auto async_wait(task_condition_variable& cv, fast_task::unique_lock<mutex_unify>& lock) {
         struct awaiter {
             mutex_unify& mut;
             task_condition_variable& cv;
@@ -30,7 +30,7 @@ namespace fast_task {
         return awaiter{*lock.mutex(), cv};
     }
 
-    inline [[nodiscard]] auto async_wait_until(task_condition_variable& cv, fast_task::unique_lock<mutex_unify>& lock, std::chrono::high_resolution_clock::time_point time_point) {
+    [[nodiscard]] inline auto async_wait_until(task_condition_variable& cv, fast_task::unique_lock<mutex_unify>& lock, std::chrono::high_resolution_clock::time_point time_point) {
         struct awaiter {
             mutex_unify& mut;
             task_condition_variable& cv;
@@ -58,11 +58,11 @@ namespace fast_task {
     }
 
     template <class Rep, class Period>
-    inline [[nodiscard]] auto async_wait_for(task_condition_variable& cv, fast_task::unique_lock<mutex_unify>& lock, const std::chrono::duration<Rep, Period>& duration) {
+    [[nodiscard]] inline auto async_wait_for(task_condition_variable& cv, fast_task::unique_lock<mutex_unify>& lock, const std::chrono::duration<Rep, Period>& duration) {
         return async_wait_until(cv, lock, std::chrono::high_resolution_clock::now() + duration);
     }
 
-    inline [[nodiscard]] auto async_wait(task_condition_variable& cv, std::unique_lock<mutex_unify>& lock) {
+    [[nodiscard]] inline auto async_wait(task_condition_variable& cv, std::unique_lock<mutex_unify>& lock) {
         struct awaiter {
             mutex_unify& mut;
             task_condition_variable& cv;
@@ -81,7 +81,7 @@ namespace fast_task {
         return awaiter{*lock.mutex(), cv};
     }
 
-    inline [[nodiscard]] auto async_wait_until(task_condition_variable& cv, std::unique_lock<mutex_unify>& lock, std::chrono::high_resolution_clock::time_point time_point) {
+    [[nodiscard]] inline auto async_wait_until(task_condition_variable& cv, std::unique_lock<mutex_unify>& lock, std::chrono::high_resolution_clock::time_point time_point) {
         struct awaiter {
             mutex_unify& mut;
             task_condition_variable& cv;
@@ -109,7 +109,7 @@ namespace fast_task {
     }
 
     template <class Rep, class Period>
-    inline [[nodiscard]] auto async_wait_for(task_condition_variable& cv, std::unique_lock<mutex_unify>& lock, const std::chrono::duration<Rep, Period>& duration) {
+    [[nodiscard]] inline auto async_wait_for(task_condition_variable& cv, std::unique_lock<mutex_unify>& lock, const std::chrono::duration<Rep, Period>& duration) {
         return async_wait_until(cv, lock, std::chrono::high_resolution_clock::now() + duration);
     }
 } // namespace fast_task

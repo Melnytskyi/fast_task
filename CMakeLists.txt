@@ -119,8 +119,13 @@ if(NOT concurrentqueue_FOUND)
   if(NOT TARGET concurrentqueue::concurrentqueue)
     add_library(concurrentqueue::concurrentqueue ALIAS concurrentqueue)
   endif()
+  # Set up include directory structure matching the vcpkg install layout:
+  # concurrentqueue/moodycamel/concurrentqueue.h
+  file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/_cq_headers/concurrentqueue")
+  file(CREATE_LINK "${concurrentqueue_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/_cq_headers/concurrentqueue/moodycamel" SYMBOLIC)
+  set(CONCURRENTQUEUE_EXTRA_INCLUDE_DIR "${CMAKE_CURRENT_BINARY_DIR}/_cq_headers")
 endif()
-target_include_directories(fast_task PRIVATE ${Boost_INCLUDE_DIRS} ${fast_task_INCLUDE_DIR} ${concurrentqueue_INCLUDE_DIRS})
+target_include_directories(fast_task PRIVATE ${Boost_INCLUDE_DIRS} ${fast_task_INCLUDE_DIR} ${concurrentqueue_INCLUDE_DIRS} ${CONCURRENTQUEUE_EXTRA_INCLUDE_DIR})
 set_target_properties(fast_task
   PROPERTIES
   CXX_STANDARD 23
