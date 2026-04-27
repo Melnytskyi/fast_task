@@ -10,7 +10,7 @@
 #include "core.hpp"
 
 namespace fast_task {
-    inline [[nodiscard]] auto async_wait(deadline_timer& timer) {
+    [[nodiscard]] inline auto async_wait(deadline_timer& timer) {
         struct awaiter {
             deadline_timer& timer;
             std::chrono::high_resolution_clock::time_point timeout_time;
@@ -35,7 +35,7 @@ namespace fast_task {
         return awaiter{timer};
     }
 
-    inline [[nodiscard]] auto async_wait(deadline_timer& timer, fast_task::unique_lock<mutex_unify>& lock) {
+    [[nodiscard]] inline auto async_wait(deadline_timer& timer, fast_task::unique_lock<mutex_unify>& lock) {
         struct awaiter {
             mutex_unify& mut;
             deadline_timer& timer;
@@ -61,7 +61,7 @@ namespace fast_task {
         return awaiter{*lock.mutex(), timer};
     }
 
-    inline [[nodiscard]] auto async_wait(deadline_timer& timer, std::unique_lock<mutex_unify>& lock) {
+    [[nodiscard]] inline auto async_wait(deadline_timer& timer, std::unique_lock<mutex_unify>& lock) {
         struct awaiter {
             mutex_unify& mut;
             deadline_timer& timer;

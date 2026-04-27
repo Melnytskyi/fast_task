@@ -11,33 +11,33 @@
 #include "core.hpp"
 
 namespace fast_task {
-    inline [[nodiscard]] auto async_lock(task_mutex& mut) {
+    [[nodiscard]] inline auto async_lock(task_mutex& mut) {
         return detail::async_lock(mut);
     }
 
-    inline [[nodiscard]] auto async_try_lock_until(task_mutex& mut, std::chrono::high_resolution_clock::time_point time_point) {
+    [[nodiscard]] inline auto async_try_lock_until(task_mutex& mut, std::chrono::high_resolution_clock::time_point time_point) {
         return detail::async_try_lock_until(mut, time_point);
     }
 
     template <class Rep, class Period>
-    inline [[nodiscard]] auto async_try_lock_for(task_mutex& mut, const std::chrono::duration<Rep, Period>& duration) {
+    [[nodiscard]] inline auto async_try_lock_for(task_mutex& mut, const std::chrono::duration<Rep, Period>& duration) {
         return detail::async_try_lock_until(mut, std::chrono::high_resolution_clock::now() + duration);
     }
 
-    inline [[nodiscard]] auto async_lock(task_recursive_mutex& mut) {
+    [[nodiscard]] inline auto async_lock(task_recursive_mutex& mut) {
         return detail::async_lock(mut);
     }
 
-    inline [[nodiscard]] auto async_try_lock_until(task_recursive_mutex& mut, std::chrono::high_resolution_clock::time_point time_point) {
+    [[nodiscard]] inline auto async_try_lock_until(task_recursive_mutex& mut, std::chrono::high_resolution_clock::time_point time_point) {
         return detail::async_try_lock_until(mut, time_point);
     }
 
     template <class Rep, class Period>
-    inline [[nodiscard]] auto async_try_lock_for(task_recursive_mutex& mut, const std::chrono::duration<Rep, Period>& duration) {
+    [[nodiscard]] inline auto async_try_lock_for(task_recursive_mutex& mut, const std::chrono::duration<Rep, Period>& duration) {
         return detail::async_try_lock_until(mut, std::chrono::high_resolution_clock::now() + duration);
     }
 
-    inline [[nodiscard]] auto async_read_lock(task_rw_mutex& mut) {
+    [[nodiscard]] inline auto async_read_lock(task_rw_mutex& mut) {
         struct awaiter {
             task_rw_mutex& mutex;
 
@@ -55,7 +55,7 @@ namespace fast_task {
         return awaiter{mut};
     }
 
-    inline [[nodiscard]] auto async_write_lock(task_rw_mutex& mut) {
+    [[nodiscard]] inline auto async_write_lock(task_rw_mutex& mut) {
         struct awaiter {
             task_rw_mutex& mutex;
 
@@ -74,7 +74,7 @@ namespace fast_task {
     }
 
 
-    inline [[nodiscard]] auto async_try_read_lock_until(task_rw_mutex& mut, std::chrono::high_resolution_clock::time_point time_point) {
+    [[nodiscard]] inline auto async_try_read_lock_until(task_rw_mutex& mut, std::chrono::high_resolution_clock::time_point time_point) {
         struct awaiter {
             task_rw_mutex& mutex;
             std::chrono::high_resolution_clock::time_point time_point;
@@ -104,11 +104,11 @@ namespace fast_task {
     }
 
     template <class Rep, class Period>
-    inline [[nodiscard]] auto async_try_read_lock_for(task_recursive_mutex& mut, const std::chrono::duration<Rep, Period>& duration) {
+    [[nodiscard]] inline auto async_try_read_lock_for(task_recursive_mutex& mut, const std::chrono::duration<Rep, Period>& duration) {
         return async_try_read_lock_until(mut, std::chrono::high_resolution_clock::now() + duration);
     }
 
-    inline [[nodiscard]] auto async_try_write_lock_until(task_rw_mutex& mut, std::chrono::high_resolution_clock::time_point time_point) {
+    [[nodiscard]] inline auto async_try_write_lock_until(task_rw_mutex& mut, std::chrono::high_resolution_clock::time_point time_point) {
         struct awaiter {
             task_rw_mutex& mutex;
             std::chrono::high_resolution_clock::time_point time_point;
@@ -138,7 +138,7 @@ namespace fast_task {
     }
 
     template <class Rep, class Period>
-    inline [[nodiscard]] auto async_try_write_lock_for(task_recursive_mutex& mut, const std::chrono::duration<Rep, Period>& duration) {
+    [[nodiscard]] inline auto async_try_write_lock_for(task_recursive_mutex& mut, const std::chrono::duration<Rep, Period>& duration) {
         return async_try_write_lock_until(mut, std::chrono::high_resolution_clock::now() + duration);
     }
 }

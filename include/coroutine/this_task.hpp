@@ -4,7 +4,7 @@
 #include "core.hpp"
 
 namespace fast_task::this_task {
-    inline [[nodiscard]] auto async_yield() {
+    [[nodiscard]] inline auto async_yield() {
         struct awaiter {
 
             bool await_ready() noexcept {
@@ -21,7 +21,7 @@ namespace fast_task::this_task {
         return awaiter{};
     }
 
-    inline [[nodiscard]] auto async_sleep_until(std::chrono::high_resolution_clock::time_point time_point) {
+    [[nodiscard]] inline auto async_sleep_until(std::chrono::high_resolution_clock::time_point time_point) {
         struct awaiter {
             std::chrono::high_resolution_clock::time_point time_point;
 
@@ -40,7 +40,7 @@ namespace fast_task::this_task {
     }
 
     template <class Rep, class Period>
-    inline [[nodiscard]] auto async_sleep_for(task_limiter& mut, const std::chrono::duration<Rep, Period>& duration) {
+    [[nodiscard]] inline auto async_sleep_for(task_limiter& mut, const std::chrono::duration<Rep, Period>& duration) {
         return enter_sleep_until(mut, std::chrono::high_resolution_clock::now() + duration);
     }
 }

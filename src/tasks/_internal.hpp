@@ -57,19 +57,19 @@ namespace fast_task {
     };
 
     struct task_condition_variable::resume_task {
-        std::shared_ptr<task> task;
+        std::shared_ptr<class task> task;
         uint16_t awake_check = 0;
         fast_task::condition_variable_any* native_cv = nullptr;
         bool* native_check = nullptr;
     };
 
     struct task_limiter::resume_task {
-        std::shared_ptr<task> task;
+        std::shared_ptr<class task> task;
         uint16_t awake_check;
     };
 
     struct task_mutex::resume_task {
-        std::shared_ptr<task> task;
+        std::shared_ptr<class task> task;
         uint16_t awake_check = 0;
         fast_task::condition_variable_any* native_cv = nullptr;
         bool* native_check = nullptr;
@@ -88,14 +88,14 @@ namespace fast_task {
     };
 
     struct task_rw_mutex::resume_task {
-        std::shared_ptr<task> task;
+        std::shared_ptr<class task> task;
         uint16_t awake_check = 0;
         fast_task::condition_variable_any* native_cv = nullptr;
         bool* native_check = nullptr;
     };
 
     struct task_semaphore::resume_task {
-        std::shared_ptr<task> task;
+        std::shared_ptr<class task> task;
         uint16_t awake_check;
     };
 

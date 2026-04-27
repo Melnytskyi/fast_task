@@ -116,8 +116,15 @@ if(NOT concurrentqueue_FOUND)
     GIT_TAG        v1.0.5
   )
   FetchContent_MakeAvailable(concurrentqueue)
+  if(NOT TARGET concurrentqueue::concurrentqueue)
+    add_library(concurrentqueue::concurrentqueue ALIAS concurrentqueue)
+  endif()
+  file(GLOB _cq_public_headers "${concurrentqueue_SOURCE_DIR}/*.h")
+  file(MAKE_DIRECTORY "${concurrentqueue_SOURCE_DIR}/concurrentqueue/moodycamel")
+  file(COPY ${_cq_public_headers} DESTINATION "${concurrentqueue_SOURCE_DIR}/concurrentqueue/moodycamel")
+  set(CONCURRENTQUEUE_EXTRA_INCLUDE_DIR "${concurrentqueue_SOURCE_DIR}")
 endif()
-target_include_directories(fast_task PRIVATE ${Boost_INCLUDE_DIRS} ${fast_task_INCLUDE_DIR} ${concurrentqueue_INCLUDE_DIRS})
+target_include_directories(fast_task PRIVATE ${Boost_INCLUDE_DIRS} ${fast_task_INCLUDE_DIR} ${concurrentqueue_INCLUDE_DIRS} ${CONCURRENTQUEUE_EXTRA_INCLUDE_DIR})
 set_target_properties(fast_task
   PROPERTIES
   CXX_STANDARD 23

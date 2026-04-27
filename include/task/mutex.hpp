@@ -18,7 +18,7 @@ namespace fast_task {
         friend class mutex_unify;
 
         struct FT_API_LOCAL private_values {
-            std::list<resume_task> resume_task;
+            std::list<struct resume_task> resume_task;
             fast_task::spin_lock no_race;
             class task* current_task = nullptr;
         } values;
@@ -81,7 +81,7 @@ namespace fast_task {
 
         struct FT_API_LOCAL private_values {
             friend class task_recursive_mutex;
-            std::list<resume_task> resume_task;
+            std::list<struct resume_task> resume_task;
             std::list<task*> readers;
             fast_task::spin_lock no_race;
             class task* current_writer_task = nullptr;

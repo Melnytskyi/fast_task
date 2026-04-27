@@ -17,7 +17,7 @@ namespace fast_task {
         struct FT_API_LOCAL resume_task;
 
         struct FT_API_LOCAL private_values {
-            std::list<resume_task> resume_task;
+            std::list<struct resume_task> resume_task;
             fast_task::mutex no_race;
         } values;
 

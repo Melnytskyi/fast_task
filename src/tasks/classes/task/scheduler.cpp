@@ -33,6 +33,7 @@ namespace fast_task::scheduler {
             unsafe_put_task_to_timed_queue(glob.timed_tasks, time_point, lgr_task);
         else
             unsafe_put_task_to_timed_queue(glob.cold_timed_tasks, time_point, lgr_task);
+        glob.time_notifier.notify_one();
         glob.tasks_notifier.notify_one();
         guard.unlock();
     }
