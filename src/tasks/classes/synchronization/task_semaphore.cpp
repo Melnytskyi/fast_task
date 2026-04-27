@@ -83,8 +83,12 @@ namespace fast_task {
                 swapCtxRelock(glob.task_timer_safety, values.no_race);
                 auto awaked = get_data(loc.curr_task).awaked;
                 resetTimeWait();
-                if (!awaked)
+                if (!awaked) {
+                    auto it = std::find_if(values.resume_task.begin(), values.resume_task.end(), [](const auto& a) { return a.task == loc.curr_task; });
+                    if (it != values.resume_task.end())
+                        values.resume_task.erase(it);
                     return false;
+                }
             } else if (values.native_notify.wait_until(keeper, time_point) == fast_task::cv_status::timeout)
                 return false;
         }

@@ -63,7 +63,9 @@ namespace fast_task {
             resetTimeWait();
             if (time_end_flag) {
                 fast_task::lock_guard _guard(values.no_race);
-                values.resume_task.erase(std::find_if(values.resume_task.begin(), values.resume_task.end(), [](const auto& a){ return a.task == loc.curr_task; }));
+                auto it = std::find_if(values.resume_task.begin(), values.resume_task.end(), [](const auto& a){ return a.task == loc.curr_task; });
+                if (it != values.resume_task.end())
+                    values.resume_task.erase(it);
                 return false;
             }
         } else {
@@ -73,7 +75,9 @@ namespace fast_task {
                 values.resume_task.emplace_back(nullptr, 0, &cd, &has_res);
                 while (!has_res) { //-V654
                     if (cd.wait_until(mut, time_point) == cv_status::timeout) {
-                        values.resume_task.erase(std::find_if(values.resume_task.begin(), values.resume_task.end(), [&](const auto& a) { return a.native_cv == &cd; }));
+                        auto it = std::find_if(values.resume_task.begin(), values.resume_task.end(), [&](const auto& a) { return a.native_cv == &cd; });
+                        if (it != values.resume_task.end())
+                            values.resume_task.erase(it);
                         return false;
                     }
                 }
@@ -83,7 +87,9 @@ namespace fast_task {
                 relock_guard relock(mut);
                 while (!has_res) { //-V654
                     if (cd.wait_until(no_race_guard, time_point) == cv_status::timeout) {
-                        values.resume_task.erase(std::find_if(values.resume_task.begin(), values.resume_task.end(), [&](const auto& a) { return a.native_cv == &cd; }));
+                        auto it = std::find_if(values.resume_task.begin(), values.resume_task.end(), [&](const auto& a) { return a.native_cv == &cd; });
+                        if (it != values.resume_task.end())
+                            values.resume_task.erase(it);
                         return false;
                     }
                 }
@@ -134,7 +140,9 @@ namespace fast_task {
             resetTimeWait();
             if (time_end_flag) {
                 fast_task::lock_guard _guard(values.no_race);
-                values.resume_task.erase(std::find_if(values.resume_task.begin(), values.resume_task.end(), [](const auto& a){ return a.task == loc.curr_task; }));//find itself and remove
+                auto it = std::find_if(values.resume_task.begin(), values.resume_task.end(), [](const auto& a){ return a.task == loc.curr_task; });
+                if (it != values.resume_task.end())
+                    values.resume_task.erase(it);
                 return false;
             }
         } else {
@@ -144,7 +152,9 @@ namespace fast_task {
                 values.resume_task.emplace_back(nullptr, 0, &cd, &has_res);
                 while (!has_res) { //-V654
                     if (cd.wait_until(mut, time_point) == cv_status::timeout) {
-                        values.resume_task.erase(std::find_if(values.resume_task.begin(), values.resume_task.end(), [&](const auto& a) { return a.native_cv == &cd; }));
+                        auto it = std::find_if(values.resume_task.begin(), values.resume_task.end(), [&](const auto& a) { return a.native_cv == &cd; });
+                        if (it != values.resume_task.end())
+                            values.resume_task.erase(it);
                         return false;
                     }
                 }
@@ -154,7 +164,9 @@ namespace fast_task {
                 relock_guard relock(mut);
                 while (!has_res) { //-V654
                     if (cd.wait_until(no_race_guard, time_point) == cv_status::timeout) {
-                        values.resume_task.erase(std::find_if(values.resume_task.begin(), values.resume_task.end(), [&](const auto& a) { return a.native_cv == &cd; }));
+                        auto it = std::find_if(values.resume_task.begin(), values.resume_task.end(), [&](const auto& a) { return a.native_cv == &cd; });
+                        if (it != values.resume_task.end())
+                            values.resume_task.erase(it);
                         return false;
                     }
                 }

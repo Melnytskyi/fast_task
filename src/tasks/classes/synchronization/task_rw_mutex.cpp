@@ -87,8 +87,12 @@ namespace fast_task {
                 swapCtxRelock(get_data(loc.curr_task).no_race, values.no_race);
                 auto awaked = get_data(loc.curr_task).awaked;
                 resetTimeWait();
-                if (!awaked)
+                if (!awaked) {
+                    auto it = std::find_if(values.resume_task.begin(), values.resume_task.end(), [](const auto& a) { return std::get<0>(a) == loc.curr_task; });
+                    if (it != values.resume_task.end())
+                        values.resume_task.erase(it);
                     return false;
+                }
             }
         } else {
             while (values.current_writer_task) {
@@ -249,8 +253,12 @@ namespace fast_task {
                 swapCtxRelock(glob.task_timer_safety, values.no_race);
                 auto awaked = get_data(loc.curr_task).awaked;
                 resetTimeWait();
-                if (!awaked)
+                if (!awaked) {
+                    auto it = std::find_if(values.resume_task.begin(), values.resume_task.end(), [](const auto& a) { return std::get<0>(a) == loc.curr_task; });
+                    if (it != values.resume_task.end())
+                        values.resume_task.erase(it);
                     return false;
+                }
             }
             values.current_writer_task = &*loc.curr_task;
 
@@ -263,6 +271,9 @@ namespace fast_task {
                 resetTimeWait();
                 if (!awaked) {
                     values.current_writer_task = nullptr;
+                    auto it = std::find_if(values.resume_task.begin(), values.resume_task.end(), [](const auto& a) { return std::get<0>(a) == loc.curr_task; });
+                    if (it != values.resume_task.end())
+                        values.resume_task.erase(it);
                     return false;
                 }
             }
