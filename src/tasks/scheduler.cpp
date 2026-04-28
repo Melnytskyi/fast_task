@@ -503,7 +503,10 @@ namespace fast_task {
             loc.yield_request = false;
         } else if (end_of_life) {
             --glob.executing_tasks;
-            glob.no_tasks_execute_notifier.notify_all();
+            {
+                fast_task::shared_lock guard(glob.task_thread_safety);
+                glob.no_tasks_execute_notifier.notify_all_guarded();
+            }
             fast_task::lock_guard guard(get_data(loc.curr_task).no_race);
             get_data(loc.curr_task).completed = true;
         }
@@ -821,7 +824,10 @@ namespace fast_task {
                 }
             }
 
-            glob.no_tasks_execute_notifier.notify_all();
+            {
+                fast_task::shared_lock guard(glob.task_thread_safety);
+                glob.no_tasks_execute_notifier.notify_all_guarded();
+            }
 
             check_stw();
             guard.lock();

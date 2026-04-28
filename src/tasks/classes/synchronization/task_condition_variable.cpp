@@ -90,6 +90,11 @@ namespace fast_task {
                         auto it = std::find_if(values.resume_task.begin(), values.resume_task.end(), [&](const auto& a) { return a.native_cv == &cd; });
                         if (it != values.resume_task.end())
                             values.resume_task.erase(it);
+                        // Unlock no_race_guard BEFORE returning so the relock_guard
+                        // destructor (which re-acquires mut) doesn't hold no_race
+                        // simultaneously — that would create an ABBA deadlock with
+                        // any notifier that holds mut and needs no_race.
+                        no_race_guard.unlock();
                         return false;
                     }
                 }
@@ -167,6 +172,7 @@ namespace fast_task {
                         auto it = std::find_if(values.resume_task.begin(), values.resume_task.end(), [&](const auto& a) { return a.native_cv == &cd; });
                         if (it != values.resume_task.end())
                             values.resume_task.erase(it);
+                        no_race_guard.unlock();
                         return false;
                     }
                 }
@@ -207,6 +213,46 @@ namespace fast_task {
                 if (can_be_scheduled_task_to_hot() && loc.curr_task && !get_data(loc.curr_task).end_of_life)
                     to_yield = true;
             }
+        }
+        if (to_yield)
+            this_task::yield();
+    }
+
+    // Called by notifiers that have already acquired glob.task_thread_safety
+    // in shared mode.  Snapshotting resume_task while that shared lock is held
+    // closes the lost-wakeup window: a waiter that holds task_thread_safety
+    // exclusively during its condition check and cv.wait() registration
+    // cannot be missed — the exclusive holder blocks this shared acquisition
+    // until the waiter has registered.
+    void task_condition_variable::notify_all_guarded() {
+        std::list<struct resume_task> revive_tasks;
+        {
+            fast_task::unique_lock no_race_guard(values.no_race);
+            revive_tasks = std::move(values.resume_task);
+        }
+        if (revive_tasks.empty())
+            return;
+        bool to_yield = false;
+        for (auto& [it, awake_check, native_cv, native_flag] : revive_tasks) {
+            if (it == nullptr) {
+                if (native_cv != nullptr) {
+                    *native_flag = true;
+                    native_cv->notify_all();
+                }
+                continue;
+            }
+            fast_task::lock_guard guard_loc(get_data(it).no_race);
+            if (get_data(it).awake_check != awake_check)
+                continue;
+            if (!get_data(it).time_end_flag) {
+                get_data(it).awaked = true;
+                transfer_task(std::move(it));
+            }
+        }
+        glob.tasks_notifier.notify_one();
+        if (task::max_running_tasks && loc.is_task_thread) {
+            if (can_be_scheduled_task_to_hot() && loc.curr_task && !get_data(loc.curr_task).end_of_life)
+                to_yield = true;
         }
         if (to_yield)
             this_task::yield();

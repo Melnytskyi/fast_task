@@ -75,7 +75,8 @@ namespace fast_task {
         }
         if (!data_.completed && data_.started) {
             --glob.executing_tasks;
-            glob.no_tasks_execute_notifier.notify_all();
+            fast_task::shared_lock guard(glob.task_thread_safety);
+            glob.no_tasks_execute_notifier.notify_all_guarded();
         }
 #ifdef FT_ENABLE_ABORT_IF_NEVER_STARTED
         if (!data_.started && !data_.end_of_life) {

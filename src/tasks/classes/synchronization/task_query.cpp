@@ -122,10 +122,7 @@ namespace fast_task {
         mutex_unify unify(handle->no_race);
         fast_task::unique_lock lock(unify);
         while (handle->now_at_execution != 0 || !handle->tasks.empty())
-            // Use timed wait to recover from rare lost-wakeup: end_of_query.notify_all()
-            // can fire between the while condition check and wait registration when
-            // __TaskQuery_add_task_leave runs on another thread with no waiter present.
-            handle->end_of_query.wait_until(lock, std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(1));
+            handle->end_of_query.wait(lock);
     }
 
     bool task_query::wait_until(std::chrono::high_resolution_clock::time_point time_point) {
