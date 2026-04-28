@@ -247,7 +247,12 @@ namespace fast_task::scheduler {
                     }
                 }
 
-                glob.no_tasks_execute_notifier.wait(l);
+                // Use timed wait to recover from rare lost-wakeup: notify_all()
+                // moves resume_task under values.no_race (not task_thread_safety),
+                // so a notification can be missed if it fires between the while
+                // condition check and the wait registration.  A 1 ms timeout
+                // ensures we re-check and exit even if the wake was lost.
+                glob.no_tasks_execute_notifier.wait_until(l, std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(1));
             }
         }
     }
@@ -270,13 +275,13 @@ namespace fast_task::scheduler {
                 while (glob.executing_tasks != 1) {
                     if (!total_executors())
                         create_executor(1);
-                    glob.no_tasks_execute_notifier.wait(l);
+                    glob.no_tasks_execute_notifier.wait_until(l, std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(1));
                 }
             else
                 while (glob.executing_tasks) {
                     if (!total_executors())
                         create_executor(1);
-                    glob.no_tasks_execute_notifier.wait(l);
+                    glob.no_tasks_execute_notifier.wait_until(l, std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(1));
                 }
         }
     }
