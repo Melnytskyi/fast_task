@@ -97,7 +97,7 @@ namespace fast_task::scheduler {
         if (id == (uint16_t)-1)
             throw std::runtime_error("Invalid id");
 
-        uint16_t current_executors = 0;
+        uint16_t current_expected = 0;
         if (!glob.binded_workers.contains(id)) {
             glob.binded_workers[id].allow_implicit_start = allow_implicit_start;
             glob.binded_workers[id].fixed_size = (bool)fixed_count;
@@ -106,15 +106,18 @@ namespace fast_task::scheduler {
             fast_task::lock_guard ctx_guard(glob.binded_workers[id].no_race);
             if (glob.binded_workers[id].in_close)
                 throw std::runtime_error("Worker is closing");
-            current_executors = glob.binded_workers[id].executors;
+            // Use expected_executors (threads already spawned/committed), not
+            // context.executors (threads that have actually started), so that
+            // slow-starting threads are not spawned a second time.
+            current_expected = glob.binded_workers[id].expected_executors;
             glob.binded_workers[id].allow_implicit_start = allow_implicit_start;
             glob.binded_workers[id].fixed_size = (bool)fixed_count;
             glob.binded_workers[id].policy = policy;
             glob.binded_workers[id].expected_executors = fixed_count;
         }
 
-        if (fixed_count > current_executors) {
-            size_t diff = fixed_count - current_executors;
+        if (fixed_count > current_expected) {
+            size_t diff = fixed_count - current_expected;
             for (size_t i = 0; i < diff; i++) {
                 ++glob.thread_count;
                 fast_task::thread(bindedTaskExecutor, id).detach();
@@ -296,14 +299,11 @@ namespace fast_task::scheduler {
             close_bind_only_executor(glob.binded_workers.begin()->first);
 
         fast_task::unique_lock guard(glob.task_thread_safety);
-        size_t executors = glob.executors;
-        for (size_t i = 0; i < executors; i++)
-            transfer_task(std::make_shared<task>(nullptr));
-        glob.tasks_notifier.notify_all();
-        while (glob.executors)
-            glob.executor_shutdown_notifier.wait(guard);
-        // Signal any executor threads that started after the null-task send above
-        // so they exit instead of waiting forever for work.
+        // All user tasks have finished (await_no_tasks above), so executors are
+        // idle (in tasks_notifier.wait or in the retry spin).  Set the shutdown
+        // flag before waiting so that both already-idle executors AND any threads
+        // that started too late to receive a null-task will exit immediately when
+        // they reach the flag check, instead of blocking on tasks_notifier.wait.
         glob.executor_shutting_down.store(true, std::memory_order_release);
         glob.tasks_notifier.notify_all();
         while (glob.executors)
@@ -314,6 +314,12 @@ namespace fast_task::scheduler {
 
         while (glob.thread_count.load())
             std::this_thread::yield();
+        // Drain any stray tasks that may have been queued before shutdown.
+        {
+            std::shared_ptr<task> tmp;
+            while (glob.tasks.try_dequeue(tmp)) {}
+            while (glob.cold_tasks.try_dequeue(tmp)) {}
+        }
         glob.executor_shutting_down.store(false, std::memory_order_release);
     }
 
