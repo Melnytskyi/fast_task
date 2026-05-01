@@ -14,7 +14,6 @@ TEST(SchedulerLifecycle, CreateAndShutDown) {
     while (fast_task::scheduler::total_executors() < 1u)
         std::this_thread::yield();
     fast_task::scheduler::shut_down();
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
 }
 
 TEST(SchedulerLifecycle, TotalExecutors) {
@@ -23,7 +22,6 @@ TEST(SchedulerLifecycle, TotalExecutors) {
         std::this_thread::yield();
     EXPECT_GE(fast_task::scheduler::total_executors(), 2u);
     fast_task::scheduler::shut_down();
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
 }
 
 TEST(SchedulerLifecycle, ReduceExecutor) {
@@ -38,7 +36,6 @@ TEST(SchedulerLifecycle, ReduceExecutor) {
     size_t after = fast_task::scheduler::total_executors();
     EXPECT_LT(after, before);
     fast_task::scheduler::shut_down();
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
 }
 
 TEST(SchedulerLifecycle, AwaitNoTasks) {
@@ -61,7 +58,6 @@ TEST(SchedulerLifecycle, AwaitNoTasks) {
 
     EXPECT_EQ(done.load(), 2);
     fast_task::scheduler::shut_down();
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
 }
 
 TEST(SchedulerLifecycle, AwaitEndTasks) {
@@ -79,7 +75,6 @@ TEST(SchedulerLifecycle, AwaitEndTasks) {
 
     EXPECT_EQ(done.load(), 1);
     fast_task::scheduler::shut_down();
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
 }
 
 TEST(SchedulerLifecycle, Schedule) {
@@ -95,5 +90,4 @@ TEST(SchedulerLifecycle, Schedule) {
     fast_task::this_thread::sleep_for(std::chrono::milliseconds(100));
     EXPECT_TRUE(ran.load());
     fast_task::scheduler::shut_down();
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
 }

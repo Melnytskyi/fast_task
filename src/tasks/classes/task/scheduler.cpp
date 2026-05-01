@@ -33,7 +33,7 @@ namespace fast_task::scheduler {
             unsafe_put_task_to_timed_queue(glob.timed_tasks, time_point, lgr_task);
         else
             unsafe_put_task_to_timed_queue(glob.cold_timed_tasks, time_point, lgr_task);
-        glob.time_notifier.notify_one();
+        glob.time_notifier.notify_all();
         glob.tasks_notifier.notify_one();
         guard.unlock();
     }
@@ -222,30 +222,20 @@ namespace fast_task::scheduler {
                 for (auto& q : *queue)
                     if (q->size())
                         return true;
+                for (auto& [id, bind_data] : glob.binded_workers) {
+                    fast_task::unique_lock l(bind_data.no_race);
+                    for (auto& q : *bind_data.executors_queues.load())
+                        if (q->size())
+                            return true;
+                    if (bind_data.tasks.size_approx())
+                        return true;
+                }
                 return false;
             };
 
             while (tasks_present() || glob.cold_tasks.size_approx() || glob.timed_tasks.size() || glob.cold_timed_tasks.size() || glob.executing_tasks) {
                 if (!total_executors())
                     create_executor(1);
-
-                if (glob.shutdown_requested.load(std::memory_order_acquire)) {
-                    //BUG
-                    // If shutdown is requested and there is no runnable/waiting task state
-                    // left in scheduler queues or runtime, do not block forever on a leaked
-                    // accounting value in glob.executing_tasks.
-                    // This solution is bad and just reduces the amount of stuck tasks. I would like to fix this in other way.
-                    //TODO
-                    // find the reason and way to safely shutdown the tasks
-                    if (!tasks_present() &&
-                        glob.cold_tasks.size_approx() == 0 &&
-                        glob.timed_tasks.empty() &&
-                        glob.cold_timed_tasks.empty() &&
-                        glob.in_run_tasks.load() == 0 &&
-                        glob.tasks_in_swap.load() == 0) {
-                        break;
-                    }
-                }
 
                 glob.no_tasks_execute_notifier.wait(l);
             }
@@ -299,11 +289,6 @@ namespace fast_task::scheduler {
             close_bind_only_executor(glob.binded_workers.begin()->first);
 
         fast_task::unique_lock guard(glob.task_thread_safety);
-        // All user tasks have finished (await_no_tasks above), so executors are
-        // idle (in tasks_notifier.wait or in the retry spin).  Set the shutdown
-        // flag before waiting so that both already-idle executors AND any threads
-        // that started too late to receive a null-task will exit immediately when
-        // they reach the flag check, instead of blocking on tasks_notifier.wait.
         glob.executor_shutting_down.store(true, std::memory_order_release);
         glob.tasks_notifier.notify_all();
         while (glob.executors)
@@ -314,7 +299,6 @@ namespace fast_task::scheduler {
 
         while (glob.thread_count.load())
             std::this_thread::yield();
-        // Drain any stray tasks that may have been queued before shutdown.
         {
             std::shared_ptr<task> tmp;
             while (glob.tasks.try_dequeue(tmp)) {}

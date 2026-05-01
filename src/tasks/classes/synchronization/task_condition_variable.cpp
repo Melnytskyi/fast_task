@@ -218,12 +218,6 @@ namespace fast_task {
             this_task::yield();
     }
 
-    // Called by notifiers that have already acquired glob.task_thread_safety
-    // in shared mode.  Snapshotting resume_task while that shared lock is held
-    // closes the lost-wakeup window: a waiter that holds task_thread_safety
-    // exclusively during its condition check and cv.wait() registration
-    // cannot be missed — the exclusive holder blocks this shared acquisition
-    // until the waiter has registered.
     void task_condition_variable::notify_all_guarded() {
         std::list<struct resume_task> revive_tasks;
         {

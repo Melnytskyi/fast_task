@@ -31,6 +31,7 @@ TEST_F(CombinedScenariosTest, TaskQueryMixedTasksAndCoroutines) {
     auto c = make_coro();
     query.add(c.get_task());
     query.enable();
+    query.wait();
 
     t1->await_task();
     t2->await_task();

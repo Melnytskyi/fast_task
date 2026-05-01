@@ -13,6 +13,7 @@ namespace fast_task {
 
         std::suspend_always final_suspend() noexcept {
             fast_task::this_task::the_coroutine_ended(task_object);
+            task_object.reset();
             return {};
         }
     };

@@ -251,36 +251,44 @@ namespace fast_task {
 
     void in_place_run() {
         ++glob.in_run_tasks;
+        auto& data = get_data(loc.curr_task);
+        data.awake_check++;
         try {
             if (!checkCancellation()) {
-                if (get_data(loc.curr_task).callbacks.on_start_override)
-                    get_data(loc.curr_task).callbacks.on_start_override(get_data(loc.curr_task).callbacks);
-                else if (get_data(loc.curr_task).callbacks.on_start)
-                    get_data(loc.curr_task).callbacks.on_start(get_data(loc.curr_task).callbacks.get_data());
-                get_data(loc.curr_task).relock_0.relock_start();
-                get_data(loc.curr_task).relock_1.relock_start();
-                get_data(loc.curr_task).relock_2.relock_start();
+                if (data.callbacks.on_start_override)
+                    data.callbacks.on_start_override(data.callbacks);
+                else if (data.callbacks.on_start)
+                    data.callbacks.on_start(data.callbacks.get_data());
+                data.relock_0.relock_start();
+                data.relock_1.relock_start();
+                data.relock_2.relock_start();
             } else
                 this_task::the_coroutine_ended(loc.curr_task);
             {
-                fast_task::lock_guard guard(get_data(loc.curr_task).no_race);
-                if (get_data(loc.curr_task).callbacks.is_restartable) {
-                    get_data(loc.curr_task).started = false;
+                fast_task::lock_guard guard(data.no_race);
+                if (data.callbacks.is_restartable) {
+                    data.started = false;
                 } else {
-                    get_data(loc.curr_task).end_of_life = true;
-                    get_data(loc.curr_task).result_notify.notify_all();
+                    data.end_of_life = true;
+                    data.completed = true;
+                    data.started = true;
+                    data.result_notify.notify_all();
                 }
             }
         } catch (const task_cancellation& cancel) {
             forceCancelCancellation(cancel);
-            fast_task::lock_guard guard(get_data(loc.curr_task).no_race);
-            get_data(loc.curr_task).end_of_life = true;
-            get_data(loc.curr_task).result_notify.notify_all();
+            fast_task::lock_guard guard(data.no_race);
+            data.end_of_life = true;
+            data.completed = true;
+            data.started = true;
+            data.result_notify.notify_all();
         } catch (...) {
             loc.ex_ptr = std::current_exception(); //TODO pass this to the callback
-            fast_task::lock_guard guard(get_data(loc.curr_task).no_race);
-            get_data(loc.curr_task).end_of_life = true;
-            get_data(loc.curr_task).result_notify.notify_all();
+            fast_task::lock_guard guard(data.no_race);
+            data.end_of_life = true;
+            data.completed = true;
+            data.started = true;
+            data.result_notify.notify_all();
         }
         --glob.in_run_tasks;
     }
@@ -509,6 +517,7 @@ namespace fast_task {
             }
             fast_task::lock_guard guard(get_data(loc.curr_task).no_race);
             get_data(loc.curr_task).completed = true;
+            get_data(loc.curr_task).started = true;
         }
 
 
@@ -567,30 +576,32 @@ namespace fast_task {
                 break;
         }
     exit_path:
-        --glob.executors;
-        glob.executor_shutdown_notifier.notify_all();
         if (!prevent_naming)
             _set_name_thread_dbg(old_name);
 
-        {
-            fast_task::lock_guard lock(glob.task_thread_safety);
 
-            auto old_queues_ptr = glob.executors_queues.load();
-            auto new_queues = std::make_shared<std::vector<std::shared_ptr<work_stealing_deque<std::shared_ptr<task>>>>>();
-            new_queues->reserve(old_queues_ptr->size());
+        fast_task::unique_lock lock(glob.task_thread_safety);
 
-            for (const auto& q_ptr : *old_queues_ptr) {
-                if (q_ptr.get() != loc.local_tasks.get())
-                    new_queues->push_back(q_ptr);
-            }
+        auto old_queues_ptr = glob.executors_queues.load();
+        auto new_queues = std::make_shared<std::vector<std::shared_ptr<work_stealing_deque<std::shared_ptr<task>>>>>();
+        new_queues->reserve(old_queues_ptr->size());
 
-            glob.executors_queues.store(new_queues);
+        for (const auto& q_ptr : *old_queues_ptr) {
+            if (q_ptr.get() != loc.local_tasks.get())
+                new_queues->push_back(q_ptr);
         }
+
+        glob.executors_queues.store(new_queues);
+        lock.unlock();
         while (!loc.local_tasks->empty())
             while (loc.local_tasks->pop(loc.curr_task))
                 glob.tasks.enqueue(std::move(loc.curr_task));
-        glob.tasks_notifier.unsafe_notify_all();
+
+        lock.lock();
+        --glob.executors;
         --glob.thread_count;
+        glob.tasks_notifier.unsafe_notify_all();
+        glob.executor_shutdown_notifier.notify_all();
     }
 
     bool loadTaskBinded(binded_context& context) {
@@ -640,6 +651,10 @@ namespace fast_task {
 
 
             if (!context.tasks.try_dequeue(loc.curr_task)) {
+                {
+                    fast_task::unique_lock guard(glob.task_thread_safety);
+                    glob.no_tasks_execute_notifier.notify_all_guarded();
+                }
                 fast_task::unique_lock guard(context.no_race);
                 if (context.in_close)
                     break;
@@ -732,6 +747,7 @@ namespace fast_task {
                 }
             }
         }
+        fast_task::lock_guard lock(glob.task_thread_safety);
         --glob.thread_count;
     }
 
@@ -825,7 +841,7 @@ namespace fast_task {
             }
 
             {
-                fast_task::shared_lock guard(glob.task_thread_safety);
+                fast_task::shared_lock _guard(glob.task_thread_safety);
                 glob.no_tasks_execute_notifier.notify_all_guarded();
             }
 
@@ -848,7 +864,9 @@ namespace fast_task {
                 glob.time_notifier.wait_until(guard, glob.cold_timed_tasks.front().wait_timepoint);
         }
 
+        fast_task::shared_lock _guard(glob.task_thread_safety);
         --glob.thread_count;
+        glob.executor_shutdown_notifier.notify_all();
     }
 
 #if defined(__GNUC__) && !defined(__clang__)
