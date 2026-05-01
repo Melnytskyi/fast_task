@@ -43,10 +43,28 @@ TEST_F(CombinedScenariosTest, TaskQueryMixedTasksAndCoroutines) {
 // ---- deadline_timer canceling a blocked task ----
 
 TEST_F(CombinedScenariosTest, DeadlineTimerCancelsBlockedTask) {
-    // Library limitation: data_.timeout (task deadline) only prevents the task
-    // from STARTING after expiry; it does not cancel a sleeping task mid-run.
-    // There is no mechanism to wake a sleeping task at its deadline.
-    GTEST_SKIP() << "Skipped: library limitation — task deadline does not cancel a running task";
+    fast_task::task_mutex mtx;
+    std::atomic<bool> cancelled{false};
+
+    auto deadline = std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(50);
+    auto t = std::make_shared<fast_task::task>(
+        [&] {
+            try {
+                fast_task::unique_lock<fast_task::task_mutex> lock(mtx);
+            } catch (const fast_task::task_cancellation&) {
+                cancelled = true;
+                throw;
+            }
+        },
+        nullptr,
+        deadline
+    );
+
+    fast_task::unique_lock<fast_task::task_mutex> native_lock(mtx);
+    fast_task::scheduler::start(t);
+    t->await_task();
+
+    EXPECT_TRUE(cancelled.load());
 }
 
 // ---- nested coroutines ----
