@@ -72,9 +72,19 @@ namespace fast_task {
             : _mtx(&mtx), _locked(false) {}
 
         unique_lock(const unique_lock&) = delete;
-        unique_lock(unique_lock&&) = delete;
+
+        unique_lock(unique_lock&& other) noexcept
+            : _mtx(other._mtx), _locked(other._locked) {
+            other._mtx = nullptr;
+            other._locked = false;
+        }
+
         unique_lock& operator=(const unique_lock&) = delete;
-        unique_lock& operator=(unique_lock&&) = delete;
+
+        unique_lock& operator=(unique_lock&& other) {
+            unique_lock(std::move(other)).swap(*this);
+            return *this;
+        }
 
         void lock() {
             if (!_locked) {
@@ -109,8 +119,16 @@ namespace fast_task {
         }
 
         Mutex* release() {
+            auto tmp = _mtx;
             _mtx = nullptr;
-            return _mtx;
+            _locked = false;
+            return tmp;
+        }
+
+        unique_lock& swap(unique_lock& other) noexcept {
+            std::swap(_mtx, other._mtx);
+            std::swap(_locked, other._locked);
+            return *this;
         }
     };
 
@@ -132,9 +150,19 @@ namespace fast_task {
             : _mtx(&mtx), _locked(false) {}
 
         shared_lock(const shared_lock&) = delete;
-        shared_lock(shared_lock&&) = delete;
+
+        shared_lock(shared_lock&& other) noexcept
+            : _mtx(other._mtx), _locked(other._locked) {
+            other._mtx = nullptr;
+            other._locked = false;
+        }
+
         shared_lock& operator=(const shared_lock&) = delete;
-        shared_lock& operator=(shared_lock&&) = delete;
+
+        shared_lock& operator=(shared_lock&& other) {
+            shared_lock(std::move(other)).swap(*this);
+            return *this;
+        }
 
         ~shared_lock() {
             if (_locked)
@@ -142,7 +170,14 @@ namespace fast_task {
         }
 
         Mutex* mutex() const {
-            return &_mtx;
+            return _mtx;
+        }
+
+        Mutex* release() {
+            auto tmp = _mtx;
+            _mtx = nullptr;
+            _locked = false;
+            return tmp;
         }
 
         void lock() {
@@ -167,6 +202,12 @@ namespace fast_task {
             } else
                 throw std::logic_error("Program tried lock locked mutex");
         }
+
+        shared_lock& swap(shared_lock& other) noexcept {
+            std::swap(_mtx, other._mtx);
+            std::swap(_locked, other._locked);
+            return *this;
+        }
     };
 
     template <class Mutex>
@@ -183,9 +224,9 @@ namespace fast_task {
             : _mtx(mtx) {}
 
         relock_guard(const relock_guard&) = delete;
-        relock_guard(relock_guard&&) = delete;
+        relock_guard(relock_guard&& other) = delete;
         relock_guard& operator=(const relock_guard&) = delete;
-        relock_guard& operator=(relock_guard&&) = delete;
+        relock_guard& operator=(relock_guard&& other) = delete;
 
         ~relock_guard() {
             _mtx.lock();

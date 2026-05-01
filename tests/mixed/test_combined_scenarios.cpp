@@ -70,8 +70,17 @@ fast_task::task_coro<int> nested_outer(int v) {
 }
 
 TEST_F(CombinedScenariosTest, NestedCoroutinesComputeCorrectly) {
-    // Library bug: is_ended() is inverted; co_await reads result before set.
-    GTEST_SKIP() << "Skipped: library bug — is_ended() returns inverted value";
+    auto coro = nested_outer(5);
+    fast_task::scheduler::start(coro.get_task());
+    coro->await_task();
+
+    int result = 0;
+    coro->access_dummy([&](void* addr) {
+        auto h = std::coroutine_handle<fast_task::task_promise<int>>::from_address(addr);
+        result = h.promise().result();
+    });
+
+    EXPECT_EQ(result, 21);
 }
 
 // ---- future chained from coroutine result ----

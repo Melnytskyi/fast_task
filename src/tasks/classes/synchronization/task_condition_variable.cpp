@@ -330,7 +330,7 @@ namespace fast_task {
 
     bool task_condition_variable::enter_wait(mutex_unify& mut, const std::shared_ptr<task>& task) {
         fast_task::lock_guard l(values.no_race);
-        get_data(loc.curr_task).relock_0 = mut;
+        get_data(task).relock_0 = mut;
         values.resume_task.push_back({task, get_data(task).awake_check, nullptr, nullptr});
         return false;
     }
@@ -339,7 +339,7 @@ namespace fast_task {
         if (std::chrono::high_resolution_clock::now() >= time_point)
             return true;
         fast_task::lock_guard l(values.no_race);
-        get_data(loc.curr_task).relock_0 = mut;
+        get_data(task).relock_0 = mut;
         values.resume_task.push_back({task, get_data(task).awake_check, nullptr, nullptr});
         fast_task::makeTimeWait_extern(task, time_point);
         return false;

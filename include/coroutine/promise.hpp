@@ -11,10 +11,25 @@ namespace fast_task {
             return {};
         }
 
-        std::suspend_always final_suspend() noexcept {
-            fast_task::this_task::the_coroutine_ended(task_object);
-            task_object.reset();
-            return {};
+        auto final_suspend() noexcept {
+            struct final_awaiter {
+                std::shared_ptr<fast_task::task> t;
+
+                bool await_ready() noexcept {
+                    return false;
+                }
+
+                void await_suspend(std::coroutine_handle<>) noexcept {
+                    if (t) {
+                        fast_task::this_task::the_coroutine_ended(t);
+                        t.reset();
+                    }
+                }
+
+                void await_resume() noexcept {}
+            };
+
+            return final_awaiter{std::move(task_object)};
         }
     };
 
@@ -35,4 +50,4 @@ namespace fast_task {
     };
 }
 
-#endif /* INCLUDE_TASK_PROMISE */
+#endif /* INCLUDE_COROUTINE_PROMISE */

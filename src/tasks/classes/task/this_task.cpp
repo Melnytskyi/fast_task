@@ -39,10 +39,12 @@ namespace fast_task::this_task {
 
     void the_coroutine_ended(const std::shared_ptr<task>& task) noexcept {
         if (task) {
-            fast_task::lock_guard guard(get_data(task).no_race);
-            get_data(task).callbacks.is_restartable = false;
-            get_data(task).end_of_life = true;
-            get_data(task).started = true;
+            {
+                fast_task::lock_guard guard(get_data(task).no_race);
+                get_data(task).callbacks.is_restartable = false;
+                get_data(task).end_of_life = true;
+                get_data(task).started = true;
+            }
             get_data(task).result_notify.notify_all();
         }
     }
