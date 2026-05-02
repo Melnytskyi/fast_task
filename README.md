@@ -34,7 +34,7 @@ Rather than managing separate thread pools for CPU workloads and I/O polling, Fa
 ### Prerequisites
 
 - **Compiler:** C++20 compatible compiler (GCC, Clang, MSVC).
-- **CMake:** Version 3.31 or later.
+- **CMake:** Version 3.20 or later.
 - **OS:** Windows or Linux.
 - **Dependencies:** `cpptrace` (if the Introspection API is enabled). `liburing` (required for Linux builds).
 
@@ -46,7 +46,7 @@ Clone the repository and open it in a modern IDE (Visual Studio, CLion, VS Code)
 **Method 2: Standard CMake**
 1. Clone the repository:
    ```bash
-   git clone [https://github.com/Melnytskyi/fast_task.git](https://github.com/Melnytskyi/fast_task.git) ./fast_task
+   git clone https://github.com/Melnytskyi/fast_task.git ./fast_task
    cd fast_task
    ```
 2. Build the project:
@@ -59,7 +59,7 @@ Clone the repository and open it in a modern IDE (Visual Studio, CLion, VS Code)
 **Method 3: Using vcpkg**
 1. Clone and initialize:
    ```bash
-   git clone [https://github.com/Melnytskyi/fast_task.git](https://github.com/Melnytskyi/fast_task.git) ./fast_task
+   git clone https://github.com/Melnytskyi/fast_task.git ./fast_task
    cd fast_task
    git submodule update --init --recursive
    ./vcpkg/bootstrap-vcpkg.sh
@@ -116,4 +116,4 @@ If enabled, preemption runs outside the standard time controller. On Windows, an
 Contributions are highly encouraged. Whether it's reporting bugs, optimizing algorithms, extending I/O support, or improving documentation, please feel free to open an issue or submit a pull request.
 
 ## SAST Tools
-Quality is verified using [PVS-Studio](https://pvs-studio.com/en/pvs-studio/?utm_source=website&utm_medium=github&utm_campaign=open_source) — a static analyzer for C, C++, C#, and Java code.
+[PVS-Studio](https://pvs-studio.com/en/pvs-studio/?utm_source=website&utm_medium=github&utm_campaign=open_source) — a static analyzer for C, C++, C#, and Java code.

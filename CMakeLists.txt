@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.31)
+cmake_minimum_required(VERSION 3.20)
 
 option(FAST_TASK_STATIC "Enable static build for fast task library" ON)
 option(FAST_TASK_BUILD_TESTS "Build the test suite" OFF)
