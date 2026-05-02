@@ -140,7 +140,7 @@ namespace fast_task {
                 if (native_cv != nullptr) {
                     *native_flag = true;
                     native_cv->notify_all();
-                    break;
+                    return;
                 }
                 continue;
             }
@@ -149,9 +149,11 @@ namespace fast_task {
                 continue;
             if (!get_data(it).time_end_flag) {
                 get_data(it).awaked = true;
+                if (get_data(it).is_on_scheduler)
+                    values.current_task = it.get();
                 transfer_task(std::move(it));
+                return;
             }
-            break;
         }
     }
 

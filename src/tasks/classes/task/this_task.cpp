@@ -77,7 +77,7 @@ namespace fast_task::this_task {
     }
 
     bool FT_API enter_yield() {
-        transfer_task(auto{loc.curr_task});
+        transfer_task(std::shared_ptr<task>{loc.curr_task});
         return false;
     }
 

@@ -109,8 +109,40 @@ namespace fast_task {
     void task_recursive_mutex::unlock() {
         if (recursive_count) {
             recursive_count--;
-            if (!recursive_count)
-                mutex.unlock();
+            if (!recursive_count) {
+                fast_task::lock_guard lg0(mutex.values.no_race);
+                if (loc.is_task_thread) {
+                    if (mutex.values.current_task != &*loc.curr_task)
+                        throw std::logic_error("Tried unlock non owned mutex");
+                } else if (mutex.values.current_task != reinterpret_cast<task*>((size_t)_thread_id() | native_thread_flag))
+                    throw std::logic_error("Tried unlock non owned mutex");
+
+                mutex.values.current_task = nullptr;
+                while (mutex.values.resume_task.size()) {
+                    auto [it, awake_check, native_cv, native_flag] = mutex.values.resume_task.front();
+                    mutex.values.resume_task.pop_front();
+                    if (it == nullptr) {
+                        if (native_cv != nullptr) {
+                            *native_flag = true;
+                            native_cv->notify_all();
+                            return;
+                        }
+                        continue;
+                    }
+                    fast_task::lock_guard lg1(get_data(it).no_race);
+                    if (get_data(it).awake_check != awake_check)
+                        continue;
+                    if (!get_data(it).time_end_flag) {
+                        get_data(it).awaked = true;
+                        if (get_data(it).is_on_scheduler) {
+                            mutex.values.current_task = it.get();
+                            ++recursive_count;
+                        }
+                        transfer_task(std::move(it));
+                        return;
+                    }
+                }
+            }
         } else
             throw std::logic_error("Mutex not locked");
     }

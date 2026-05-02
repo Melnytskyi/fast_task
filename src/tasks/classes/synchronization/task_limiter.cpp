@@ -150,6 +150,9 @@ namespace fast_task {
                 get_data(it.task).awaked = true;
                 auto task = values.resume_task.front().task;
                 values.resume_task.pop_front();
+                if (get_data(task).is_on_scheduler)
+                    if (--values.allow_threshold <= 0)
+                        values.locked = true;
                 transfer_task(std::move(task));
                 return;
             } else

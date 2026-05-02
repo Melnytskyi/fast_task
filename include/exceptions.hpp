@@ -21,13 +21,25 @@ namespace fast_task {
         }
     };
 
-    struct FT_API invalid_context final : public exception {
+    struct FT_API invalid_context : public exception {
         inline const char* what() const noexcept override {
-            return "Native thread called task only function while being not in task context.";
+            return "Used function for invalid context";
         }
     };
 
-    struct FT_API invalid_native_context final : public exception {
+    struct FT_API invalid_coroutine_context_arguments final : public invalid_context {
+        inline const char* what() const noexcept override {
+            return "Used the function with arguments for stackfull context.";
+        }
+    };
+
+    struct FT_API invalid_coroutine_context final : public invalid_context {
+        inline const char* what() const noexcept override {
+            return "Used the function designed for stackfull context.";
+        }
+    };
+
+    struct FT_API invalid_native_context : public invalid_context {
         inline const char* what() const noexcept override {
             return "Task called native thread only function.";
         }

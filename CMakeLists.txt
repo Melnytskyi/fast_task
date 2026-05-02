@@ -127,7 +127,7 @@ endif()
 target_include_directories(fast_task PRIVATE ${Boost_INCLUDE_DIRS} ${fast_task_INCLUDE_DIR} ${concurrentqueue_INCLUDE_DIRS} ${CONCURRENTQUEUE_EXTRA_INCLUDE_DIR})
 set_target_properties(fast_task
   PROPERTIES
-  CXX_STANDARD 23
+  CXX_STANDARD 20
   CXX_EXTENSIONS OFF
 )
 target_link_libraries(fast_task PRIVATE Boost::context Boost::lockfree concurrentqueue::concurrentqueue)

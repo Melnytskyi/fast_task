@@ -25,7 +25,10 @@ namespace fast_task {
 
         ~future() = default;
 
-        static std::shared_ptr<future> start(std::move_only_function<T()>&& fn, uint16_t bind_id = (uint16_t)-1) {
+        template <class FN>
+        static std::shared_ptr<future> start(FN&& fn, uint16_t bind_id = (uint16_t)-1)
+            requires std::is_same_v<std::invoke_result_t<FN>, T>
+        {
             std::shared_ptr<future> future_ = std::make_shared<future>();
             auto task_ = std::make_shared<task>([fn = std::move(fn), future_]() mutable {
                 try {
@@ -48,7 +51,10 @@ namespace fast_task {
             return future_;
         }
 
-        static std::shared_ptr<future> start(fast_task::task_query& query, std::move_only_function<T()>&& fn, uint16_t bind_id = (uint16_t)-1) {
+        template <class FN>
+        static std::shared_ptr<future> start(fast_task::task_query& query, FN&& fn, uint16_t bind_id = (uint16_t)-1)
+            requires std::is_same_v<std::invoke_result_t<FN>, T>
+        {
             std::shared_ptr<future> future_ = std::make_shared<future>();
             auto task_ = std::make_shared<task>([fn = std::move(fn), future_]() mutable {
                 try {
@@ -105,7 +111,10 @@ namespace fast_task {
             return std::move(*result);
         }
 
-        void when_ready(std::move_only_function<void(T)>&& fn) {
+        template <class FN>
+        void when_ready(FN&& fn)
+            requires std::is_same_v<std::invoke_result_t<FN, T>, void>
+        {
             mutex_unify um(task_mt);
             fast_task::unique_lock lock(um);
             if (_is_ready) {
@@ -123,7 +132,10 @@ namespace fast_task {
             }
         }
 
-        void when_ready(std::move_only_function<void()>&& fn) {
+        template <class FN>
+        void when_ready(FN&& fn)
+            requires std::is_invocable_v<FN>
+        {
             mutex_unify um(task_mt);
             fast_task::unique_lock lock(um);
             if (_is_ready) {
@@ -232,12 +244,79 @@ namespace fast_task {
         future() = default;
         ~future();
 
-        static std::shared_ptr<future> start(std::move_only_function<void()>&& fn, uint16_t bind_id = (uint16_t)-1);
-        static std::shared_ptr<future> start(fast_task::task_query& query, std::move_only_function<void()>&& fn, uint16_t bind_id = (uint16_t)-1);
+        template <class FN>
+        static std::shared_ptr<future<void>> start(FN&& fn, uint16_t bind_id = -1)
+            requires std::is_invocable_v<FN>
+        {
+            std::shared_ptr<future> future_ = std::make_shared<future>();
+            auto task_ = std::make_shared<task>([fn = std::move(fn), future_]() mutable {
+                try {
+                    fn();
+                } catch (const task_cancellation&) {
+                    fast_task::lock_guard guard(future_->task_mt);
+                    future_->_is_ready = true;
+                    future_->task_cv.notify_all();
+                    throw;
+                } catch (...) {
+                    future_->ex_ptr = std::current_exception();
+                }
+                fast_task::lock_guard guard(future_->task_mt);
+                future_->_is_ready = true;
+                future_->task_cv.notify_all();
+            });
+            if (bind_id != (uint16_t)-1)
+                task_->set_worker_id(bind_id);
+            scheduler::start(task_);
+            return future_;
+        }
+
+        template <class FN>
+        static std::shared_ptr<future<void>> start(fast_task::task_query& query, FN&& fn, uint16_t bind_id = -1)
+            requires std::is_invocable_v<FN>
+        {
+            std::shared_ptr<future> future_ = std::make_shared<future>();
+            auto task_ = std::make_shared<task>([fn = std::move(fn), future_]() mutable {
+                try {
+                    fn();
+                } catch (const task_cancellation&) {
+                    fast_task::lock_guard guard(future_->task_mt);
+                    future_->_is_ready = true;
+                    future_->task_cv.notify_all();
+                    throw;
+                } catch (...) {
+                    future_->ex_ptr = std::current_exception();
+                }
+                fast_task::lock_guard guard(future_->task_mt);
+                future_->_is_ready = true;
+                future_->task_cv.notify_all();
+            });
+            if (bind_id != (uint16_t)-1)
+                task_->set_worker_id(bind_id);
+            query.add(task_);
+            return future_;
+        }
+
         static std::shared_ptr<future> make_ready();
         void get();
         void take();
-        void when_ready(std::move_only_function<void()>&& fn);
+
+        template <class FN>
+        void when_ready(FN&& fn)
+            requires std::is_invocable_v<FN>
+        {
+            mutex_unify um(task_mt);
+            fast_task::unique_lock lock(um);
+            if (_is_ready) {
+                lock.unlock();
+                fn();
+            } else {
+                task_cv.callback(
+                    lock,
+                    std::make_shared<task>(std::move(fn))
+                );
+            }
+        }
+
         bool is_ready() const;
         void wait();
 
@@ -282,7 +361,10 @@ namespace fast_task {
     struct cancelable_future : public future<T> {
         std::shared_ptr<task> task_;
 
-        static std::shared_ptr<cancelable_future> start(std::move_only_function<T()>&& fn, uint16_t bind_id = (uint16_t)-1) {
+        template <class FN>
+        static std::shared_ptr<cancelable_future> start(FN&& fn, uint16_t bind_id = (uint16_t)-1)
+            requires std::is_same_v<std::invoke_result_t<FN>, T>
+        {
             std::shared_ptr<cancelable_future> future_ = std::make_shared<cancelable_future>();
             future_->task_ = std::make_shared<task>([fn = std::move(fn), future_]() mutable {
                 try {
@@ -308,7 +390,10 @@ namespace fast_task {
             return future_;
         }
 
-        static std::shared_ptr<cancelable_future> start(fast_task::task_query& query, std::move_only_function<T()>&& fn, uint16_t bind_id = (uint16_t)-1) {
+        template <class FN>
+        static std::shared_ptr<cancelable_future> start(fast_task::task_query& query, FN&& fn, uint16_t bind_id = (uint16_t)-1)
+            requires std::is_same_v<std::invoke_result_t<FN>, T>
+        {
             std::shared_ptr<cancelable_future> future_ = std::make_shared<cancelable_future>();
             future_->task_ = std::make_shared<task>([fn = std::move(fn), future_]() mutable {
                 try {

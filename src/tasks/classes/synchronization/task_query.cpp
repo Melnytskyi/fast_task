@@ -150,7 +150,7 @@ namespace fast_task {
         if (handle->now_at_execution == 0 && handle->tasks.empty())
             return true;
 
-        task::run([this, parent_coro = task] mutable {
+        task::run([this, parent_coro = task]() mutable {
             this->wait();
             scheduler::start(std::move(parent_coro));
         });
@@ -162,7 +162,7 @@ namespace fast_task {
         if (handle->now_at_execution == 0 && handle->tasks.empty())
             return true;
 
-        task::run([this, parent_coro = task, time_point] mutable {
+        task::run([this, parent_coro = task, time_point]() mutable {
             if (!this->wait_until(time_point))
                 get_data(parent_coro).time_end_flag = true;
 

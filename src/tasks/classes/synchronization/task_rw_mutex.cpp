@@ -155,7 +155,6 @@ namespace fast_task {
                     get_data(item).awaked = true;
                     transfer_task(std::move(item));
                 }
-                break;
             }
         }
     }
