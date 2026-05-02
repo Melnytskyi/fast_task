@@ -338,7 +338,7 @@ namespace fast_task {
             void await_resume() {}
         };
 
-        return result_awaiter{t};
+        return result_awaiter{std::move(t)};
     }
 
     template <class T>

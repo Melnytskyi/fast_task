@@ -251,7 +251,7 @@ namespace fast_task {
         if (hh->time_point <= std::chrono::high_resolution_clock::now()) {
             return true;
         } else {
-            get_data(loc.curr_task).relock_0 = mut;
+            get_data(task).relock_0 = mut;
             hh->sleeping_tasks.push_back(task);
             out_time = hh->time_point;
             fast_task::makeTimeWait_extern(task, hh->time_point);

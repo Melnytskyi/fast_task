@@ -33,7 +33,7 @@ namespace fast_task::scheduler {
             unsafe_put_task_to_timed_queue(glob.timed_tasks, time_point, lgr_task);
         else
             unsafe_put_task_to_timed_queue(glob.cold_timed_tasks, time_point, lgr_task);
-        glob.time_notifier.notify_one();
+        glob.time_notifier.notify_all();
         glob.tasks_notifier.notify_one();
         guard.unlock();
     }
@@ -97,7 +97,7 @@ namespace fast_task::scheduler {
         if (id == (uint16_t)-1)
             throw std::runtime_error("Invalid id");
 
-        uint16_t current_executors = 0;
+        uint16_t current_expected = 0;
         if (!glob.binded_workers.contains(id)) {
             glob.binded_workers[id].allow_implicit_start = allow_implicit_start;
             glob.binded_workers[id].fixed_size = (bool)fixed_count;
@@ -106,15 +106,18 @@ namespace fast_task::scheduler {
             fast_task::lock_guard ctx_guard(glob.binded_workers[id].no_race);
             if (glob.binded_workers[id].in_close)
                 throw std::runtime_error("Worker is closing");
-            current_executors = glob.binded_workers[id].executors;
+            // Use expected_executors (threads already spawned/committed), not
+            // context.executors (threads that have actually started), so that
+            // slow-starting threads are not spawned a second time.
+            current_expected = glob.binded_workers[id].expected_executors;
             glob.binded_workers[id].allow_implicit_start = allow_implicit_start;
             glob.binded_workers[id].fixed_size = (bool)fixed_count;
             glob.binded_workers[id].policy = policy;
             glob.binded_workers[id].expected_executors = fixed_count;
         }
 
-        if (fixed_count > current_executors) {
-            size_t diff = fixed_count - current_executors;
+        if (fixed_count > current_expected) {
+            size_t diff = fixed_count - current_expected;
             for (size_t i = 0; i < diff; i++) {
                 ++glob.thread_count;
                 fast_task::thread(bindedTaskExecutor, id).detach();
@@ -219,30 +222,20 @@ namespace fast_task::scheduler {
                 for (auto& q : *queue)
                     if (q->size())
                         return true;
+                for (auto& [id, bind_data] : glob.binded_workers) {
+                    fast_task::unique_lock l(bind_data.no_race);
+                    for (auto& q : *bind_data.executors_queues.load())
+                        if (q->size())
+                            return true;
+                    if (bind_data.tasks.size_approx())
+                        return true;
+                }
                 return false;
             };
 
             while (tasks_present() || glob.cold_tasks.size_approx() || glob.timed_tasks.size() || glob.cold_timed_tasks.size() || glob.executing_tasks) {
                 if (!total_executors())
                     create_executor(1);
-
-                if (glob.shutdown_requested.load(std::memory_order_acquire)) {
-                    //BUG
-                    // If shutdown is requested and there is no runnable/waiting task state
-                    // left in scheduler queues or runtime, do not block forever on a leaked
-                    // accounting value in glob.executing_tasks.
-                    // This solution is bad and just reduces the amount of stuck tasks. I would like to fix this in other way.
-                    //TODO
-                    // find the reason and way to safely shutdown the tasks
-                    if (!tasks_present() &&
-                        glob.cold_tasks.size_approx() == 0 &&
-                        glob.timed_tasks.empty() &&
-                        glob.cold_timed_tasks.empty() &&
-                        glob.in_run_tasks.load() == 0 &&
-                        glob.tasks_in_swap.load() == 0) {
-                        break;
-                    }
-                }
 
                 glob.no_tasks_execute_notifier.wait(l);
             }
@@ -296,17 +289,22 @@ namespace fast_task::scheduler {
             close_bind_only_executor(glob.binded_workers.begin()->first);
 
         fast_task::unique_lock guard(glob.task_thread_safety);
-        size_t executors = glob.executors;
-        for (size_t i = 0; i < executors; i++)
-            transfer_task(std::make_shared<task>(nullptr));
+        glob.executor_shutting_down.store(true, std::memory_order_release);
         glob.tasks_notifier.notify_all();
         while (glob.executors)
             glob.executor_shutdown_notifier.wait(guard);
         glob.time_control_enabled = false;
         glob.time_notifier.notify_all();
+        guard.unlock();
 
         while (glob.thread_count.load())
             std::this_thread::yield();
+        {
+            std::shared_ptr<task> tmp;
+            while (glob.tasks.try_dequeue(tmp)) {}
+            while (glob.cold_tasks.try_dequeue(tmp)) {}
+        }
+        glob.executor_shutting_down.store(false, std::memory_order_release);
     }
 
     const std::shared_ptr<task>& current_context_task() {

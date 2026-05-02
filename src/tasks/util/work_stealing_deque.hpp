@@ -82,7 +82,6 @@ public:
 
         if (t < b) {
             item = std::move(_buffer[b & _mask]);
-            _buffer[b & _mask].~T();
             return true;
         }
 
@@ -94,7 +93,6 @@ public:
         if (_top.compare_exchange_strong(t, t + 1, std::memory_order_seq_cst, std::memory_order_relaxed)) {
             _bottom.store(b + 1, std::memory_order_relaxed);
             item = std::move(_buffer[b & _mask]);
-            _buffer[b & _mask].~T();
             return true;
         } else {
             _bottom.store(b + 1, std::memory_order_relaxed);

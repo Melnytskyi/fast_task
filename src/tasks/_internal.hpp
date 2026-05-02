@@ -75,10 +75,10 @@ namespace fast_task {
         bool* native_check = nullptr;
     };
 
-    struct task_query_handle {                  //128 [sizeof]
-        task_mutex no_race;                     //40
+    struct task_query_handle {                  //96 [sizeof]
         task_condition_variable end_of_query;   //32
         std::list<std::shared_ptr<task>> tasks; //24
+        fast_task::spin_lock no_race;           //8
         task_query* tq = nullptr;               //8
         size_t now_at_execution = 0;            //8
         size_t at_execution_max = 0;            //8
@@ -225,8 +225,10 @@ namespace fast_task {
     };
 
     struct FT_API_LOCAL executor_global {
-        task_condition_variable no_tasks_notifier;
         task_condition_variable no_tasks_execute_notifier;
+        fast_task::condition_variable time_notifier;
+        fast_task::condition_variable_any tasks_notifier;
+        fast_task::condition_variable_any executor_shutdown_notifier;
 
         std::atomic<std::shared_ptr<const std::vector<std::shared_ptr<work_stealing_deque<std::shared_ptr<task>>>>>> executors_queues;
         moodycamel::ConcurrentQueue<std::shared_ptr<task>> tasks;
@@ -237,12 +239,10 @@ namespace fast_task {
         fast_task::rw_mutex task_thread_safety;
         fast_task::mutex task_timer_safety;
 
-        fast_task::condition_variable_any tasks_notifier;
-        fast_task::condition_variable time_notifier;
-        fast_task::condition_variable_any executor_shutdown_notifier;
 
-        bool time_control_enabled = false;
+        std::atomic<bool> time_control_enabled{false};
         std::atomic<bool> shutdown_requested{false};
+        std::atomic<bool> executor_shutting_down{false};
 
         std::atomic_size_t interrupts = 0; //debug counter of the usermode fast_task interrupts
         std::atomic_size_t executors = 0;

@@ -13,7 +13,8 @@
 namespace fast_task {
     [[nodiscard]] inline auto async_wait(task_condition_variable& cv, fast_task::unique_lock<mutex_unify>& lock) {
         struct awaiter {
-            mutex_unify& mut;
+            fast_task::unique_lock<mutex_unify>& lock;
+            mutex_unify* mut;
             task_condition_variable& cv;
 
             bool await_ready() noexcept {
@@ -21,20 +22,24 @@ namespace fast_task {
             }
 
             bool await_suspend(base_coro_handle h) {
-                return !cv.enter_wait(mut, h.promise->task_object);
+                return !cv.enter_wait(*mut, h.promise->task_object);
             }
 
-            void await_resume() noexcept {}
+            void await_resume() noexcept {
+                lock = {*mut, fast_task::adopt_lock};
+            }
         };
 
-        return awaiter{*lock.mutex(), cv};
+        return awaiter{lock, lock.release(), cv};
     }
 
     [[nodiscard]] inline auto async_wait_until(task_condition_variable& cv, fast_task::unique_lock<mutex_unify>& lock, std::chrono::high_resolution_clock::time_point time_point) {
         struct awaiter {
-            mutex_unify& mut;
+            fast_task::unique_lock<mutex_unify>& lock;
+            mutex_unify* mut;
             task_condition_variable& cv;
             std::chrono::high_resolution_clock::time_point time_point;
+            std::shared_ptr<fast_task::task> task_obj;
             bool successful = false;
 
             bool await_ready() noexcept {
@@ -43,18 +48,20 @@ namespace fast_task {
             }
 
             bool await_suspend(base_coro_handle h) {
-                return !cv.enter_wait_until(mut, h.promise->task_object, time_point);
+                task_obj = h.promise->task_object;
+                return !cv.enter_wait_until(*mut, h.promise->task_object, time_point);
             }
 
             bool await_resume() noexcept {
                 if (successful)
                     return true;
-                successful = !fast_task::scheduler::current_context_task()->has_wait_timed_out();
+                successful = !task_obj->has_wait_timed_out();
+                lock = {*mut, fast_task::adopt_lock};
                 return successful;
             }
         };
 
-        return awaiter{*lock.mutex(), cv, time_point};
+        return awaiter{lock, lock.release(), cv, time_point};
     }
 
     template <class Rep, class Period>
@@ -64,7 +71,8 @@ namespace fast_task {
 
     [[nodiscard]] inline auto async_wait(task_condition_variable& cv, std::unique_lock<mutex_unify>& lock) {
         struct awaiter {
-            mutex_unify& mut;
+            std::unique_lock<mutex_unify>& lock;
+            mutex_unify* mut;
             task_condition_variable& cv;
 
             bool await_ready() noexcept {
@@ -72,20 +80,24 @@ namespace fast_task {
             }
 
             bool await_suspend(base_coro_handle h) {
-                return !cv.enter_wait(mut, h.promise->task_object);
+                return !cv.enter_wait(*mut, h.promise->task_object);
             }
 
-            void await_resume() noexcept {}
+            void await_resume() noexcept {
+                lock = std::unique_lock<mutex_unify>(*mut, std::adopt_lock);
+            }
         };
 
-        return awaiter{*lock.mutex(), cv};
+        return awaiter{lock, lock.release(), cv};
     }
 
     [[nodiscard]] inline auto async_wait_until(task_condition_variable& cv, std::unique_lock<mutex_unify>& lock, std::chrono::high_resolution_clock::time_point time_point) {
         struct awaiter {
-            mutex_unify& mut;
+            std::unique_lock<mutex_unify>& lock;
+            mutex_unify* mut;
             task_condition_variable& cv;
             std::chrono::high_resolution_clock::time_point time_point;
+            std::shared_ptr<fast_task::task> task_obj;
             bool successful = false;
 
             bool await_ready() noexcept {
@@ -94,18 +106,20 @@ namespace fast_task {
             }
 
             bool await_suspend(base_coro_handle h) {
-                return !cv.enter_wait_until(mut, h.promise->task_object, time_point);
+                task_obj = h.promise->task_object;
+                return !cv.enter_wait_until(*mut, h.promise->task_object, time_point);
             }
 
             bool await_resume() noexcept {
                 if (successful)
                     return true;
-                successful = !fast_task::scheduler::current_context_task()->has_wait_timed_out();
+                successful = !task_obj->has_wait_timed_out();
+                lock = std::unique_lock<mutex_unify>(*mut, std::adopt_lock);
                 return successful;
             }
         };
 
-        return awaiter{*lock.mutex(), cv, time_point};
+        return awaiter{lock, lock.release(), cv, time_point};
     }
 
     template <class Rep, class Period>

@@ -130,7 +130,7 @@ set_target_properties(fast_task
   CXX_STANDARD 23
   CXX_EXTENSIONS OFF
 )
-target_link_libraries(fast_task PRIVATE Boost::context concurrentqueue::concurrentqueue)
+target_link_libraries(fast_task PRIVATE Boost::context Boost::lockfree concurrentqueue::concurrentqueue)
 
 if(MSVC)
   set_property(TARGET fast_task PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")

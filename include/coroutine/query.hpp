@@ -33,6 +33,7 @@ namespace fast_task {
         struct awaiter {
             task_query& query;
             std::chrono::high_resolution_clock::time_point time_point;
+            std::shared_ptr<fast_task::task> task_obj;
             bool successful = false;
 
             bool await_ready() noexcept {
@@ -41,13 +42,14 @@ namespace fast_task {
             }
 
             bool await_suspend(base_coro_handle h) {
+                task_obj = h.promise->task_object;
                 return !query.enter_wait_until(h.promise->task_object, time_point);
             }
 
             bool await_resume() noexcept {
                 if (successful)
                     return true;
-                successful = !fast_task::scheduler::current_context_task()->has_wait_timed_out();
+                successful = !task_obj->has_wait_timed_out();
                 return successful;
             }
         };

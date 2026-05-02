@@ -152,7 +152,7 @@ namespace fast_task {
 
         task::run([this, parent_coro = task] mutable {
             this->wait();
-            transfer_task(std::move(parent_coro));
+            scheduler::start(std::move(parent_coro));
         });
 
         return false;
@@ -166,7 +166,7 @@ namespace fast_task {
             if (!this->wait_until(time_point))
                 get_data(parent_coro).time_end_flag = true;
 
-            transfer_task(std::move(parent_coro));
+            scheduler::start(std::move(parent_coro));
         });
 
         return false;
