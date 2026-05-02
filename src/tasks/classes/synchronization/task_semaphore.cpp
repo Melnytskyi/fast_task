@@ -83,8 +83,12 @@ namespace fast_task {
                 swapCtxRelock(glob.task_timer_safety, values.no_race);
                 auto awaked = get_data(loc.curr_task).awaked;
                 resetTimeWait();
-                if (!awaked)
+                if (!awaked) {
+                    auto it = std::find_if(values.resume_task.begin(), values.resume_task.end(), [](const auto& a) { return a.task == loc.curr_task; });
+                    if (it != values.resume_task.end())
+                        values.resume_task.erase(it);
                     return false;
+                }
             } else if (values.native_notify.wait_until(keeper, time_point) == fast_task::cv_status::timeout)
                 return false;
         }
@@ -110,6 +114,8 @@ namespace fast_task {
                 get_data(it.task).awaked = true;
                 auto task = values.resume_task.front().task;
                 values.resume_task.pop_front();
+                if (get_data(task).is_on_scheduler)
+                    --values.allow_threshold;
                 transfer_task(std::move(task));
                 return;
             } else {
@@ -135,6 +141,8 @@ namespace fast_task {
                 get_data(it.task).awaked = true;
                 auto task = values.resume_task.front().task;
                 values.resume_task.pop_front();
+                if (get_data(task).is_on_scheduler)
+                    --values.allow_threshold;
                 transfer_task(std::move(task));
             } else {
                 values.resume_task.pop_front();
@@ -148,54 +156,6 @@ namespace fast_task {
             return false;
         }
         return true;
-    }
-
-    bool task_semaphore::task_lock_awaiter::await_ready() noexcept {
-        return sem.try_lock();
-    }
-
-    bool task_semaphore::task_lock_awaiter::await_suspend(base_coro_handle h) {
-        auto& task_ptr = h.promise->task_object;
-        fast_task::unique_lock keeper(sem.values.no_race);
-        if (!sem.values.allow_threshold) {
-            sem.values.resume_task.emplace_back(task_ptr, get_data(task_ptr).awake_check);
-            return true;
-        }
-        --sem.values.allow_threshold;
-        return false;
-    }
-
-    void task_semaphore::task_lock_awaiter::await_resume() noexcept {}
-
-    bool task_semaphore::task_try_lock_awaiter::await_ready() noexcept {
-        successful = sem.try_lock();
-        return successful;
-    }
-
-    bool task_semaphore::task_try_lock_awaiter::await_suspend(base_coro_handle h) {
-        return !sem.enter_wait_until(h.promise->task_object, time_point);
-    }
-
-    bool task_semaphore::task_try_lock_awaiter::await_resume() noexcept {
-        if (successful)
-            return true;
-        auto& task_ptr = handle.promise->task_object;
-        if (get_data(task_ptr).time_end_flag) {
-            successful = false;
-        } else
-            successful = true;
-        return successful;
-    }
-
-    task_semaphore::task_lock_awaiter task_semaphore::async_lock() {
-        return task_lock_awaiter{*this};
-    }
-
-    task_semaphore::task_try_lock_awaiter task_semaphore::async_try_lock_until(std::chrono::high_resolution_clock::time_point time_point) {
-        return task_try_lock_awaiter{
-            *this,
-            time_point
-        };
     }
 
     bool task_semaphore::enter_wait(const std::shared_ptr<task>& task) {

@@ -24,11 +24,19 @@ fast_task::task_coro<int> outer_coro() {
 }
 
 TEST_F(CoroutineAwaitTest, CoAwaitInnerCoro) {
-    // Library bug: task::is_ended() returns !end_of_life (inverted).
-    // co_await's await_ready() calls is_ended() and returns true when the
-    // task is NOT done, so await_resume() is called before the result is set,
-    // throwing "coroutine returned nothing".
-    GTEST_SKIP() << "Skipped: library bug \u2014 is_ended() returns inverted value";
+    std::atomic<bool> done{false};
+    auto coro_fn = [&done]() -> fast_task::task_coro<void> {
+        auto c = outer_coro();
+        fast_task::scheduler::start(c.get_task());
+        int v = co_await c;
+        EXPECT_EQ(v, 14);
+        done = true;
+        co_return;
+    };
+    auto coro = coro_fn();
+    fast_task::scheduler::start(coro.get_task());
+    coro->await_task();
+    EXPECT_TRUE(done.load());
 }
 
 // ---- co_await std::shared_ptr<task> ----
@@ -41,9 +49,17 @@ fast_task::task_coro<void> await_task_ptr(std::atomic<int>& out) {
 }
 
 TEST_F(CoroutineAwaitTest, CoAwaitSharedPtrTask) {
-    // Library bug: is_ended() is inverted; co_await skips waiting and the
-    // inner task may not have run yet when we check the result.
-    GTEST_SKIP() << "Skipped: library bug \u2014 is_ended() returns inverted value";
+    std::atomic<int> out{0};
+    auto coro_fn = [&out]() -> fast_task::task_coro<void> {
+        auto at = await_task_ptr(out);
+        fast_task::scheduler::start(at.get_task());
+        co_await at;
+        co_return;
+    };
+    auto coro = coro_fn();
+    fast_task::scheduler::start(coro.get_task());
+    coro->await_task();
+    EXPECT_EQ(out.load(), 55);
 }
 
 // ---- task_auto_start_coro: no manual start ----
@@ -86,6 +102,17 @@ fast_task::task_coro<int> pipeline() {
 }
 
 TEST_F(CoroutineAwaitTest, SequentialPipeline) {
-    // Library bug: is_ended() is inverted; co_await reads result before set.
-    GTEST_SKIP() << "Skipped: library bug \u2014 is_ended() returns inverted value";
+    std::atomic<bool> done{false};
+    auto coro_fn = [&done]() -> fast_task::task_coro<void> {
+        auto p = pipeline();
+        fast_task::scheduler::start(p.get_task());
+        int result = co_await p;
+        EXPECT_EQ(result, 3);
+        done = true;
+        co_return;
+    };
+    auto coro = coro_fn();
+    fast_task::scheduler::start(coro.get_task());
+    coro->await_task();
+    EXPECT_TRUE(done.load());
 }

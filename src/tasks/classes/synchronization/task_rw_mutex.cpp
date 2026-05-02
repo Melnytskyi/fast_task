@@ -87,8 +87,12 @@ namespace fast_task {
                 swapCtxRelock(get_data(loc.curr_task).no_race, values.no_race);
                 auto awaked = get_data(loc.curr_task).awaked;
                 resetTimeWait();
-                if (!awaked)
+                if (!awaked) {
+                    auto it = std::find_if(values.resume_task.begin(), values.resume_task.end(), [](const auto& a) { return a.task == loc.curr_task; });
+                    if (it != values.resume_task.end())
+                        values.resume_task.erase(it);
                     return false;
+                }
             }
         } else {
             while (values.current_writer_task) {
@@ -151,7 +155,6 @@ namespace fast_task {
                     get_data(item).awaked = true;
                     transfer_task(std::move(item));
                 }
-                break;
             }
         }
     }
@@ -169,24 +172,15 @@ namespace fast_task {
     void task_rw_mutex::lifecycle_read_lock(std::shared_ptr<task>&& lock_task) {
         if (get_data(lock_task).started)
             throw std::logic_error("Task already started");
-        if (get_data(lock_task).callbacks.is_extended_mode) {
-            if (!get_data(lock_task).callbacks.extended_mode.on_start)
-                throw std::logic_error("lifecycle_lock requires in extended mode the on_start variable to be set");
-            else if (!get_data(lock_task).callbacks.extended_mode.is_restartable)
-                throw std::logic_error("lifecycle_lock requires in extended mode the restartable mode to be disabled");
-            else {
-                task::run([lock_task, this]() {
-                    fast_task::read_lock guard(*this);
-                    task::await_task(lock_task, true);
-                });
-            }
-        } else {
-            auto old_func = std::move(get_data(lock_task).callbacks.normal_mode.func);
-            get_data(lock_task).callbacks.normal_mode.func = [old_func = std::move(old_func), this]() mutable {
+        if (!get_data(lock_task).callbacks.on_start)
+            throw std::logic_error("lifecycle_lock requires the on_start variable to be set");
+        else if (!get_data(lock_task).callbacks.is_restartable)
+            throw std::logic_error("lifecycle_lock requires the restartable mode to be disabled");
+        else {
+            task::run([lock_task, this]() {
                 fast_task::read_lock guard(*this);
-                old_func();
-            };
-            scheduler::start(lock_task);
+                task::await_task(lock_task, true);
+            });
         }
     }
 
@@ -258,8 +252,12 @@ namespace fast_task {
                 swapCtxRelock(glob.task_timer_safety, values.no_race);
                 auto awaked = get_data(loc.curr_task).awaked;
                 resetTimeWait();
-                if (!awaked)
+                if (!awaked) {
+                    auto it = std::find_if(values.resume_task.begin(), values.resume_task.end(), [](const auto& a) { return a.task == loc.curr_task; });
+                    if (it != values.resume_task.end())
+                        values.resume_task.erase(it);
                     return false;
+                }
             }
             values.current_writer_task = &*loc.curr_task;
 
@@ -272,6 +270,9 @@ namespace fast_task {
                 resetTimeWait();
                 if (!awaked) {
                     values.current_writer_task = nullptr;
+                    auto it = std::find_if(values.resume_task.begin(), values.resume_task.end(), [](const auto& a) { return a.task == loc.curr_task; });
+                    if (it != values.resume_task.end())
+                        values.resume_task.erase(it);
                     return false;
                 }
             }
@@ -354,24 +355,15 @@ namespace fast_task {
     void task_rw_mutex::lifecycle_write_lock(std::shared_ptr<task>&& lock_task) {
         if (get_data(lock_task).started)
             throw std::logic_error("Task already started");
-        if (get_data(lock_task).callbacks.is_extended_mode) {
-            if (!get_data(lock_task).callbacks.extended_mode.on_start)
-                throw std::logic_error("lifecycle_lock requires in extended mode the on_start variable to be set");
-            else if (!get_data(lock_task).callbacks.extended_mode.is_restartable)
-                throw std::logic_error("lifecycle_lock requires in extended mode the restartable mode be to disabled");
-            else {
-                task::run([lock_task, this]() {
-                    fast_task::write_lock guard(*this);
-                    task::await_task(lock_task, true);
-                });
-            }
-        } else {
-            auto old_func = std::move(get_data(lock_task).callbacks.normal_mode.func);
-            get_data(lock_task).callbacks.normal_mode.func = [old_func = std::move(old_func), this]() mutable {
+        if (!get_data(lock_task).callbacks.on_start)
+            throw std::logic_error("lifecycle_lock requires the on_start variable to be set");
+        else if (!get_data(lock_task).callbacks.is_restartable)
+            throw std::logic_error("lifecycle_lock requires the restartable mode be to disabled");
+        else {
+            task::run([lock_task, this]() {
                 fast_task::write_lock guard(*this);
-                old_func();
-            };
-            scheduler::start(lock_task);
+                task::await_task(lock_task, true);
+            });
         }
     }
 
@@ -380,88 +372,6 @@ namespace fast_task {
             return true;
         else
             return is_read_locked();
-    }
-
-    bool task_rw_mutex::task_mutex_write_lock_awaiter::await_ready() noexcept {
-        return mutex.try_lock();
-    }
-
-    bool task_rw_mutex::task_mutex_write_lock_awaiter::await_suspend(base_coro_handle h) {
-        return !mutex.enter_write_wait(h.promise->task_object);
-    }
-
-    void task_rw_mutex::task_mutex_write_lock_awaiter::await_resume() noexcept {}
-
-    bool task_rw_mutex::task_mutex_try_write_lock_awaiter::await_ready() noexcept {
-        if (mutex.try_lock()) {
-            successful = true;
-            return true;
-        }
-        return false;
-    }
-
-    bool task_rw_mutex::task_mutex_try_write_lock_awaiter::await_suspend(base_coro_handle h) {
-        return !mutex.enter_write_wait_until(h.promise->task_object, time_point);
-    }
-
-    bool task_rw_mutex::task_mutex_try_write_lock_awaiter::await_resume() noexcept {
-        if (successful)
-            return true;
-        auto& task_ptr = handle.promise->task_object;
-        successful = !task_ptr->has_wait_timed_out();
-        return successful;
-    }
-
-    bool task_rw_mutex::task_mutex_read_lock_awaiter::await_ready() noexcept {
-        return mutex.try_read_lock();
-    }
-
-    bool task_rw_mutex::task_mutex_read_lock_awaiter::await_suspend(base_coro_handle h) {
-        return !mutex.enter_read_wait(h.promise->task_object);
-    }
-
-    void task_rw_mutex::task_mutex_read_lock_awaiter::await_resume() noexcept {}
-
-    bool task_rw_mutex::task_mutex_try_read_lock_awaiter::await_ready() noexcept {
-        if (mutex.try_read_lock()) {
-            successful = true;
-            return true;
-        }
-        return false;
-    }
-
-    bool task_rw_mutex::task_mutex_try_read_lock_awaiter::await_suspend(base_coro_handle h) {
-        return !mutex.enter_read_wait_until(h.promise->task_object, time_point);
-    }
-
-    bool task_rw_mutex::task_mutex_try_read_lock_awaiter::await_resume() noexcept {
-        if (successful)
-            return true;
-        auto& task_ptr = handle.promise->task_object;
-        successful = !task_ptr->has_wait_timed_out();
-        return successful;
-    }
-
-    task_rw_mutex::task_mutex_read_lock_awaiter task_rw_mutex::async_read_lock() {
-        return task_mutex_read_lock_awaiter{*this};
-    }
-
-    task_rw_mutex::task_mutex_try_read_lock_awaiter task_rw_mutex::async_try_read_lock_until(std::chrono::high_resolution_clock::time_point time_point) {
-        return task_mutex_try_read_lock_awaiter{
-            *this,
-            time_point
-        };
-    }
-
-    task_rw_mutex::task_mutex_write_lock_awaiter task_rw_mutex::async_write_lock() {
-        return task_mutex_write_lock_awaiter{*this};
-    }
-
-    task_rw_mutex::task_mutex_try_write_lock_awaiter task_rw_mutex::async_try_write_lock_until(std::chrono::high_resolution_clock::time_point time_point) {
-        return task_mutex_try_write_lock_awaiter{
-            *this,
-            time_point
-        };
     }
 
     bool task_rw_mutex::enter_read_wait(const std::shared_ptr<task>& task) {

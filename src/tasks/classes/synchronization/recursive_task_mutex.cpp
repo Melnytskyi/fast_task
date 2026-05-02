@@ -109,8 +109,40 @@ namespace fast_task {
     void task_recursive_mutex::unlock() {
         if (recursive_count) {
             recursive_count--;
-            if (!recursive_count)
-                mutex.unlock();
+            if (!recursive_count) {
+                fast_task::lock_guard lg0(mutex.values.no_race);
+                if (loc.is_task_thread) {
+                    if (mutex.values.current_task != &*loc.curr_task)
+                        throw std::logic_error("Tried unlock non owned mutex");
+                } else if (mutex.values.current_task != reinterpret_cast<task*>((size_t)_thread_id() | native_thread_flag))
+                    throw std::logic_error("Tried unlock non owned mutex");
+
+                mutex.values.current_task = nullptr;
+                while (mutex.values.resume_task.size()) {
+                    auto [it, awake_check, native_cv, native_flag] = mutex.values.resume_task.front();
+                    mutex.values.resume_task.pop_front();
+                    if (it == nullptr) {
+                        if (native_cv != nullptr) {
+                            *native_flag = true;
+                            native_cv->notify_all();
+                            return;
+                        }
+                        continue;
+                    }
+                    fast_task::lock_guard lg1(get_data(it).no_race);
+                    if (get_data(it).awake_check != awake_check)
+                        continue;
+                    if (!get_data(it).time_end_flag) {
+                        get_data(it).awaked = true;
+                        if (get_data(it).is_on_scheduler) {
+                            mutex.values.current_task = it.get();
+                            ++recursive_count;
+                        }
+                        transfer_task(std::move(it));
+                        return;
+                    }
+                }
+            }
         } else
             throw std::logic_error("Mutex not locked");
     }
@@ -133,49 +165,6 @@ namespace fast_task {
         } else if (mutex.values.current_task == reinterpret_cast<task*>((size_t)_thread_id() | native_thread_flag))
             return true;
         return false;
-    }
-
-    bool task_recursive_mutex::task_mutex_lock_awaiter::await_ready() noexcept {
-        return mutex.try_lock();
-    }
-
-    bool task_recursive_mutex::task_mutex_lock_awaiter::await_suspend(base_coro_handle h) {
-        return !mutex.enter_wait(h.promise->task_object);
-    }
-
-    void task_recursive_mutex::task_mutex_lock_awaiter::await_resume() noexcept {}
-
-    bool task_recursive_mutex::task_mutex_try_lock_awaiter::await_ready() noexcept {
-        if (mutex.try_lock()) {
-            successful = true;
-            return true;
-        }
-        return false;
-    }
-
-    bool task_recursive_mutex::task_mutex_try_lock_awaiter::await_suspend(base_coro_handle h) {
-        return !mutex.enter_wait_until(h.promise->task_object, time_point);
-    }
-
-    bool task_recursive_mutex::task_mutex_try_lock_awaiter::await_resume() noexcept {
-        if (successful)
-            return true;
-        auto& task_ptr = handle.promise->task_object;
-        successful = !task_ptr->has_wait_timed_out();
-        if (successful)
-            resetTimeWait();
-        return successful;
-    }
-
-    task_recursive_mutex::task_mutex_lock_awaiter task_recursive_mutex::async_lock() {
-        return task_mutex_lock_awaiter{*this};
-    }
-
-    task_recursive_mutex::task_mutex_try_lock_awaiter task_recursive_mutex::async_try_lock_until(std::chrono::high_resolution_clock::time_point time_point) {
-        return task_mutex_try_lock_awaiter{
-            *this,
-            time_point
-        };
     }
 
     bool task_recursive_mutex::enter_wait(const std::shared_ptr<task>& task) {

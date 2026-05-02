@@ -46,7 +46,6 @@ TEST_F(FutureBasicTest, WaitForTimeout) {
     });
     bool ready = f->wait_for(std::chrono::milliseconds(30));
     EXPECT_FALSE(ready);
-    f->wait(); //BUG without it segfaults
 }
 
 TEST_F(FutureBasicTest, WaitUntilSuccess) {

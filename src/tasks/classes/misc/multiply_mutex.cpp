@@ -65,7 +65,7 @@ namespace fast_task {
         if (try_lock())
             return true;
 
-        task::run([this, parent_coro = parent_coro] mutable {
+        task::run([this, parent_coro = parent_coro]() mutable {
             this->lock();
             for (auto& mut : this->value.mu)
                 mut.donate_ownership(parent_coro.get());
@@ -80,7 +80,7 @@ namespace fast_task {
         if (try_lock())
             return true;
 
-        task::run([this, parent_coro = parent_coro, time_point] mutable {
+        task::run([this, parent_coro = parent_coro, time_point]() mutable {
             if (this->try_lock_until(time_point)) {
                 for (auto& mut : this->value.mu) {
                     mut.donate_ownership(parent_coro.get());

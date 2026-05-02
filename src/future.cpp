@@ -11,52 +11,6 @@ namespace fast_task {
 
     future<void>::~future() = default;
 
-    std::shared_ptr<future<void>> future<void>::start(std::move_only_function<void()>&& fn, uint16_t bind_id) {
-        std::shared_ptr<future> future_ = std::make_shared<future>();
-        auto task_ = std::make_shared<task>([fn = std::move(fn), future_]() mutable {
-            try {
-                fn();
-            } catch (const task_cancellation&) {
-                fast_task::lock_guard guard(future_->task_mt);
-                future_->_is_ready = true;
-                future_->task_cv.notify_all();
-                throw;
-            } catch (...) {
-                future_->ex_ptr = std::current_exception();
-            }
-            fast_task::lock_guard guard(future_->task_mt);
-            future_->_is_ready = true;
-            future_->task_cv.notify_all();
-        });
-        if (bind_id != (uint16_t)-1)
-            task_->set_worker_id(bind_id);
-        scheduler::start(task_);
-        return future_;
-    }
-
-    std::shared_ptr<future<void>> future<void>::start(fast_task::task_query& query, std::move_only_function<void()>&& fn, uint16_t bind_id) {
-        std::shared_ptr<future> future_ = std::make_shared<future>();
-        auto task_ = std::make_shared<task>([fn = std::move(fn), future_]() mutable {
-            try {
-                fn();
-            } catch (const task_cancellation&) {
-                fast_task::lock_guard guard(future_->task_mt);
-                future_->_is_ready = true;
-                future_->task_cv.notify_all();
-                throw;
-            } catch (...) {
-                future_->ex_ptr = std::current_exception();
-            }
-            fast_task::lock_guard guard(future_->task_mt);
-            future_->_is_ready = true;
-            future_->task_cv.notify_all();
-        });
-        if (bind_id != (uint16_t)-1)
-            task_->set_worker_id(bind_id);
-        query.add(task_);
-        return future_;
-    }
-
     std::shared_ptr<future<void>> future<void>::make_ready() {
         std::shared_ptr<future> future_ = std::make_shared<future>();
         future_->_is_ready = true;
@@ -69,20 +23,6 @@ namespace fast_task {
 
     void future<void>::take() {
         get();
-    }
-
-    void future<void>::when_ready(std::move_only_function<void()>&& fn) {
-        mutex_unify um(task_mt);
-        fast_task::unique_lock lock(um);
-        if (_is_ready) {
-            lock.unlock();
-            fn();
-        } else {
-            task_cv.callback(
-                lock,
-                std::make_shared<task>(std::move(fn))
-            );
-        }
     }
 
     bool future<void>::is_ready() const {
