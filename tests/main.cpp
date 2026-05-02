@@ -3,9 +3,11 @@
 #include <string>
 
 #ifdef _WIN32
+    #include <csignal>
     #include <windows.h>
-LONG WINAPI FreezeOnCrash(EXCEPTION_POINTERS* ExceptionInfo) {
-    std::cerr << "\n[FATAL] Unhandled Exception occurred!\n";
+
+void FreezeAndBreak(const char* reason) {
+    std::cerr << "\n[FATAL] " << reason << " occurred!\n";
     std::cerr << "[FATAL] Process frozen. PID: " << GetCurrentProcessId() << "\n";
     std::cerr << "[FATAL] Waiting for debugger to attach...\n";
 
@@ -13,10 +15,40 @@ LONG WINAPI FreezeOnCrash(EXCEPTION_POINTERS* ExceptionInfo) {
         Sleep(1000);
     }
     DebugBreak();
+}
+
+LONG WINAPI VectoredCrashHandler(EXCEPTION_POINTERS* ExceptionInfo) {
+    DWORD code = ExceptionInfo->ExceptionRecord->ExceptionCode;
+
+    if (code == EXCEPTION_ACCESS_VIOLATION ||
+        code == EXCEPTION_ILLEGAL_INSTRUCTION ||
+        code == EXCEPTION_STACK_OVERFLOW ||
+        code == EXCEPTION_INT_DIVIDE_BY_ZERO) {
+
+        FreezeAndBreak("Vectored Hardware Exception (SEGFAULT)");
+    }
 
     return EXCEPTION_CONTINUE_SEARCH;
 }
 
+LONG WINAPI FreezeOnCrash(EXCEPTION_POINTERS* ExceptionInfo) {
+    DWORD code = ExceptionInfo->ExceptionRecord->ExceptionCode;
+
+    if (code == 0xE06D7363) {
+        FreezeAndBreak("Unhandled C++ Exception");
+    } else {
+        FreezeAndBreak("Unhandled SEH Exception");
+    }
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
+void TerminateHandler() {
+    FreezeAndBreak("std::terminate called");
+}
+
+void AbortHandler(int) {
+    FreezeAndBreak("SIGABRT / abort() called");
+}
 
 int main(int argc, char** argv) {
     bool haltOnException = false;
@@ -29,6 +61,10 @@ int main(int argc, char** argv) {
 
     if (haltOnException) {
         SetUnhandledExceptionFilter(FreezeOnCrash);
+        AddVectoredExceptionHandler(1, VectoredCrashHandler);
+        std::set_terminate(TerminateHandler);
+        std::signal(SIGABRT, AbortHandler);
+        _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
     }
 
     testing::InitGoogleTest(&argc, argv);

@@ -90,6 +90,21 @@ while ($pendingTests.Count -gt 0 -or $activeJobs.Count -gt 0) {
                     
                     $jobOutput += "=== END HANG DATA ==="
                     break 
+                }elseif ($process.ExitCode -ne 0) {
+                    $hung = $true # Reuse the flag to break the 200-attempt loop
+                    
+                    $jobOutput += "=== FAST CRASH at attempt $attempt ==="
+                    $jobOutput += "Exit Code: $($process.ExitCode)"
+                    
+                    $jobOutput += "`n--- Test Console Output (STDOUT) ---"
+                    $jobOutput += $stdoutContent
+                    
+                    $jobOutput += "`n--- Test Console Error (STDERR) ---"
+                    $jobOutput += $stderrContent
+                    
+                    $jobOutput += "`n[INFO] Process exited immediately; no live CDB trace can be captured."
+                    $jobOutput += "=== END CRASH DATA ==="
+                    break
                 }
             }
             
