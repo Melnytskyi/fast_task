@@ -270,7 +270,6 @@ namespace fast_task {
                     data.started = false;
                 } else {
                     data.end_of_life = true;
-                    data.completed = true;
                     data.started = true;
                     data.result_notify.notify_all();
                 }
@@ -279,14 +278,12 @@ namespace fast_task {
             forceCancelCancellation(cancel);
             fast_task::lock_guard guard(data.no_race);
             data.end_of_life = true;
-            data.completed = true;
             data.started = true;
             data.result_notify.notify_all();
         } catch (...) {
             loc.ex_ptr = std::current_exception(); //TODO pass this to the callback
             fast_task::lock_guard guard(data.no_race);
             data.end_of_life = true;
-            data.completed = true;
             data.started = true;
             data.result_notify.notify_all();
         }
@@ -510,14 +507,21 @@ namespace fast_task {
             transfer_task(std::move(loc.curr_task));
             loc.yield_request = false;
         } else if (end_of_life) {
-            --glob.executing_tasks;
+            bool should_decrement = false;
             {
+                fast_task::lock_guard guard(get_data(loc.curr_task).no_race);
+                if (!get_data(loc.curr_task).completed) {
+                    get_data(loc.curr_task).completed = true;
+                    get_data(loc.curr_task).started = true;
+                    should_decrement = true;
+                }
+            }
+
+            if (should_decrement) {
+                --glob.executing_tasks;
                 fast_task::shared_lock guard(glob.task_thread_safety);
                 glob.no_tasks_execute_notifier.notify_all_guarded();
             }
-            fast_task::lock_guard guard(get_data(loc.curr_task).no_race);
-            get_data(loc.curr_task).completed = true;
-            get_data(loc.curr_task).started = true;
         }
 
 
