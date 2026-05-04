@@ -9,6 +9,11 @@ option(FAST_TASK_ENABLE_PREEMPTIVE_SCHEDULER "Enables time sliced preemption for
 option(FAST_TASK_INCLUDE_THREAD_INTERRUPT_CODE "Allows the code to stop the thread and execute custom function on top of its stack, doesn't have effect if FAST_TASK_ENABLE_PREEMPTIVE_SCHEDULER enabled" ON)
 
 
+set(FAST_TASK_TASK_TRANSFERS_LIMIT 8 CACHE 
+STRING 
+"Limits the count of the cooperative task transfers without making the context switch
+  - 0: No limit, the task can be transferred any number of times.
+  - N: The task can only be transferred N times, after that the transfer requests would be ignored.")
 set(FAST_TASK_EXCEPTION_POLICY "NONE" CACHE 
 STRING 
 "Sets the exception handling policy for context switches:
@@ -17,7 +22,10 @@ STRING
   - PRESERVE: Preserve the exception on context switch and rethrow when switched back. (Has performance cost)")
 
 set_property(CACHE FAST_TASK_EXCEPTION_POLICY PROPERTY STRINGS "NONE" "CHECK" "PRESERVE")
+
+mark_as_advanced(FAST_TASK_ENABLE_PREEMPTIVE_SCHEDULER)
 mark_as_advanced(FAST_TASK_EXCEPTION_POLICY)
+mark_as_advanced(FAST_TASK_TASK_TRANSFERS_LIMIT)
 
 
 
@@ -98,6 +106,7 @@ if(FAST_TASK_EXCEPTION_POLICY STREQUAL "CHECK")
 elseif(FAST_TASK_EXCEPTION_POLICY STREQUAL "PRESERVE")
   target_compile_definitions(fast_task PRIVATE FT_EXCEPTION_POLICY_PRESERVE)
 endif()
+target_compile_definitions(fast_task PRIVATE FT_TASK_TRANSFERS_LIMIT=${FAST_TASK_TASK_TRANSFERS_LIMIT})
 
 find_package(Boost COMPONENTS context lockfree)
 if(NOT Boost_FOUND)

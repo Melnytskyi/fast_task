@@ -169,20 +169,12 @@ namespace fast_task {
     void task_rw_mutex::lifecycle_read_lock(std::shared_ptr<task>&& lock_task) {
         if (get_data(lock_task).started)
             throw std::logic_error("Task already started");
-        if (get_data(lock_task).callbacks.is_extended_mode) {
-            if (!get_data(lock_task).callbacks.extended_mode.on_start)
-                throw std::logic_error("lifecycle_lock requires in extended mode the on_start variable to be set");
-            else if (!get_data(lock_task).callbacks.extended_mode.is_restartable)
-                throw std::logic_error("lifecycle_lock requires in extended mode the restartable mode to be disabled");
-            else {
-                task::run([lock_task, this]() {
-                    fast_task::read_lock guard(*this);
-                    task::await_task(lock_task, true);
-                });
-            }
-        } else {
-            auto old_func = std::move(get_data(lock_task).callbacks.normal_mode.func);
-            get_data(lock_task).callbacks.normal_mode.func = [old_func = std::move(old_func), this]() mutable {
+        if (!get_data(lock_task).callbacks.on_start)
+            throw std::logic_error("lifecycle_lock requires the on_start variable to be set");
+        else if (!get_data(lock_task).is_restartable)
+            throw std::logic_error("lifecycle_lock requires the restartable mode to be disabled");
+        else {
+            task::run([lock_task, this]() {
                 fast_task::read_lock guard(*this);
                 old_func();
             };
@@ -354,20 +346,12 @@ namespace fast_task {
     void task_rw_mutex::lifecycle_write_lock(std::shared_ptr<task>&& lock_task) {
         if (get_data(lock_task).started)
             throw std::logic_error("Task already started");
-        if (get_data(lock_task).callbacks.is_extended_mode) {
-            if (!get_data(lock_task).callbacks.extended_mode.on_start)
-                throw std::logic_error("lifecycle_lock requires in extended mode the on_start variable to be set");
-            else if (!get_data(lock_task).callbacks.extended_mode.is_restartable)
-                throw std::logic_error("lifecycle_lock requires in extended mode the restartable mode be to disabled");
-            else {
-                task::run([lock_task, this]() {
-                    fast_task::write_lock guard(*this);
-                    task::await_task(lock_task, true);
-                });
-            }
-        } else {
-            auto old_func = std::move(get_data(lock_task).callbacks.normal_mode.func);
-            get_data(lock_task).callbacks.normal_mode.func = [old_func = std::move(old_func), this]() mutable {
+        if (!get_data(lock_task).callbacks.on_start)
+            throw std::logic_error("lifecycle_lock requires the on_start variable to be set");
+        else if (!get_data(lock_task).is_restartable)
+            throw std::logic_error("lifecycle_lock requires the restartable mode be to disabled");
+        else {
+            task::run([lock_task, this]() {
                 fast_task::write_lock guard(*this);
                 old_func();
             };

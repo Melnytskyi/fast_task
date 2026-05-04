@@ -6,9 +6,9 @@
 
 #ifndef FAST_TASK_INCLUDE_FILES
 #define FAST_TASK_INCLUDE_FILES
-#include "future.hpp"
 #include "shared.hpp"
 #include "task.hpp"
+#include "task/future.hpp"
 #include <filesystem>
 #include <istream>
 #include <optional>

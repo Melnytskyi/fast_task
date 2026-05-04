@@ -31,13 +31,15 @@ namespace fast_task {
     //      the task should never consume too much time on scheduler to prevent the task overloading the whole scheduler system
     //      and the task should use async_* methods for synchronization, the regular operations would throw exception
     //      this flag allows to create stackless coroutines like in c++ or other language
-    class FT_API task {
+    //  the task has is_sbo optimization to reduce the memory consumption on the simple tasks whose have only on_start and on_exception callbacks
+    class FT_API task : public std::enable_shared_from_this<task> {
         void awaitEnd(fast_task::unique_lock<mutex_unify>& l);
+        bool awaitEnd(fast_task::unique_lock<mutex_unify>& l, std::chrono::high_resolution_clock::time_point);
         struct FT_API_LOCAL execution_data;
 
         struct FT_API_LOCAL data {
-            union FT_API_LOCAL callbacks_data {
-                bool is_extended_mode : 1 = false;
+            struct FT_API_LOCAL callbacks_data {
+                bool is_sbo : 1 = false;
 
                 struct FT_API_LOCAL normal_mode_t {
                     bool is_extended_mode : 1;
@@ -84,6 +86,7 @@ namespace fast_task {
             bool invalid_switch_caught : 1 = false;
             bool completed : 1 = false;
             bool is_on_scheduler : 1 = false;
+            bool is_restartable : 1 = false;
             execution_data* exdata = nullptr;
         } data_;
 
@@ -101,7 +104,47 @@ namespace fast_task {
         static bool enable_task_naming;
 
         task(void* data, void (*on_start)(void*), void (*on_await)(void*), void (*on_cancel)(void*), void (*on_destruct)(void*), bool is_restartable = false, bool is_on_scheduler = false);
-        task(std::move_only_function<void()>&& func, std::move_only_function<void(const std::exception_ptr&)>&& ex_handle = nullptr, std::chrono::high_resolution_clock::time_point timeout = std::chrono::high_resolution_clock::time_point::min(), task_priority priority = task_priority::high, bool is_on_scheduler = false);
+
+        template <typename Func, typename ExHandle = std::nullptr_t>
+        task(Func&& func, ExHandle&& ex_handle = nullptr, std::chrono::high_resolution_clock::time_point timeout = std::chrono::high_resolution_clock::time_point::min(), task_priority priority = task_priority::high, bool is_on_scheduler = false) {
+            if constexpr (std::is_same_v<Func, std::nullptr_t>) {
+                data_.callbacks.on_start = nullptr;
+                data_.callbacks.on_move = nullptr;
+                data_.callbacks.on_destruct = nullptr;
+                data_.callbacks.on_exception = nullptr;
+            } else {
+                using State = task_state<std::decay_t<Func>, std::decay_t<ExHandle>>;
+                constexpr bool use_sbo = sizeof(State) <= sizeof(data_.callbacks.buf.sbo_buffer) &&
+                                         alignof(State) <= alignof(std::max_align_t);
+
+                data_.callbacks.is_sbo = use_sbo;
+                data_.is_restartable = false;
+                data_.is_on_scheduler = is_on_scheduler;
+                data_.callbacks.on_move = [](void* dst, void* src) noexcept {
+                    State* state_src = static_cast<State*>(src);
+                    new (dst) State{std::move(state_src->func), std::move(state_src->ex_handle)};
+                    state_src->~State();
+                };
+
+                if constexpr (use_sbo) {
+                    new (data_.callbacks.buf.sbo_buffer) State{std::forward<Func>(func), std::forward<ExHandle>(ex_handle)};
+                    data_.callbacks.on_destruct = sbo_destruct_thunk<State>;
+                } else {
+                    State* ptr = new State{std::forward<Func>(func), std::forward<ExHandle>(ex_handle)};
+                    data_.callbacks.buf.dat.data = ptr;
+                    data_.callbacks.on_destruct = heap_destruct_thunk<State>;
+                }
+
+
+                data_.callbacks.on_start = start_thunk<State>;
+                if constexpr (!std::is_same_v<std::decay_t<ExHandle>, std::nullptr_t>) {
+                    data_.callbacks.on_exception = exception_thunk<State>;
+                }
+
+                this->data_.timeout = timeout.time_since_epoch().count();
+                set_priority(priority);
+            }
+        }
 
         task(task&& mov) noexcept;
         ~task();
@@ -119,6 +162,7 @@ namespace fast_task {
         bool is_cancellation_requested() const noexcept;
         bool is_ended() const noexcept;
         void await_task();
+        bool await_task_until(std::chrono::high_resolution_clock::time_point);
         void callback(const std::shared_ptr<task>& task);
         void notify_cancel();
         void await_notify_cancel();
@@ -142,17 +186,28 @@ namespace fast_task {
                 throw std::runtime_error("This task is not in extended mode");
         };
 
+        bool enter_wait(const std::shared_ptr<task>&);
+        bool enter_wait_until(const std::shared_ptr<task>&, std::chrono::high_resolution_clock::time_point);
+
         static std::shared_ptr<task> run(std::function<void()>&& func);
         static std::shared_ptr<task> create(std::function<void()>&& func);
 
-
+        //deprecated
         static void await_task(const std::shared_ptr<task>& lgr_task, bool make_start = true);
+        //deprecated
         static void await_multiple(std::list<std::shared_ptr<task>>& tasks, bool pre_started = false, bool release = false);
+        //deprecated
         static void await_multiple(std::vector<std::shared_ptr<task>>& tasks, bool pre_started = false, bool release = false);
+        //deprecated
         static void await_multiple(std::shared_ptr<task>* tasks, size_t len, bool pre_started = false, bool release = false);
 
         static std::shared_ptr<task> callback_dummy(void* dummy_data, void (*on_start)(void*), void (*on_await)(void*), void (*on_cancel)(void*), void (*on_destruct)(void*), bool is_restartable = false, bool is_on_scheduler = false);
         static std::shared_ptr<task> callback_dummy(void* dummy_data, void (*on_await)(void*), void (*on_cancel)(void*), void (*on_destruct)(void*), bool is_restartable = false, bool is_on_scheduler = false);
+
+        template <class Dur_resolution, class Dur_type>
+        bool await_task_for(std::chrono::duration<Dur_resolution, Dur_type> duration) {
+            return await_task_until(std::chrono::high_resolution_clock::now() + duration);
+        }
     };
 }
 #endif /* INCLUDE_TASK_TASK */

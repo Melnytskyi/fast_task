@@ -201,6 +201,13 @@ namespace fast_task {
         bool is_task_thread : 1 = false;
         bool context_in_swap : 1 = false;
         bool yield_request : 1 = false;
+
+        struct {
+    #if FT_TASK_TRANSFERS_LIMIT > 0
+            std::atomic_size_t transfers = 0;
+    #endif
+            std::shared_ptr<task> pending = nullptr;
+        } transfer_state;
     };
 
     struct FT_API_LOCAL timing {

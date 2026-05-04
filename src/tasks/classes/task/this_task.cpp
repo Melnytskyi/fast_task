@@ -37,14 +37,48 @@ namespace fast_task::this_task {
             throw invalid_context();
     }
 
-    void the_coroutine_ended() noexcept {
-        if (loc.is_task_thread)
-            if (loc.curr_task)
-                if (get_data(loc.curr_task).callbacks.is_extended_mode) {
-                    fast_task::lock_guard guard(get_data(loc.curr_task).no_race);
-                    get_data(loc.curr_task).callbacks.extended_mode.is_restartable = false;
-                    get_data(loc.curr_task).end_of_life = true;
-                }
+    void the_coroutine_ended(const std::shared_ptr<task>& task) noexcept {
+        if (task) {
+            {
+                fast_task::lock_guard guard(get_data(task).no_race);
+                get_data(task).is_restartable = false;
+                get_data(task).end_of_life = true;
+                get_data(task).started = true;
+            }
+            get_data(task).result_notify.notify_all();
+        }
+    }
+
+    bool transfer_to(const std::shared_ptr<task>& target) {
+        if (loc.is_task_thread) {
+            if (!target || !loc.curr_task)
+                return false;
+            if (loc.ex_ptr)
+                return false;
+            if (loc.transfer_state.pending)
+                return false;
+            if (!(
+                    get_data(loc.curr_task).is_on_scheduler == true &&
+                    get_data(target).is_on_scheduler == true &&
+                    (get_data(target).started == false || get_data(target).is_restartable == true)
+                ))
+                return false;
+
+            if (get_data(loc.curr_task).bind_to_worker_id != get_data(target).bind_to_worker_id)
+                return false;
+
+
+#if FT_TASK_TRANSFERS_LIMIT > 0
+            if (loc.transfer_state.transfers >= FT_TASK_TRANSFERS_LIMIT)
+                return false;
+            ++loc.transfer_state.transfers;
+#endif
+            get_data(target).started = true;
+            ++glob.executing_tasks;
+            loc.transfer_state.pending = target;
+            return true;
+        } else
+            return false;
     }
 
 #pragma optimize("", off)

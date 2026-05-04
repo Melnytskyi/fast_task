@@ -47,13 +47,13 @@ namespace fast_task {
     task::task(void* data, void (*on_start)(void*), void (*on_await)(void*), void (*on_cancel)(void*), void (*on_destruct)(void*), bool is_restartable, bool is_on_scheduler)
         : data_{.timeout = std::chrono::high_resolution_clock::time_point::min().time_since_epoch().count()} {
         data_.is_on_scheduler = is_on_scheduler;
-        data_.callbacks.is_extended_mode = true;
-        data_.callbacks.extended_mode.is_restartable = is_restartable;
-        data_.callbacks.extended_mode.data = data;
-        data_.callbacks.extended_mode.on_start = on_start;
-        data_.callbacks.extended_mode.on_await = on_await;
-        data_.callbacks.extended_mode.on_cancel = on_cancel;
-        data_.callbacks.extended_mode.on_destruct = on_destruct;
+        data_.is_restartable = is_restartable;
+        data_.callbacks.is_sbo = false;
+        data_.callbacks.buf.dat.data = data;
+        data_.callbacks.buf.dat.on_await = on_await;
+        data_.callbacks.buf.dat.on_cancel = on_cancel;
+        data_.callbacks.on_start = on_start;
+        data_.callbacks.on_destruct = on_destruct;
         FT_DEBUG_ONLY(register_object(this));
     }
 
@@ -81,6 +81,13 @@ namespace fast_task {
     void task::awaitEnd(fast_task::unique_lock<mutex_unify>& l) {
         while (!data_.end_of_life)
             data_.result_notify.wait(l);
+    }
+
+    bool task::awaitEnd(fast_task::unique_lock<mutex_unify>& l, std::chrono::high_resolution_clock::time_point time_point) {
+        while (!data_.end_of_life)
+            if (!data_.result_notify.wait_until(l, time_point))
+                return false;
+        return true;
     }
 
     task::~task() {
@@ -167,18 +174,16 @@ namespace fast_task {
         if (!scheduler::total_executors())
             scheduler::create_executor(1);
 
-        if (data_.callbacks.is_extended_mode) {
-            data_.callbacks.extended_mode.on_await(data_.callbacks.extended_mode.data);
-            if (!data_.callbacks.extended_mode.on_start)
-                return;
-        }
+        if (!data_.started && data_.callbacks.on_start)
+            scheduler::start(shared_from_this());
+        data_.callbacks.make_await();
+        if (!data_.callbacks.on_start)
+            return;
+
         mutex_unify uni(data_.no_race);
         fast_task::unique_lock l(uni);
-        if (data_.callbacks.is_extended_mode) {
-            if (!data_.started && !data_.callbacks.extended_mode.is_restartable)
-                return;
-        } else if (!data_.started)
-            throw std::runtime_error("Task is not started");
+        if (!data_.started && !data_.is_restartable)
+            return;
         awaitEnd(l);
     }
 
@@ -207,6 +212,119 @@ namespace fast_task {
         awaitEnd(l);
     }
 
+    void task::reset_awake() {
+        data_.time_end_flag = false;
+        data_.awaked = false;
+    }
+
+    bool task::enter_wait(const std::shared_ptr<task>& t) {
+        struct enter_data {
+            std::shared_ptr<task> wake;
+            std::weak_ptr<task> bridge;
+            std::shared_ptr<task> self;
+        };
+
+        mutex_unify unify(data_.no_race);
+        fast_task::unique_lock lock(unify);
+        if (!data_.started && data_.callbacks.on_start)
+            scheduler::start(shared_from_this());
+        if (data_.end_of_life)
+            return true;
+
+        auto ew_data = std::unique_ptr<enter_data>(new enter_data(t, {}, shared_from_this()));
+        auto bridge = std::make_shared<task>(
+            nullptr,
+            [](void* ptr) {
+                auto& data = *static_cast<enter_data*>(ptr);
+                mutex_unify unify(data.self->data_.no_race);
+                fast_task::unique_lock lock(unify, fast_task::adopt_lock);
+                while (true) {
+                    if (data.self->data_.end_of_life) {
+                        if (!fast_task::this_task::transfer_to(data.wake))
+                            fast_task::scheduler::start(data.wake);
+                        this_task::the_coroutine_ended(data.bridge.lock());
+                        break;
+                    } else if (!data.self->data_.result_notify.enter_wait(unify, data.bridge.lock())) {
+                        lock.release();
+                        break;
+                    }
+                }
+            },
+            [](void* ptr) {},
+            [](void* ptr) {},
+            [](void* ptr) { if(ptr) delete static_cast<enter_data*>(ptr); },
+            true,
+            true
+        );
+        ew_data->bridge = bridge;
+        bridge->data_.callbacks.buf.dat.data = ew_data.release();
+        return data_.result_notify.enter_wait(unify, bridge);
+    }
+
+    bool task::enter_wait_until(const std::shared_ptr<task>& t, std::chrono::high_resolution_clock::time_point time_point) {
+        struct enter_data {
+            std::shared_ptr<task> wake;
+            std::weak_ptr<task> bridge;
+            std::shared_ptr<task> self;
+            std::chrono::high_resolution_clock::time_point time_point;
+        };
+
+        mutex_unify unify(data_.no_race);
+        fast_task::unique_lock lock(unify);
+        if (time_point <= std::chrono::high_resolution_clock::now()) {
+            t->data_.time_end_flag = true;
+            return true;
+        }
+        if (!data_.started && data_.callbacks.on_start)
+            scheduler::start(shared_from_this());
+        if (data_.end_of_life)
+            return true;
+
+        auto ew_data = std::unique_ptr<enter_data>(new enter_data(t, {}, shared_from_this(), time_point));
+        auto bridge = std::make_shared<task>(
+            nullptr,
+            [](void* ptr) {
+                auto& data = *static_cast<enter_data*>(ptr);
+                auto bridge = data.bridge.lock();
+                mutex_unify unify(data.self->data_.no_race);
+                fast_task::unique_lock lock(unify, fast_task::adopt_lock);
+                while (true) {
+                    if (bridge->data_.time_end_flag) {
+                        data.wake->data_.time_end_flag = true;
+                        if (!fast_task::this_task::transfer_to(data.wake))
+                            fast_task::scheduler::start(data.wake);
+                        this_task::the_coroutine_ended(bridge);
+                        break;
+                    } else if (data.self->data_.end_of_life) {
+                        if (!fast_task::this_task::transfer_to(data.wake))
+                            fast_task::scheduler::start(data.wake);
+                        this_task::the_coroutine_ended(bridge);
+                        break;
+                    } else {
+                        bridge->data_.time_end_flag = false;
+                        bridge->data_.awaked = false;
+                        if (!data.self->data_.result_notify.enter_wait_until(unify, bridge, data.time_point)) {
+                            lock.release();
+                            break;
+                        }
+                    }
+                }
+            },
+            [](void* ptr) {},
+            [](void* ptr) {},
+            [](void* ptr) { if(ptr) delete static_cast<enter_data*>(ptr); },
+            true,
+            true
+        );
+        ew_data->bridge = bridge;
+        bridge->data_.callbacks.buf.dat.data = ew_data.release();
+        if (data_.result_notify.enter_wait_until(unify, bridge, time_point)) {
+            t->data_.time_end_flag = true;
+            return true;
+        } else
+            return false;
+    }
+
     std::shared_ptr<task> task::run(std::function<void()>&& func) {
         auto r = std::make_shared<task>(std::move(func));
         scheduler::start(r);
@@ -231,13 +349,24 @@ namespace fast_task {
 
         mutex_unify uni(lgr_task->data_.no_race);
         fast_task::unique_lock l(uni);
-        if (lgr_task->data_.callbacks.is_extended_mode) {
-            if (!(make_start || lgr_task->data_.started || lgr_task->data_.callbacks.extended_mode.is_restartable))
-                return;
-        } else if (!lgr_task->data_.started) {
-            throw std::runtime_error("Task is not started");
-        }
+        if (!(make_start || lgr_task->data_.started || lgr_task->data_.is_restartable))
+            return;
         lgr_task->awaitEnd(l);
+    }
+
+    bool task::await_task_until(std::chrono::high_resolution_clock::time_point time_point) {
+        if (!scheduler::total_executors())
+            scheduler::create_executor(1);
+
+        data_.callbacks.make_await();
+        if (!data_.callbacks.on_start)
+            return true;
+
+        mutex_unify uni(data_.no_race);
+        fast_task::unique_lock l(uni);
+        if (!data_.started && !data_.is_restartable)
+            return true;
+        return awaitEnd(l, time_point);
     }
 
     void task::await_multiple(std::list<std::shared_ptr<task>>& tasks, bool pre_started, bool release) {

@@ -6,9 +6,9 @@
 
 #include <algorithm>
 #include <atomic>
-#include <future.hpp>
 #include <helpers.hpp>
 #include <numeric>
+#include <task/future.hpp>
 #include <vector>
 
 class FutureToolTest : public SchedulerFixture {};
@@ -62,8 +62,7 @@ TEST_F(FutureToolTest, ProcessReturnsResults) {
 
 TEST_F(FutureToolTest, ChainTransforms) {
     auto f = fast_task::future<int>::start([] { return 5; });
-    auto chained = fast_task::future_tool::chain<int, int>(
-        f, std::function<int(int)>([](int v) { return v * 3; }));
+    auto chained = f->chain([](int v) { return v * 3; });
     EXPECT_EQ(chained->get(), 15);
 }
 

@@ -4,21 +4,21 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
-#include <helpers.hpp>
-#include <future.hpp>
-#include <stdexcept>
 #include <atomic>
+#include <helpers.hpp>
+#include <stdexcept>
+#include <task/future.hpp>
 
 class CancelableFutureTest : public SchedulerFixture {};
 
 TEST_F(CancelableFutureTest, StartAndGet) {
-    auto f = fast_task::cancelable_future<int>::start([] { return 10; });
+    auto f = fast_task::future<int>::start([] { return 10; });
     EXPECT_EQ(f->get(), 10);
 }
 
 TEST_F(CancelableFutureTest, CancelStopsTask) {
     std::atomic<bool> started{false};
-    auto f = fast_task::cancelable_future<int>::start([&] -> int {
+    auto f = fast_task::future<int>::start([&] -> int {
         started = true;
         try {
             fast_task::this_task::sleep_for(std::chrono::seconds(1));
@@ -38,13 +38,13 @@ TEST_F(CancelableFutureTest, CancelStopsTask) {
 }
 
 TEST_F(CancelableFutureTest, MakeReady) {
-    auto f = fast_task::cancelable_future<int>::make_ready(77);
+    auto f = fast_task::future<int>::make_ready(77);
     EXPECT_TRUE(f->is_ready());
     EXPECT_EQ(f->get(), 77);
 }
 
 TEST_F(CancelableFutureTest, HasException) {
-    auto f = fast_task::cancelable_future<int>::start([] -> int {
+    auto f = fast_task::future<int>::start([] -> int {
         throw std::runtime_error("cfuture_error");
     });
     f->wait_no_except();
@@ -53,14 +53,14 @@ TEST_F(CancelableFutureTest, HasException) {
 
 TEST_F(CancelableFutureTest, VoidCancelable) {
     std::atomic<bool> ran{false};
-    auto f = fast_task::cancelable_future<void>::start([&] { ran = true; });
+    auto f = fast_task::future<void>::start([&] { ran = true; });
     f->get();
     EXPECT_TRUE(ran.load());
 }
 
 TEST_F(CancelableFutureTest, VoidCancelStopsTask) {
     std::atomic<bool> started{false};
-    auto f = fast_task::cancelable_future<void>::start([&] {
+    auto f = fast_task::future<void>::start([&] {
         started = true;
         try {
             fast_task::this_task::sleep_for(std::chrono::seconds(1));

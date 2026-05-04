@@ -211,13 +211,9 @@ namespace fast_task {
         flush_interrupt_data;
         fast_task::lock_guard l(get_data(loc.curr_task).no_race);
         --glob.in_run_tasks;
-        if (get_data(loc.curr_task).callbacks.is_extended_mode) {
-            if (get_data(loc.curr_task).callbacks.extended_mode.is_restartable) {
-                get_data(loc.curr_task).started = false;
-                if (!loc.ex_ptr)
-                    get_data(loc.curr_task).result_notify.notify_all();
-                return std::move(*loc.stack_current_context);
-            }
+        if (get_data(loc.curr_task).is_restartable) {
+            get_data(loc.curr_task).started = false;
+            return std::move(*loc.stack_current_context);
         }
         if (!loc.ex_ptr) {
             get_data(loc.curr_task).end_of_life = true;
@@ -258,41 +254,62 @@ namespace fast_task {
 
     void in_place_run() {
         ++glob.in_run_tasks;
+        auto* data = &get_data(loc.curr_task);
+        data->awake_check++;
         try {
             if (!checkCancellation()) {
-                if (get_data(loc.curr_task).callbacks.is_extended_mode) {
-                    if (get_data(loc.curr_task).callbacks.extended_mode.on_start) {
-                        get_data(loc.curr_task).callbacks.extended_mode.on_start(get_data(loc.curr_task).callbacks.extended_mode.data);
+                if constexpr (FT_TASK_TRANSFERS_LIMIT > 0)
+                    loc.transfer_state.transfers = 0;
+                while (true) {
+                    if (data->callbacks.on_start_override)
+                        data->callbacks.on_start_override(data->callbacks);
+                    else if (data->callbacks.on_start)
+                        data->callbacks.on_start(data->callbacks.get_data());
+                    data->relock_0.relock_start();
+                    data->relock_1.relock_start();
+                    data->relock_2.relock_start();
+                    if (loc.transfer_state.pending == nullptr)
+                        break;
+#if FT_TASK_TRANSFERS_LIMIT > 0
+                    else if (loc.transfer_state.transfers > FT_TASK_TRANSFERS_LIMIT) {
+                        transfer_task(std::move(loc.transfer_state.pending));
+                        loc.transfer_state.pending.reset();
+                        break;
                     }
-                } else
-                    get_data(loc.curr_task).callbacks.normal_mode.func();
-                get_data(loc.curr_task).relock_0.relock_start();
-                get_data(loc.curr_task).relock_1.relock_start();
-                get_data(loc.curr_task).relock_2.relock_start();
+#endif
+                    else {
+                        loc.curr_task = loc.transfer_state.pending;
+                        loc.transfer_state.pending.reset();
+                        data = &get_data(loc.curr_task);
+                    }
+                }
+                if constexpr (FT_TASK_TRANSFERS_LIMIT > 0)
+                    loc.transfer_state.transfers = 0;
             } else
                 this_task::the_coroutine_ended();
             {
-                fast_task::lock_guard guard(get_data(loc.curr_task).no_race);
-                if (get_data(loc.curr_task).callbacks.is_extended_mode) {
-                    if (get_data(loc.curr_task).callbacks.extended_mode.is_restartable)
-                        get_data(loc.curr_task).started = false;
-                    else
-                        get_data(loc.curr_task).end_of_life = true;
+                fast_task::lock_guard guard(data->no_race);
+                if (data->is_restartable) {
+                    data->started = false;
                 } else {
-                    get_data(loc.curr_task).end_of_life = true;
+                    data->end_of_life = true;
+                    data->started = true;
+                    data->result_notify.notify_all();
                 }
                 get_data(loc.curr_task).result_notify.notify_all();
             }
         } catch (const task_cancellation& cancel) {
             forceCancelCancellation(cancel);
-            fast_task::lock_guard guard(get_data(loc.curr_task).no_race);
-            get_data(loc.curr_task).end_of_life = true;
-            get_data(loc.curr_task).result_notify.notify_all();
+            fast_task::lock_guard guard(data->no_race);
+            data->end_of_life = true;
+            data->started = true;
+            data->result_notify.notify_all();
         } catch (...) {
             loc.ex_ptr = std::current_exception(); //TODO pass this to the callback
-            fast_task::lock_guard guard(get_data(loc.curr_task).no_race);
-            get_data(loc.curr_task).end_of_life = true;
-            get_data(loc.curr_task).result_notify.notify_all();
+            fast_task::lock_guard guard(data->no_race);
+            data->end_of_life = true;
+            data->started = true;
+            data->result_notify.notify_all();
         }
         --glob.in_run_tasks;
     }

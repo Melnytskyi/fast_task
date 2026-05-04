@@ -7,13 +7,12 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
-#include <task.hpp>
-#include <coroutine.hpp>
-#include <future.hpp>
-#include <gtest/gtest.h>
 #include <atomic>
+#include <coroutine.hpp>
+#include <gtest/gtest.h>
 #include <memory>
 #include <stdexcept>
+#include <task.hpp>
 #include <thread>
 
 // ---------------------------------------------------------------------------

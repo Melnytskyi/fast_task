@@ -7,11 +7,11 @@
 #include <filesystem>
 
 #include <files.hpp>
-#include <future.hpp>
 #include <task.hpp>
+#include <task/future.hpp>
 #include <tasks/util/native_workers_singleton.hpp>
-#include <vector>
 #include <variant>
+#include <vector>
 
 namespace fast_task::files {
     class File_;

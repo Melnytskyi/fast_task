@@ -13,11 +13,15 @@ namespace fast_task {
             sleep_until(std::chrono::high_resolution_clock::now() + duration);
         }
 
-        void FT_API check_cancellation();
-        bool FT_API is_cancellation_requested() noexcept;
-        void FT_API self_cancel();
-        bool FT_API is_task() noexcept;
-        void FT_API the_coroutine_ended() noexcept;
-    }
+    void FT_API check_cancellation();
+    bool FT_API is_cancellation_requested() noexcept;
+    void FT_API self_cancel();
+    bool FT_API is_task() noexcept;
+    void FT_API the_coroutine_ended(const std::shared_ptr<task>&) noexcept;
+    bool FT_API transfer_to(const std::shared_ptr<task>& target);
+
+
+    bool FT_API enter_sleep_until(std::chrono::high_resolution_clock::time_point time_point);
+    bool FT_API enter_yield();
 }
 #endif /* INCLUDE_TASK_THIS_TASK */
