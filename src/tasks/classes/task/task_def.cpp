@@ -13,9 +13,7 @@ namespace fast_task {
     task::data::callbacks_data::callbacks_data() : buf{.dat{.data{nullptr}, .on_await{nullptr}, .on_cancel{nullptr}}} {}
 
     task::data::callbacks_data::callbacks_data(callbacks_data&& move) noexcept {
-        is_restartable = move.is_restartable;
         is_sbo = move.is_sbo;
-        is_on_scheduler = move.is_on_scheduler;
         on_move = move.on_move;
         if (on_move)
             on_move(get_data(), move.get_data());
