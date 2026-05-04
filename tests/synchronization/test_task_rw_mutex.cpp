@@ -111,12 +111,13 @@ TEST_F(TaskRwMutexTest, AsyncReadLock) {
     std::atomic<bool> completed{false};
 
     run_task([&] {
-        auto coro = [&]() -> fast_task::task_coro<void> {
+        auto coro_fn = [&]() -> fast_task::task_coro<void> {
             m.read_lock();
             completed = true;
             m.read_unlock();
             co_return;
-        }();
+        };
+        auto coro = coro_fn();
         fast_task::scheduler::start(coro.get_task());
         coro->await_task();
     });
@@ -129,12 +130,13 @@ TEST_F(TaskRwMutexTest, AsyncWriteLock) {
     std::atomic<bool> completed{false};
 
     run_task([&] {
-        auto coro = [&]() -> fast_task::task_coro<void> {
+        auto coro_fn = [&]() -> fast_task::task_coro<void> {
             m.write_lock();
             completed = true;
             m.write_unlock();
             co_return;
-        }();
+        };
+        auto coro = coro_fn();
         fast_task::scheduler::start(coro.get_task());
         coro->await_task();
     });

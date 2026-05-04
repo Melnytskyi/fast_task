@@ -97,6 +97,22 @@ namespace fast_task::this_task {
             this_thread::sleep_until(time_point);
     }
 
+    bool FT_API enter_sleep_until(std::chrono::high_resolution_clock::time_point time_point) {
+        if (loc.is_task_thread) {
+            if (std::chrono::high_resolution_clock::now() >= time_point)
+                return true;
+            fast_task::lock_guard guard(glob.task_timer_safety);
+            makeTimeWait_unsafe(time_point);
+            return false;
+        } else
+            throw invalid_context();
+    }
+
+    bool FT_API enter_yield() {
+        transfer_task(std::shared_ptr<task>{loc.curr_task});
+        return false;
+    }
+
     void yield() {
         if (loc.is_task_thread) {
             loc.yield_request = true;

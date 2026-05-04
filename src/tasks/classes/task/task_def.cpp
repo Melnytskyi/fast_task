@@ -10,38 +10,34 @@
 namespace fast_task {
     bool task::enable_task_naming = false;
 
-    task::data::callbacks_data::callbacks_data() : normal_mode() {}
+    task::data::callbacks_data::callbacks_data() : buf{.dat{.data{nullptr}, .on_await{nullptr}, .on_cancel{nullptr}}} {}
 
     task::data::callbacks_data::callbacks_data(callbacks_data&& move) noexcept {
-        if (move.is_extended_mode) {
-            is_extended_mode = true;
-            extended_mode.is_restartable = move.extended_mode.is_restartable;
-            extended_mode.data = move.extended_mode.data;
-            extended_mode.on_start = move.extended_mode.on_start;
-            extended_mode.on_await = move.extended_mode.on_await;
-            extended_mode.on_cancel = move.extended_mode.on_cancel;
-            extended_mode.on_destruct = move.extended_mode.on_destruct;
-            move.extended_mode.on_destruct = nullptr;
-        } else {
-            is_extended_mode = false;
-            normal_mode.ex_handle = std::move(move.normal_mode.ex_handle);
-            normal_mode.func = std::move(move.normal_mode.func);
+        is_restartable = move.is_restartable;
+        is_sbo = move.is_sbo;
+        is_on_scheduler = move.is_on_scheduler;
+        on_move = move.on_move;
+        if (on_move)
+            on_move(get_data(), move.get_data());
+        else {
+            buf.dat.data = move.buf.dat.data;
+            buf.dat.on_await = move.buf.dat.on_await;
+            buf.dat.on_cancel = move.buf.dat.on_cancel;
         }
+        on_start = move.on_start;
+        on_destruct = move.on_destruct;
+        move.on_destruct = nullptr;
     }
 
     task::data::callbacks_data::~callbacks_data() {
-        if (is_extended_mode) {
-            if (extended_mode.on_destruct)
-                extended_mode.on_destruct(extended_mode.data);
-            extended_mode.data = nullptr;
-            extended_mode.on_start = nullptr;
-            extended_mode.on_await = nullptr;
-            extended_mode.on_cancel = nullptr;
-            extended_mode.on_destruct = nullptr;
-        } else {
-            normal_mode.ex_handle = nullptr;
-            normal_mode.func = nullptr;
-        }
+        if (on_destruct)
+            on_destruct(get_data());
+        buf.dat.data = nullptr;
+        buf.dat.on_await = nullptr;
+        buf.dat.on_cancel = nullptr;
+        on_start = nullptr;
+        on_destruct = nullptr;
+        on_move = nullptr;
     }
 
     task::task(void* data, void (*on_start)(void*), void (*on_await)(void*), void (*on_cancel)(void*), void (*on_destruct)(void*), bool is_restartable, bool is_on_scheduler)
@@ -66,18 +62,6 @@ namespace fast_task {
         FT_DEBUG_ONLY(register_object(this));
     }
 
-    task::task(std::move_only_function<void()>&& func, std::move_only_function<void(const std::exception_ptr&)>&& ex_handle, std::chrono::high_resolution_clock::time_point timeout, task_priority priority, bool is_on_scheduler) : data_{.timeout = timeout.time_since_epoch().count()} {
-#ifdef FT_ENABLE_PREEMPTIVE_SCHEDULER
-        data_.exdata = new execution_data();
-        data_.exdata->priority = priority;
-#endif
-        data_.is_on_scheduler = is_on_scheduler;
-        data_.callbacks.is_extended_mode = false;
-        data_.callbacks.normal_mode.func = std::move(func);
-        data_.callbacks.normal_mode.ex_handle = std::move(ex_handle);
-        FT_DEBUG_ONLY(register_object(this));
-    }
-
     void task::awaitEnd(fast_task::unique_lock<mutex_unify>& l) {
         while (!data_.end_of_life)
             data_.result_notify.wait(l);
@@ -98,7 +82,8 @@ namespace fast_task {
         }
         if (!data_.completed && data_.started) {
             --glob.executing_tasks;
-            glob.no_tasks_execute_notifier.notify_all();
+            fast_task::shared_lock guard(glob.task_thread_safety);
+            glob.no_tasks_execute_notifier.notify_all_guarded();
         }
 #ifdef FT_ENABLE_ABORT_IF_NEVER_STARTED
         if (!data_.started && !data_.end_of_life) {
@@ -197,14 +182,12 @@ namespace fast_task {
     }
 
     void task::notify_cancel() {
-        if (data_.callbacks.is_extended_mode)
-            data_.callbacks.extended_mode.on_cancel(data_.callbacks.extended_mode.data);
+        data_.callbacks.make_cancel();
         data_.make_cancel = true;
     }
 
     void task::await_notify_cancel() {
-        if (data_.callbacks.is_extended_mode)
-            data_.callbacks.extended_mode.on_cancel(data_.callbacks.extended_mode.data);
+        data_.callbacks.make_cancel();
 
         mutex_unify uni(data_.no_race);
         fast_task::unique_lock l(uni);
@@ -341,11 +324,9 @@ namespace fast_task {
 
         if (!lgr_task->data_.started && make_start)
             scheduler::start(lgr_task);
-        if (lgr_task->data_.callbacks.is_extended_mode) {
-            lgr_task->data_.callbacks.extended_mode.on_await(lgr_task->data_.callbacks.extended_mode.data);
-            if (!lgr_task->data_.callbacks.extended_mode.on_start)
-                return;
-        }
+        lgr_task->data_.callbacks.make_await();
+        if (!lgr_task->data_.callbacks.on_start)
+            return;
 
         mutex_unify uni(lgr_task->data_.no_race);
         fast_task::unique_lock l(uni);

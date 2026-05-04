@@ -6,7 +6,7 @@ include(GoogleTest)
 set(FT_TESTS_ROOT ${CMAKE_CURRENT_SOURCE_DIR})
 
 function(add_ft_test TARGET_NAME SOURCE_FILE)
-    add_executable(${TARGET_NAME} ${SOURCE_FILE})
+    add_executable(${TARGET_NAME} ${SOURCE_FILE} ${FT_TESTS_ROOT}/main.cpp)
     target_link_libraries(${TARGET_NAME} PRIVATE GTest::gtest_main fast_task)
     target_include_directories(${TARGET_NAME} PRIVATE
         ${FT_TESTS_ROOT}              # for helpers.hpp

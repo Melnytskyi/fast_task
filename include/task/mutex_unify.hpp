@@ -1,3 +1,9 @@
+// Copyright Danyil Melnytskyi 2024-Present
+//
+// Distributed under the Boost Software License, Version 1.0.
+// (See accompanying file LICENSE or copy at
+// http://www.boost.org/LICENSE_1_0.txt)
+
 #ifndef INCLUDE_TASK_MUTEX_UNIFY
 #define INCLUDE_TASK_MUTEX_UNIFY
 
@@ -120,8 +126,8 @@ namespace fast_task {
         bool enter_wait_until(const std::shared_ptr<task>& task, std::chrono::high_resolution_clock::time_point);
 
         template <class Rep, class Period>
-        bool enter_wait_for(const std::shared_ptr<task>& task, const std::chrono::duration<Rep, Period>& duration) {
-            return enter_wait_until(task, std::chrono::high_resolution_clock::now() + duration);
+        bool try_lock_for(const std::chrono::duration<Rep, Period>& duration) {
+            return try_lock_until(std::chrono::high_resolution_clock::now() + duration);
         }
     };
 

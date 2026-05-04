@@ -34,16 +34,11 @@ TEST_F(TaskExceptionTest, ExHandleReceivesException) {
 }
 
 TEST_F(TaskExceptionTest, NoExHandlerTaskStillCompletes) {
-    // Without an ex_handle the exception is swallowed but task ends.
-    // Note: task::is_ended() returns !end_of_life (inverted library bug),
-    // so we verify by checking that await_task() returns (task is done).
     auto t = std::make_shared<fast_task::task>(
         [] { throw std::runtime_error("silent"); }
     );
     fast_task::scheduler::start(t);
-    t->await_task(); // blocks until end_of_life is set
-    // is_ended() returns !end_of_life which is false after completion (library bug)
-    // Just verify the task completed by reaching this point without hanging.
+    t->await_task();
     SUCCEED();
 }
 
@@ -54,8 +49,6 @@ TEST_F(TaskExceptionTest, ContextSwitchCounterIncreases) {
         fast_task::this_task::yield();
     });
 
-    // We can't directly access the finished task's counter from run_task,
-    // so check via a task that captures its own handle.
     std::shared_ptr<fast_task::task> t_ref;
     auto t = std::make_shared<fast_task::task>([&] {
         fast_task::this_task::yield();

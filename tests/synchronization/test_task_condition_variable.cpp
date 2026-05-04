@@ -128,10 +128,10 @@ TEST_F(TaskCvTest, AsyncWait) {
     run_task([&] {
         auto coro = [](auto& m, auto& cv, auto& ready, auto& completed) -> fast_task::task_coro<void> {
             fast_task::mutex_unify um(m);
-            co_await m.async_lock();
+            co_await async_lock(m);
             fast_task::unique_lock<fast_task::mutex_unify> lock(um, fast_task::adopt_lock);
             while (!ready)
-                co_await cv.async_wait(lock);
+                co_await async_wait(cv, lock);
             completed = true;
             co_return;
         }(m, cv, ready, completed);
@@ -143,7 +143,7 @@ TEST_F(TaskCvTest, AsyncWait) {
             ready = true;
         }
         cv.notify_one();
-        coro->await_task(); //BUG the function returns before the coroutine completes
+        coro->await_task();
     });
 
     EXPECT_TRUE(completed);

@@ -229,4 +229,50 @@ namespace fast_task {
         fast_task::unique_lock lock(hh->no_race);
         return hh->time_point <= std::chrono::high_resolution_clock::now();
     }
+
+    bool deadline_timer::enter_wait(const std::shared_ptr<task>& task, std::chrono::high_resolution_clock::time_point& out_time) {
+        if (!hh)
+            return true;
+        fast_task::lock_guard lock(hh->no_race);
+        if (hh->time_point <= std::chrono::high_resolution_clock::now()) {
+            return true;
+        } else {
+            hh->sleeping_tasks.push_back(task);
+            out_time = hh->time_point;
+            fast_task::makeTimeWait_extern(task, hh->time_point);
+            return false;
+        }
+    }
+
+    bool deadline_timer::enter_wait(mutex_unify& mut, const std::shared_ptr<task>& task, std::chrono::high_resolution_clock::time_point& out_time) {
+        if (!hh)
+            return true;
+        fast_task::lock_guard lock(hh->no_race);
+        if (hh->time_point <= std::chrono::high_resolution_clock::now()) {
+            return true;
+        } else {
+            get_data(task).relock_0 = mut;
+            hh->sleeping_tasks.push_back(task);
+            out_time = hh->time_point;
+            fast_task::makeTimeWait_extern(task, hh->time_point);
+            return false;
+        }
+    }
+
+    deadline_timer::status deadline_timer::get_status(const std::shared_ptr<task>& task, std::chrono::high_resolution_clock::time_point timeout_time) {
+        if (!hh)
+            return status::shutdown;
+        fast_task::lock_guard lock(hh->no_race);
+        auto& st = hh->sleeping_tasks;
+        auto sit = std::find(st.begin(), st.end(), task);
+        if (sit != st.end())
+            st.erase(sit);
+        auto& ct = hh->canceled_tasks;
+        if (ct.find(task.get()) == ct.end()) {
+            if (hh->time_point == timeout_time)
+                return status::timeouted;
+        } else
+            ct.erase(task.get());
+        return status::canceled;
+    }
 }

@@ -39,32 +39,23 @@ namespace fast_task {
     }
 
     std::shared_ptr<task> redefine_start_function(std::shared_ptr<task>& task, task_query_handle* tqh) {
-        if (get_data(task).callbacks.is_extended_mode) {
-            if (!get_data(task).callbacks.extended_mode.on_start)
-                throw std::logic_error("task_query::add requires in extended mode the on_start variable to be set");
-            else if (!get_data(task).callbacks.extended_mode.is_restartable)
-                throw std::logic_error("task_query::add requires in extended mode the restartable mode to be disabled");
-            else {
-                return task::run([task, tqh]() {
-                    try {
-                        task::await_task(task, true);
-                    } catch (...) {
-                        __TaskQuery_add_task_leave(tqh);
-                        throw;
-                    }
-                    __TaskQuery_add_task_leave(tqh);
-                });
-            }
-        } else {
-            auto old_func = std::move(get_data(task).callbacks.normal_mode.func);
-            get_data(task).callbacks.normal_mode.func = [old_func = std::move(old_func), tqh]() mutable {
+        if (!get_data(task).callbacks.on_start)
+            throw std::logic_error("task_query::add requires the on_start variable to be set");
+        else if (get_data(task).callbacks.on_start_override)
+            throw std::logic_error("task_query::add requires the on_start_override variable to be unset");
+        else {
+            get_data(task).callbacks.on_start_override_data = tqh;
+            get_data(task).callbacks.on_start_override = [](auto& cb) {
+                auto* tqh = reinterpret_cast<task_query_handle*>(cb.on_start_override_data);
                 try {
-                    old_func();
+                    cb.on_start(cb.get_data());
                 } catch (...) {
                     __TaskQuery_add_task_leave(tqh);
+                    cb.on_start_override = nullptr;
                     throw;
                 }
                 __TaskQuery_add_task_leave(tqh);
+                cb.on_start_override = nullptr;
             };
             return task;
         }
@@ -153,5 +144,31 @@ namespace fast_task {
             delete handle;
             handle = nullptr;
         }
+    }
+
+    bool task_query::enter_wait(const std::shared_ptr<task>& task) {
+        if (handle->now_at_execution == 0 && handle->tasks.empty())
+            return true;
+
+        task::run([this, parent_coro = task]() mutable {
+            this->wait();
+            scheduler::start(std::move(parent_coro));
+        });
+
+        return false;
+    }
+
+    bool task_query::enter_wait_until(const std::shared_ptr<task>& task, std::chrono::high_resolution_clock::time_point time_point) {
+        if (handle->now_at_execution == 0 && handle->tasks.empty())
+            return true;
+
+        task::run([this, parent_coro = task, time_point]() mutable {
+            if (!this->wait_until(time_point))
+                get_data(parent_coro).time_end_flag = true;
+
+            scheduler::start(std::move(parent_coro));
+        });
+
+        return false;
     }
 }

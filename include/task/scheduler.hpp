@@ -1,3 +1,9 @@
+// Copyright Danyil Melnytskyi 2024-Present
+//
+// Distributed under the Boost Software License, Version 1.0.
+// (See accompanying file LICENSE or copy at
+// http://www.boost.org/LICENSE_1_0.txt)
+
 #ifndef INCLUDE_TASK_SCHEDULER
 #define INCLUDE_TASK_SCHEDULER
 #include "task.hpp"
@@ -63,6 +69,8 @@ namespace fast_task {
 
         void FT_API explicit_start_timer();
         void FT_API shut_down();
+
+        const std::shared_ptr<task>& FT_API current_context_task();
 
 
         /**

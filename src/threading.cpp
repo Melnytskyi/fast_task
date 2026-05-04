@@ -39,9 +39,25 @@ void (*thread_interrupter_asm_ptr)() = []() {
     #include <signal.h>
     #include <tasks/_internal.hpp>
     #include <ucontext.h>
+
+    static timespec to_abs_timespec(std::chrono::high_resolution_clock::time_point time) {
+        struct timespec ts;
+        clock_gettime(CLOCK_REALTIME, &ts);
+        auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(time - std::chrono::high_resolution_clock::now());
+        ts.tv_sec += ns.count() / 1000000000;
+        ts.tv_nsec += ns.count() % 1000000000;
+        if (ts.tv_nsec >= 1000000000) {
+            ts.tv_sec++;
+            ts.tv_nsec -= 1000000000;
+        } else if (ts.tv_nsec < 0) {
+            ts.tv_sec--;
+            ts.tv_nsec += 1000000000;
+        }
+        return ts;
+    }
 #endif
 
-#if defined(__x86_x64__) || defined(__i386__) || defined(_M_IX86) || defined(_M_X64)
+#if defined(__x86_64__) || defined(__i386__) || defined(_M_IX86) || defined(_M_X64)
     #define __IS_X86_OR_X64
 #endif
 namespace fast_task {
@@ -516,10 +532,14 @@ namespace fast_task {
 
     bool rw_mutex::try_lock() {
         interrupt_unsafe_region::lock();
-        bool res = pthread_rwlock_trywrlock(_mutex);
-        if (!res)
+        int err = pthread_rwlock_trywrlock(_mutex);
+        if (err) {
             interrupt_unsafe_region::unlock();
-        return res;
+            if (err == EBUSY || err == EAGAIN)
+                return false;
+            throw std::system_error(err, std::system_category());
+        }
+        return true;
     }
 
     void rw_mutex::lock_shared() {
@@ -534,10 +554,14 @@ namespace fast_task {
 
     bool rw_mutex::try_lock_shared() {
         interrupt_unsafe_region::lock();
-        bool res = pthread_rwlock_tryrdlock(_mutex);
-        if (!res)
+        int err = pthread_rwlock_tryrdlock(_mutex);
+        if (err) {
             interrupt_unsafe_region::unlock();
-        return res;
+            if (err == EBUSY || err == EAGAIN)
+                return false;
+            throw std::system_error(err, std::system_category());
+        }
+        return true;
     }
 
     timed_mutex::timed_mutex() {
@@ -599,12 +623,9 @@ namespace fast_task {
     bool timed_mutex::try_lock_until(std::chrono::high_resolution_clock::time_point time) {
         interrupt_unsafe_region region;
         while (true) {
-            auto sleep_ms = std::chrono::duration_cast<std::chrono::milliseconds>(time - std::chrono::high_resolution_clock::now());
-            if (sleep_ms.count() <= 0)
+            if (time <= std::chrono::high_resolution_clock::now())
                 return false;
-            timespec ts;
-            ts.tv_sec = sleep_ms.count() / 1000000000;
-            ts.tv_nsec = sleep_ms.count() % 1000000000;
+            timespec ts = to_abs_timespec(time);
             int err = pthread_mutex_timedlock(_mutex, &ts);
             if (err == 0) {
                 interrupt_unsafe_region::lock();
@@ -633,19 +654,21 @@ namespace fast_task {
             reinterpret_cast<std::atomic_flag*>(locked_storage)
                 ->test_and_set(std::memory_order_acquire)
         ) {
-    #if (defined(__GNUC__) || defined(__clang__)) && __IS_X86_OR_X64
-            _builtin_ia32_pause();
+    #if (defined(__GNUC__) || defined(__clang__)) && defined(__IS_X86_OR_X64)
+            __builtin_ia32_pause();
     #endif
         }
     }
 
     bool spin_lock::try_lock() {
         interrupt_unsafe_region::lock();
-        auto res = reinterpret_cast<std::atomic_flag*>(locked_storage)
+        bool prev = reinterpret_cast<std::atomic_flag*>(locked_storage)
                        ->test_and_set(std::memory_order_acquire);
-        if (!res)
+        if (prev) {
             interrupt_unsafe_region::unlock();
-        return res;
+            return false;
+        }
+        return true;
     }
 
     void spin_lock::unlock() {
@@ -698,16 +721,11 @@ namespace fast_task {
     cv_status condition_variable::wait_until(mutex& mtx, std::chrono::high_resolution_clock::time_point time) {
         interrupt_unsafe_region region;
         while (true) {
-            auto sleep_ms = std::chrono::duration_cast<std::chrono::milliseconds>(time - std::chrono::high_resolution_clock::now());
-            if (sleep_ms.count() <= 0) {
+            if (time <= std::chrono::high_resolution_clock::now())
                 return cv_status::timeout;
-            }
-            timespec ts;
-            ts.tv_sec = sleep_ms.count() / 1000000000;
-            ts.tv_nsec = sleep_ms.count() % 1000000000;
-            if (pthread_cond_timedwait(_cond, mtx._mutex, &ts) == 0) {
+            timespec ts = to_abs_timespec(time);
+            if (pthread_cond_timedwait(_cond, mtx._mutex, &ts) == 0)
                 return cv_status::no_timeout;
-            }
         }
         return cv_status::no_timeout;
     }
@@ -726,17 +744,11 @@ namespace fast_task {
     cv_status condition_variable::wait_until(recursive_mutex& mtx, std::chrono::high_resolution_clock::time_point time) {
         interrupt_unsafe_region region;
         while (true) {
-            auto sleep_ms = std::chrono::duration_cast<std::chrono::milliseconds>(time - std::chrono::high_resolution_clock::now());
-            if (sleep_ms.count() <= 0) {
+            if (time <= std::chrono::high_resolution_clock::now())
                 return cv_status::timeout;
-            }
-            timespec ts;
-            ts.tv_sec = sleep_ms.count() / 1000000000;
-            ts.tv_nsec = sleep_ms.count() % 1000000000;
-
-            if (pthread_cond_timedwait(_cond, mtx.actual_mutex._mutex, &ts) == 0) {
+            timespec ts = to_abs_timespec(time);
+            if (pthread_cond_timedwait(_cond, mtx.actual_mutex._mutex, &ts) == 0)
                 return cv_status::no_timeout;
-            }
         }
         return cv_status::no_timeout;
     }
@@ -796,7 +808,6 @@ namespace fast_task {
                     throw std::system_error(err, std::system_category());
                 }
             }
-            delete (pthread_t*)_thread;
             _thread = nullptr;
         }
     }

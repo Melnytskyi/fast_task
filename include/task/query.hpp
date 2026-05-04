@@ -1,3 +1,9 @@
+// Copyright Danyil Melnytskyi 2024-Present
+//
+// Distributed under the Boost Software License, Version 1.0.
+// (See accompanying file LICENSE or copy at
+// http://www.boost.org/LICENSE_1_0.txt)
+
 #ifndef INCLUDE_TASK_QUERY
 #define INCLUDE_TASK_QUERY
 #include "task.hpp"
@@ -25,6 +31,9 @@ namespace fast_task {
         bool wait_for(const std::chrono::duration<Rep, Period>& duration) {
             return wait_until(std::chrono::high_resolution_clock::now() + duration);
         }
+
+        bool enter_wait(const std::shared_ptr<task>& task);
+        bool enter_wait_until(const std::shared_ptr<task>& task, std::chrono::high_resolution_clock::time_point);
     };
 }
 

@@ -1,3 +1,9 @@
+// Copyright Danyil Melnytskyi 2024-Present
+//
+// Distributed under the Boost Software License, Version 1.0.
+// (See accompanying file LICENSE or copy at
+// http://www.boost.org/LICENSE_1_0.txt)
+
 #ifndef INCLUDE_TASK_DEADLINE_TIMER
 #define INCLUDE_TASK_DEADLINE_TIMER
 #include "fwd.hpp"
@@ -43,6 +49,11 @@ namespace fast_task {
         status wait(std::unique_lock<mutex_unify>& lock);
 
         bool timed_out();
+
+        //for coroutines
+        bool enter_wait(const std::shared_ptr<task>& task, std::chrono::high_resolution_clock::time_point& out_time);
+        bool enter_wait(mutex_unify& mut, const std::shared_ptr<task>& task, std::chrono::high_resolution_clock::time_point& out_time);
+        status get_status(const std::shared_ptr<task>& task, std::chrono::high_resolution_clock::time_point timeout_time);
 
         template <class Rep, class Period>
         size_t expires_from_now(const std::chrono::duration<Rep, Period>& duration) {
