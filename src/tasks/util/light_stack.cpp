@@ -71,9 +71,10 @@ namespace fast_task {
 
     stack_context light_stack::allocate() {
         const size_t guard_page_size = page_size * FT_GUARD_PAGE_COUNT;
-        const size_t pages = (size + guard_page_size + page_size - 1) / page_size;
-        // add one page at bottom that will be used as guard-page
-        const size_t size__ = (pages + 1) * page_size;
+        // Allocate size + guard_page_size so the usable portion is exactly 'size',
+        // regardless of guard page configuration (a large FT_GUARD_PAGE_COUNT would
+        // otherwise consume the entire requested allocation).
+        const size_t size__ = ((size + guard_page_size + page_size - 1) / page_size) * page_size;
 
         stack_context result;
         if (stack_allocations.try_dequeue(result)) {
@@ -182,9 +183,10 @@ namespace fast_task {
     light_stack::light_stack(size_t size) BOOST_NOEXCEPT_OR_NOTHROW : size(size) {}
 
     stack_context light_stack::allocate() {
-        const size_t pages = (size + guard_page_size + page_size - 1) / page_size;
-        // add one page at bottom that will be used as guard-page
-        const size_t size__ = (pages + 1) * page_size;
+        // Allocate size + guard_page_size so the usable portion is exactly 'size',
+        // regardless of guard page configuration (a large FT_GUARD_PAGE_COUNT would
+        // otherwise consume the entire requested allocation).
+        const size_t size__ = ((size + guard_page_size + page_size - 1) / page_size) * page_size;
 
         stack_context result;
         if (stack_allocations.try_dequeue(result)) {
