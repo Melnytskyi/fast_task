@@ -184,6 +184,17 @@ namespace fast_task::files {
 
         uint64_t size();
 
+        // make_* – initiate async I/O and return a future that can be co_awaited
+        // via the async_* wrappers in coroutine/file.hpp.
+        future_ptr<std::vector<uint8_t>> make_read(uint32_t size);
+        future_ptr<std::vector<uint8_t>> make_read_at(uint64_t offset, uint32_t size);
+        future_ptr<std::vector<uint8_t>> make_read_fixed(uint32_t size);
+        future_ptr<std::vector<uint8_t>> make_read_fixed_at(uint64_t offset, uint32_t size);
+
+        future_ptr<void> make_write(const uint8_t* data, uint32_t size);
+        future_ptr<void> make_write_at(uint64_t offset, const uint8_t* data, uint32_t size);
+        future_ptr<void> make_append(const uint8_t* data, uint32_t size);
+
 #if _WIN64
         using native_file_handle = void*;
 #else /*UNIX*/

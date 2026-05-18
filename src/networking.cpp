@@ -841,6 +841,28 @@ namespace fast_task::networking {
                 return {};
             return to_address(addr);
         }
+
+        future_ptr<std::vector<char>> make_read(uint32_t len) override {
+            return future<std::vector<char>>::start([this, len]() -> std::vector<char> {
+                read_lock lock(mutex);
+                if (!checkup())
+                    return {};
+                std::vector<char> buf(len);
+                int readed = 0;
+                handle->read(buf.data(), (int)len, readed);
+                buf.resize((size_t)readed);
+                return buf;
+            });
+        }
+
+        future_ptr<void> make_write(const char* data, uint32_t len) override {
+            return future<void>::start([this, data, len]() {
+                read_lock lock(mutex);
+                if (!checkup())
+                    return;
+                handle->send(data, (int)len);
+            });
+        }
     };
 
     #pragma endregion

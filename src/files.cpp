@@ -1873,4 +1873,32 @@ namespace fast_task::files {
             throw file_closed();
         return handle->get_path();
     }
+
+    future_ptr<std::vector<uint8_t>> file_handle::make_read(uint32_t size) {
+        return read(size);
+    }
+
+    future_ptr<std::vector<uint8_t>> file_handle::make_read_at(uint64_t offset, uint32_t size) {
+        return read_at(offset, size);
+    }
+
+    future_ptr<std::vector<uint8_t>> file_handle::make_read_fixed(uint32_t size) {
+        return read_fixed(size);
+    }
+
+    future_ptr<std::vector<uint8_t>> file_handle::make_read_fixed_at(uint64_t offset, uint32_t size) {
+        return read_fixed_at(offset, size);
+    }
+
+    future_ptr<void> file_handle::make_write(const uint8_t* data, uint32_t size) {
+        return write(data, size);
+    }
+
+    future_ptr<void> file_handle::make_write_at(uint64_t offset, const uint8_t* data, uint32_t size) {
+        return write_at(offset, data, size);
+    }
+
+    future_ptr<void> file_handle::make_append(const uint8_t* data, uint32_t size) {
+        return append(data, size);
+    }
 }
