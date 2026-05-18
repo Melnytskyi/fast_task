@@ -204,27 +204,25 @@ namespace fast_task {
         //old_data.init();
     }
 
-    //TODO create proper guard page
+    //create proper guard page
     stack_context create_stack(size_t size) {
         size_t total_size = std::max(size, page_size * 3);
-        void* vp = mmap(nullptr, total_size, /*PROT_NONE*/ PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-        if (!vp)
+        void* vp = mmap(nullptr, total_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (vp == MAP_FAILED)
             throw std::bad_alloc();
 
-        // needs at least 3 pages to fully construct the coroutine and switch to it
-        //const auto init_commit_size = page_size * 3;
-        //auto commit_start = static_cast<uint8_t*>(vp) + total_size - init_commit_size;
-        //if (mprotect(commit_start, init_commit_size, PROT_READ | PROT_WRITE) == -1) {
-        //    munmap(vp, total_size);
-        //    throw std::bad_alloc();
-        //}
+        // Create a PROT_NONE guard page at the bottom of the stack to catch stack overflows
+        if (mprotect(vp, guard_page_size, PROT_NONE) == -1) {
+            munmap(vp, total_size);
+            throw std::bad_alloc();
+        }
+
         if (RUNNING_ON_VALGRIND) {
-            void* stack_bottom = vp;
+            void* stack_bottom = static_cast<uint8_t*>(vp) + guard_page_size;
             void* stack_top = static_cast<uint8_t*>(vp) + total_size;
             get_execution_data(loc.curr_task).valgrind_stack_id = VALGRIND_STACK_REGISTER(stack_bottom, stack_top);
         }
 
-        //PROT_NONE already used for guard page
         stack_context sctx;
         sctx.size = size;
         sctx.sp = static_cast<char*>(vp) + sctx.size;

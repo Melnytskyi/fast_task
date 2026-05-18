@@ -125,7 +125,7 @@ namespace fast_task::scheduler {
         }
     }
 
-    void close_bind_only_executor(uint16_t id) {
+    void close_bind_only_executor(uint16_t id, bool abort_tasks) {
         mutex_unify unify(glob.binded_workers_safety);
         fast_task::unique_lock guard(unify);
         decltype(glob.binded_workers[id].tasks) transfer_tasks;
@@ -149,6 +149,7 @@ namespace fast_task::scheduler {
             if (context.in_close)
                 return;
             context.in_close = true;
+            context.abort_tasks_on_close = abort_tasks;
 
             std::swap(transfer_tasks, context.tasks);
             for (uint16_t i = 0; i < context.executors; i++) {

@@ -281,7 +281,18 @@ namespace fast_task {
             data.started = true;
             data.result_notify.notify_all();
         } catch (...) {
-            loc.ex_ptr = std::current_exception(); //TODO pass this to the callback
+            loc.ex_ptr = std::current_exception();
+            if (data.callbacks.on_exception) {
+                try {
+                    data.callbacks.on_exception(data.callbacks.get_data(), loc.ex_ptr);
+                    loc.ex_ptr = nullptr;
+                } catch (const task_cancellation& cancel) {
+                    forceCancelCancellation(cancel);
+                    loc.ex_ptr = nullptr;
+                } catch (...) {
+                    loc.ex_ptr = std::current_exception();
+                }
+            }
             fast_task::lock_guard guard(data.no_race);
             data.end_of_life = true;
             data.started = true;
@@ -738,9 +749,16 @@ namespace fast_task {
             if (context.executors == 0) {
                 if (context.in_close) {
                     while (context.tasks.size_approx())
-                        while (context.tasks.try_dequeue(loc.curr_task)) { //TODO add option to abort if there still tasks in queue
-                            get_data(loc.curr_task).bind_to_worker_id = (uint16_t)-1;
-                            glob.tasks.enqueue(std::move(loc.curr_task));
+                        while (context.tasks.try_dequeue(loc.curr_task)) {
+                            if (context.abort_tasks_on_close) {
+                                fast_task::lock_guard task_guard(get_data(loc.curr_task).no_race);
+                                get_data(loc.curr_task).end_of_life = true;
+                                get_data(loc.curr_task).started = true;
+                                get_data(loc.curr_task).result_notify.notify_all();
+                            } else {
+                                get_data(loc.curr_task).bind_to_worker_id = (uint16_t)-1;
+                                glob.tasks.enqueue(std::move(loc.curr_task));
+                            }
                         }
                     glob.tasks_notifier.unsafe_notify_all();
                     context.on_closed_notifier.notify_all();

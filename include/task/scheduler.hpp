@@ -57,7 +57,7 @@ namespace fast_task {
 
         uint16_t FT_API create_bind_only_executor(uint16_t fixed_count, bool allow_implicit_start, executor_policy policy = executor_policy::default_policy);
         void FT_API assign_bind_only_executor(uint16_t id, uint16_t fixed_count, bool allow_implicit_start, executor_policy policy = executor_policy::default_policy);
-        void FT_API close_bind_only_executor(uint16_t id);
+        void FT_API close_bind_only_executor(uint16_t id, bool abort_tasks = false);
 
         void FT_API create_executor(size_t count = 1);
         size_t FT_API total_executors();
