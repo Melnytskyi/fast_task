@@ -24,6 +24,11 @@ namespace fast_task {
 }
 #if PLATFORM_WINDOWS
     #include <Windows.h>
+
+    #ifndef FT_GUARD_PAGE_COUNT
+        #define FT_GUARD_PAGE_COUNT 1
+    #endif
+
 size_t page_size = []() {
     SYSTEM_INFO si;
     GetSystemInfo(&si);
@@ -32,7 +37,7 @@ size_t page_size = []() {
 
 namespace fast_task {
     stack_context create_stack(size_t size) {
-        const size_t guard_page_size = page_size;
+        const size_t guard_page_size = page_size * FT_GUARD_PAGE_COUNT;
 
         void* vp = ::VirtualAlloc(0, size, MEM_RESERVE, PAGE_READWRITE);
         if (!vp)
@@ -47,12 +52,15 @@ namespace fast_task {
             throw std::bad_alloc();
         }
 
-        // create guard page so the OS can catch page faults and grow our stack
+#if FT_GUARD_PAGE_COUNT > 0
+        // create guard page(s) so the OS can catch stack overflows (fast-fail)
         pPtr -= guard_page_size;
         if (!VirtualAlloc(pPtr, guard_page_size, MEM_COMMIT, PAGE_READWRITE | PAGE_GUARD)) {
             VirtualFree(vp, size, MEM_FREE);
             throw std::bad_alloc();
         }
+#endif
+
         stack_context sctx;
         sctx.size = size;
         sctx.sp = static_cast<char*>(vp) + sctx.size;
@@ -62,7 +70,7 @@ namespace fast_task {
     light_stack::light_stack(size_t size) BOOST_NOEXCEPT_OR_NOTHROW : size(size) {}
 
     stack_context light_stack::allocate() {
-        const size_t guard_page_size = page_size;
+        const size_t guard_page_size = page_size * FT_GUARD_PAGE_COUNT;
         const size_t pages = (size + guard_page_size + page_size - 1) / page_size;
         // add one page at bottom that will be used as guard-page
         const size_t size__ = (pages + 1) * page_size;
@@ -110,123 +118,22 @@ namespace fast_task {
     }
 }
 #elif PLATFORM_LINUX
-    #include <mutex>
-    #include <signal.h>
     #include <sys/mman.h>
     #include <sys/stat.h>
     #include <unistd.h>
     #include <valgrind/memcheck.h>
     #include <valgrind/valgrind.h>
-    #if defined(__x86_64__)
-        #include <ucontext.h>
+
+    #ifndef FT_GUARD_PAGE_COUNT
+        #define FT_GUARD_PAGE_COUNT 1
     #endif
 
 namespace fast_task {
     static const size_t page_size = boost::context::stack_traits::page_size();
-    static const size_t guard_page_size = boost::context::stack_traits::page_size();
-
-    // Called when a stack overflow is detected: resumes (outside signal handler)
-    // on the task's now-accessible guard page and raises the stack_overflow exception.
-    // The C++ exception machinery then unwinds the task's call stack normally,
-    // running all destructors before the catch(...) in context_exec catches it.
-    [[noreturn]] __attribute__((noinline)) static void __stack_overflow_raise() {
-        throw stack_overflow();
-    }
-
-    static struct sigaction __old_sigsegv_action = {};
-
-    static void __sigsegv_handler(int sig, siginfo_t* si, void* ctx) {
-        bool handled = false;
-
-        // Only act when a task is currently executing on this thread and has a stack.
-        if (loc.curr_task) {
-            // Access execution_data directly to avoid any heap allocation inside a signal handler.
-            // Use auto* to avoid naming the private nested type task::execution_data.
-            auto* exdata = get_data(loc.curr_task).exdata;
-            if (exdata && exdata->stack_ptr) {
-                void* fault_addr = si->si_addr;
-                void* stack_bottom = exdata->stack_ptr;
-                uintptr_t stack_top = reinterpret_cast<uintptr_t>(stack_bottom) + exdata->stack_size;
-
-                // Guard page occupies [stack_bottom, stack_bottom + guard_page_size).
-                if (fault_addr >= stack_bottom &&
-                    fault_addr < static_cast<char*>(stack_bottom) + guard_page_size) {
-                    // Make the guard page accessible so the C++ unwinder has a little
-                    // room on the stack to execute landing pads and destructors.
-                    if (mprotect(stack_bottom, guard_page_size, PROT_READ | PROT_WRITE) != 0)
-                        goto pass_handler; // mprotect failed — fall back to default handling
-
-#if defined(__x86_64__)
-                    {
-                        ucontext_t* uc = static_cast<ucontext_t*>(ctx);
-
-                        // Position RSP at the high end of the (now accessible) guard page,
-                        // simulating a CALL instruction (RSP % 16 == 8, RA slot filled
-                        // with the actual return address so the DWARF unwinder can walk
-                        // through all existing recursion frames on the real stack above).
-                        uintptr_t guard_top = reinterpret_cast<uintptr_t>(stack_bottom) + guard_page_size;
-                        uintptr_t new_rsp = (guard_top & ~static_cast<uintptr_t>(15)) - 8;
-
-                        // Read the return address that the faulting frame would use so the
-                        // stack-unwind chain is intact: [RBP + sizeof(ptr)] holds the
-                        // return address in x86-64 ABI (after push rbp / mov rbp, rsp).
-                        // Validate RBP points into the valid (non-guard) stack region
-                        // before dereferencing to avoid a second fault inside the handler.
-                        uintptr_t rbp = static_cast<uintptr_t>(uc->uc_mcontext.gregs[REG_RBP]);
-                        uintptr_t ra_addr = rbp + sizeof(uintptr_t);
-                        if (rbp < guard_top || ra_addr + sizeof(uintptr_t) > stack_top)
-                            goto pass_handler; // corrupt frame pointer — fall back
-
-                        uintptr_t ret_addr = *reinterpret_cast<uintptr_t*>(ra_addr);
-                        *reinterpret_cast<uintptr_t*>(new_rsp) = ret_addr;
-                        uc->uc_mcontext.gregs[REG_RSP] = static_cast<greg_t>(new_rsp);
-                        uc->uc_mcontext.gregs[REG_RIP] = reinterpret_cast<greg_t>(__stack_overflow_raise);
-                        handled = true;
-                    }
-#endif
-                }
-            }
-        }
-
-    pass_handler:
-        if (!handled) {
-            if (__old_sigsegv_action.sa_flags & SA_SIGINFO)
-                __old_sigsegv_action.sa_sigaction(sig, si, ctx);
-            else if (__old_sigsegv_action.sa_handler == SIG_DFL) {
-                signal(sig, SIG_DFL);
-                raise(sig);
-            } else if (__old_sigsegv_action.sa_handler != SIG_IGN)
-                __old_sigsegv_action.sa_handler(sig);
-        }
-    }
+    static const size_t guard_page_size = page_size * FT_GUARD_PAGE_COUNT;
 
     void __install_signal_handler_mem() {
-        // Per-thread: allocate and register a dedicated alternate signal stack so the
-        // SIGSEGV handler can run even when the task's stack is exhausted.
-        static thread_local bool alt_stack_set = false;
-        if (!alt_stack_set) {
-            void* alt_mem = mmap(nullptr, SIGSTKSZ, PROT_READ | PROT_WRITE,
-                                 MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-            if (alt_mem != MAP_FAILED) {
-                stack_t ss;
-                ss.ss_sp = alt_mem;
-                ss.ss_size = SIGSTKSZ;
-                ss.ss_flags = 0;
-                if (sigaltstack(&ss, nullptr) != 0)
-                    munmap(alt_mem, SIGSTKSZ); // best-effort cleanup on failure
-            }
-            alt_stack_set = true;
-        }
-
-        // Process-wide: install the SIGSEGV handler exactly once.
-        static std::once_flag handler_flag;
-        std::call_once(handler_flag, []() {
-            struct sigaction sa;
-            sigemptyset(&sa.sa_mask);
-            sa.sa_sigaction = __sigsegv_handler;
-            sa.sa_flags = SA_SIGINFO | SA_ONSTACK;
-            sigaction(SIGSEGV, &sa, &__old_sigsegv_action);
-        });
+        // Guard pages serve as fast-fail sentinels only; no signal handler is installed.
     }
 
     //create proper guard page
@@ -236,11 +143,14 @@ namespace fast_task {
         if (vp == MAP_FAILED)
             throw std::bad_alloc();
 
-        // Create a PROT_NONE guard page at the bottom of the stack to catch stack overflows
+#if FT_GUARD_PAGE_COUNT > 0
+        // Create PROT_NONE guard page(s) at the bottom of the stack.
+        // A stack overflow will trigger SIGSEGV, terminating the process fast.
         if (mprotect(vp, guard_page_size, PROT_NONE) == -1) {
             munmap(vp, total_size);
             throw std::bad_alloc();
         }
+#endif
 
         if (RUNNING_ON_VALGRIND) {
             void* stack_bottom = static_cast<uint8_t*>(vp) + guard_page_size;
@@ -287,14 +197,6 @@ namespace fast_task {
     }
 
     void unlimited_buffer(stack_context& sctx) {
-        // Restore the guard page before returning the stack to the pool so the
-        // next task using this stack gets proper overflow detection.
-        // If restoring protection fails, destroy the stack rather than recycling
-        // an unprotected one.
-        if (mprotect(static_cast<char*>(sctx.sp) - sctx.size, guard_page_size, PROT_NONE) != 0) {
-            destroy_stack(sctx);
-            return;
-        }
         if (!stack_allocations.enqueue(sctx))
             destroy_stack(sctx);
         else
@@ -302,12 +204,6 @@ namespace fast_task {
     }
 
     void limited_buffer(stack_context& sctx) {
-        // Restore the guard page before returning the stack to the pool.
-        // Destroy the stack if protection cannot be restored.
-        if (mprotect(static_cast<char*>(sctx.sp) - sctx.size, guard_page_size, PROT_NONE) != 0) {
-            destroy_stack(sctx);
-            return;
-        }
         if (++stack_allocations_buffer < light_stack::max_buffer_size) {
             if (!stack_allocations.enqueue(sctx)) {
                 destroy_stack(sctx);

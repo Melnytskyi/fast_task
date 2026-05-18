@@ -8,6 +8,9 @@ option(FAST_TASK_ENABLE_ABORT_IF_NEVER_STARTED "Abort if task's destructor calle
 option(FAST_TASK_ENABLE_PREEMPTIVE_SCHEDULER "Enables time sliced preemption for tasks, the tasks should use interrupt_unsafe_region on regions where preemption should be disabled." OFF)
 option(FAST_TASK_INCLUDE_THREAD_INTERRUPT_CODE "Allows the code to stop the thread and execute custom function on top of its stack, doesn't have effect if FAST_TASK_ENABLE_PREEMPTIVE_SCHEDULER enabled" ON)
 
+set(FAST_TASK_GUARD_PAGE_COUNT 1 CACHE STRING
+  "Number of PROT_NONE (Linux) / PAGE_GUARD (Windows) pages placed at the bottom of each task stack. Set to 0 to disable guard pages entirely.")
+
 
 set(FAST_TASK_EXCEPTION_POLICY "NONE" CACHE 
 STRING 
@@ -98,6 +101,8 @@ if(FAST_TASK_EXCEPTION_POLICY STREQUAL "CHECK")
 elseif(FAST_TASK_EXCEPTION_POLICY STREQUAL "PRESERVE")
   target_compile_definitions(fast_task PRIVATE FT_EXCEPTION_POLICY_PRESERVE)
 endif()
+
+target_compile_definitions(fast_task PRIVATE FT_GUARD_PAGE_COUNT=${FAST_TASK_GUARD_PAGE_COUNT})
 
 find_package(Boost COMPONENTS context lockfree)
 if(NOT Boost_FOUND)
