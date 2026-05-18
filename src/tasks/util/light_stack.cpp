@@ -146,37 +146,49 @@ namespace fast_task {
             if (exdata && exdata->stack_ptr) {
                 void* fault_addr = si->si_addr;
                 void* stack_bottom = exdata->stack_ptr;
+                uintptr_t stack_top = reinterpret_cast<uintptr_t>(stack_bottom) + exdata->stack_size;
 
                 // Guard page occupies [stack_bottom, stack_bottom + guard_page_size).
                 if (fault_addr >= stack_bottom &&
                     fault_addr < static_cast<char*>(stack_bottom) + guard_page_size) {
                     // Make the guard page accessible so the C++ unwinder has a little
                     // room on the stack to execute landing pads and destructors.
-                    mprotect(stack_bottom, guard_page_size, PROT_READ | PROT_WRITE);
+                    if (mprotect(stack_bottom, guard_page_size, PROT_READ | PROT_WRITE) != 0)
+                        goto pass_handler; // mprotect failed — fall back to default handling
 
 #if defined(__x86_64__)
-                    ucontext_t* uc = static_cast<ucontext_t*>(ctx);
+                    {
+                        ucontext_t* uc = static_cast<ucontext_t*>(ctx);
 
-                    // Position RSP at the high end of the (now accessible) guard page,
-                    // simulating a CALL instruction (RSP % 16 == 8, RA slot filled
-                    // with the actual return address so the DWARF unwinder can walk
-                    // through all existing recursion frames on the real stack above).
-                    uintptr_t guard_top = reinterpret_cast<uintptr_t>(stack_bottom) + guard_page_size;
-                    uintptr_t new_rsp = (guard_top & ~static_cast<uintptr_t>(15)) - 8;
-                    // Read the return address that the faulting frame would use so the
-                    // stack-unwind chain is intact: [RBP + sizeof(ptr)] holds the
-                    // return address in x86-64 ABI (after push rbp / mov rbp, rsp).
-                    greg_t rbp = uc->uc_mcontext.gregs[REG_RBP];
-                    uintptr_t ret_addr = *reinterpret_cast<uintptr_t*>(rbp + sizeof(uintptr_t));
-                    *reinterpret_cast<uintptr_t*>(new_rsp) = ret_addr;
-                    uc->uc_mcontext.gregs[REG_RSP] = static_cast<greg_t>(new_rsp);
-                    uc->uc_mcontext.gregs[REG_RIP] = reinterpret_cast<greg_t>(__stack_overflow_raise);
-                    handled = true;
+                        // Position RSP at the high end of the (now accessible) guard page,
+                        // simulating a CALL instruction (RSP % 16 == 8, RA slot filled
+                        // with the actual return address so the DWARF unwinder can walk
+                        // through all existing recursion frames on the real stack above).
+                        uintptr_t guard_top = reinterpret_cast<uintptr_t>(stack_bottom) + guard_page_size;
+                        uintptr_t new_rsp = (guard_top & ~static_cast<uintptr_t>(15)) - 8;
+
+                        // Read the return address that the faulting frame would use so the
+                        // stack-unwind chain is intact: [RBP + sizeof(ptr)] holds the
+                        // return address in x86-64 ABI (after push rbp / mov rbp, rsp).
+                        // Validate RBP points into the valid (non-guard) stack region
+                        // before dereferencing to avoid a second fault inside the handler.
+                        uintptr_t rbp = static_cast<uintptr_t>(uc->uc_mcontext.gregs[REG_RBP]);
+                        uintptr_t ra_addr = rbp + sizeof(uintptr_t);
+                        if (rbp < guard_top || ra_addr + sizeof(uintptr_t) > stack_top)
+                            goto pass_handler; // corrupt frame pointer — fall back
+
+                        uintptr_t ret_addr = *reinterpret_cast<uintptr_t*>(ra_addr);
+                        *reinterpret_cast<uintptr_t*>(new_rsp) = ret_addr;
+                        uc->uc_mcontext.gregs[REG_RSP] = static_cast<greg_t>(new_rsp);
+                        uc->uc_mcontext.gregs[REG_RIP] = reinterpret_cast<greg_t>(__stack_overflow_raise);
+                        handled = true;
+                    }
 #endif
                 }
             }
         }
 
+    pass_handler:
         if (!handled) {
             if (__old_sigsegv_action.sa_flags & SA_SIGINFO)
                 __old_sigsegv_action.sa_sigaction(sig, si, ctx);
@@ -200,7 +212,8 @@ namespace fast_task {
                 ss.ss_sp = alt_mem;
                 ss.ss_size = SIGSTKSZ;
                 ss.ss_flags = 0;
-                sigaltstack(&ss, nullptr);
+                if (sigaltstack(&ss, nullptr) != 0)
+                    munmap(alt_mem, SIGSTKSZ); // best-effort cleanup on failure
             }
             alt_stack_set = true;
         }
@@ -276,7 +289,12 @@ namespace fast_task {
     void unlimited_buffer(stack_context& sctx) {
         // Restore the guard page before returning the stack to the pool so the
         // next task using this stack gets proper overflow detection.
-        mprotect(static_cast<char*>(sctx.sp) - sctx.size, guard_page_size, PROT_NONE);
+        // If restoring protection fails, destroy the stack rather than recycling
+        // an unprotected one.
+        if (mprotect(static_cast<char*>(sctx.sp) - sctx.size, guard_page_size, PROT_NONE) != 0) {
+            destroy_stack(sctx);
+            return;
+        }
         if (!stack_allocations.enqueue(sctx))
             destroy_stack(sctx);
         else
@@ -285,7 +303,11 @@ namespace fast_task {
 
     void limited_buffer(stack_context& sctx) {
         // Restore the guard page before returning the stack to the pool.
-        mprotect(static_cast<char*>(sctx.sp) - sctx.size, guard_page_size, PROT_NONE);
+        // Destroy the stack if protection cannot be restored.
+        if (mprotect(static_cast<char*>(sctx.sp) - sctx.size, guard_page_size, PROT_NONE) != 0) {
+            destroy_stack(sctx);
+            return;
+        }
         if (++stack_allocations_buffer < light_stack::max_buffer_size) {
             if (!stack_allocations.enqueue(sctx)) {
                 destroy_stack(sctx);
