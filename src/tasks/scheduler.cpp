@@ -282,6 +282,8 @@ namespace fast_task {
             data.result_notify.notify_all();
         } catch (...) {
             loc.ex_ptr = std::current_exception();
+        }
+        if (loc.ex_ptr) {
             if (data.callbacks.on_exception) {
                 try {
                     data.callbacks.on_exception(data.callbacks.get_data(), loc.ex_ptr);
