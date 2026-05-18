@@ -175,6 +175,15 @@ else()
   target_compile_options(fast_task PRIVATE -Wall)
   target_compile_options(fast_task PRIVATE -Wextra)
   target_compile_options(fast_task PRIVATE --pedantic)
+
+  # Use real Valgrind headers when available; fall back to lightweight stubs otherwise.
+  find_path(VALGRIND_INCLUDE_DIR valgrind/valgrind.h)
+  if(VALGRIND_INCLUDE_DIR)
+    target_include_directories(fast_task PRIVATE ${VALGRIND_INCLUDE_DIR})
+  else()
+    target_include_directories(fast_task PRIVATE
+      ${CMAKE_SOURCE_DIR}/third_party/valgrind-stubs)
+  endif()
 endif()
 
 if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")

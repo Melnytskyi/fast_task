@@ -110,98 +110,110 @@ namespace fast_task {
     }
 }
 #elif PLATFORM_LINUX
+    #include <mutex>
     #include <signal.h>
     #include <sys/mman.h>
     #include <sys/stat.h>
     #include <unistd.h>
     #include <valgrind/memcheck.h>
     #include <valgrind/valgrind.h>
+    #if defined(__x86_64__)
+        #include <ucontext.h>
+    #endif
 
 namespace fast_task {
     static const size_t page_size = boost::context::stack_traits::page_size();
     static const size_t guard_page_size = boost::context::stack_traits::page_size();
 
-    //void stack_growth_handler(int sig, siginfo_t* si, void* ucontext);
-    //
-    //static thread_local struct old___ {
-    //    struct sigaction handler;
-    //    stack_t stack;
-    //    bool is_init = false;
-    //
-    //    void init() {
-    //        if (is_init)
-    //            return;
-    //        is_init = true;
-    //        stack_t ss;
-    //        ss.ss_sp = mmap(nullptr, SIGSTKSZ, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    //        ss.ss_size = SIGSTKSZ;
-    //        ss.ss_flags = 0;
-    //        if (sigaltstack(&ss, &stack) == -1) {
-    //            perror("sigaltstack");
-    //            exit(EXIT_FAILURE);
-    //        }
-    //        struct sigaction sa;
-    //        sigemptyset(&sa.sa_mask);
-    //        sa.sa_sigaction = stack_growth_handler;
-    //        sa.sa_flags = SA_SIGINFO | SA_ONSTACK;
-    //        if (sigaction(SIGSEGV, &sa, &handler) == -1) {
-    //            perror("sigaction");
-    //            exit(EXIT_FAILURE);
-    //        }
-    //    }
-    //
-    //    ~old___() {
-    //        if (sigaltstack(&stack, &stack) == -1)
-    //            perror("sigaltstack");
-    //        if (munmap(static_cast<char*>(stack.ss_sp), SIGSTKSZ) == -1)
-    //            perror("munmap");
-    //        if (sigaction(SIGSEGV, &handler, NULL) == -1)
-    //            perror("sigaction failed in library destructor");
-    //    }
-    //} old_data;
-    //
-    //void pass_handler(int sig, siginfo_t* si, void* ucontext) {
-    //    if (old_data.handler.sa_flags & SA_SIGINFO)
-    //        old_data.handler.sa_sigaction(sig, si, ucontext);
-    //    else if (old_data.handler.sa_handler == SIG_DFL) {
-    //        signal(sig, SIG_DFL);
-    //        raise(sig);
-    //    } else if (old_data.handler.sa_handler != SIG_IGN)
-    //        old_data.handler.sa_handler(sig);
-    //}
-    //
-    //void stack_growth_handler(int sig, siginfo_t* si, void* ucontext) {
-    //    if (!loc.curr_task) { //definitely not ours stack
-    //        pass_handler(sig, si, ucontext);
-    //        return;
-    //    } else if (!get_data(loc.curr_task).data) { //avoid alloc
-    //        pass_handler(sig, si, ucontext);
-    //        return;
-    //    }
-    //
-    //    void* fault_addr = si->si_addr;
-    //    void* stack_start = get_execution_data(loc.curr_task).stack_ptr;
-    //    void* stack_end = static_cast<char*>(stack_start) + get_execution_data(loc.curr_task).stack_size;
-    //
-    //    if (fault_addr >= stack_start && fault_addr < stack_end) {
-    //        void* page_start = (void*)((uintptr_t)fault_addr & ~(page_size - 1));
-    //        if (mprotect(page_start, page_size, PROT_READ | PROT_WRITE) == -1) {
-    //            if (is_debugger_attached()) {
-    //                pass_handler(sig, si, ucontext);
-    //                return;
-    //            }
-    //            psignal(sig, "mprotect failed in signal handler");
-    //            _exit(EXIT_FAILURE);
-    //        }
-    //        if (RUNNING_ON_VALGRIND)
-    //            VALGRIND_MAKE_MEM_DEFINED(page_start, page_size);
-    //        return;
-    //    } else
-    //        pass_handler(sig, si, ucontext);
-    //}
+    // Called when a stack overflow is detected: resumes (outside signal handler)
+    // on the task's now-accessible guard page and raises the stack_overflow exception.
+    // The C++ exception machinery then unwinds the task's call stack normally,
+    // running all destructors before the catch(...) in context_exec catches it.
+    [[noreturn]] __attribute__((noinline)) static void __stack_overflow_raise() {
+        throw stack_overflow();
+    }
+
+    static struct sigaction __old_sigsegv_action = {};
+
+    static void __sigsegv_handler(int sig, siginfo_t* si, void* ctx) {
+        bool handled = false;
+
+        // Only act when a task is currently executing on this thread and has a stack.
+        if (loc.curr_task) {
+            // Access execution_data directly to avoid any heap allocation inside a signal handler.
+            // Use auto* to avoid naming the private nested type task::execution_data.
+            auto* exdata = get_data(loc.curr_task).exdata;
+            if (exdata && exdata->stack_ptr) {
+                void* fault_addr = si->si_addr;
+                void* stack_bottom = exdata->stack_ptr;
+
+                // Guard page occupies [stack_bottom, stack_bottom + guard_page_size).
+                if (fault_addr >= stack_bottom &&
+                    fault_addr < static_cast<char*>(stack_bottom) + guard_page_size) {
+                    // Make the guard page accessible so the C++ unwinder has a little
+                    // room on the stack to execute landing pads and destructors.
+                    mprotect(stack_bottom, guard_page_size, PROT_READ | PROT_WRITE);
+
+#if defined(__x86_64__)
+                    ucontext_t* uc = static_cast<ucontext_t*>(ctx);
+
+                    // Position RSP at the high end of the (now accessible) guard page,
+                    // simulating a CALL instruction (RSP % 16 == 8, RA slot filled
+                    // with the actual return address so the DWARF unwinder can walk
+                    // through all existing recursion frames on the real stack above).
+                    uintptr_t guard_top = reinterpret_cast<uintptr_t>(stack_bottom) + guard_page_size;
+                    uintptr_t new_rsp = (guard_top & ~static_cast<uintptr_t>(15)) - 8;
+                    // Read the return address that the faulting frame would use so the
+                    // stack-unwind chain is intact: [RBP + sizeof(ptr)] holds the
+                    // return address in x86-64 ABI (after push rbp / mov rbp, rsp).
+                    greg_t rbp = uc->uc_mcontext.gregs[REG_RBP];
+                    uintptr_t ret_addr = *reinterpret_cast<uintptr_t*>(rbp + sizeof(uintptr_t));
+                    *reinterpret_cast<uintptr_t*>(new_rsp) = ret_addr;
+                    uc->uc_mcontext.gregs[REG_RSP] = static_cast<greg_t>(new_rsp);
+                    uc->uc_mcontext.gregs[REG_RIP] = reinterpret_cast<greg_t>(__stack_overflow_raise);
+                    handled = true;
+#endif
+                }
+            }
+        }
+
+        if (!handled) {
+            if (__old_sigsegv_action.sa_flags & SA_SIGINFO)
+                __old_sigsegv_action.sa_sigaction(sig, si, ctx);
+            else if (__old_sigsegv_action.sa_handler == SIG_DFL) {
+                signal(sig, SIG_DFL);
+                raise(sig);
+            } else if (__old_sigsegv_action.sa_handler != SIG_IGN)
+                __old_sigsegv_action.sa_handler(sig);
+        }
+    }
 
     void __install_signal_handler_mem() {
-        //old_data.init();
+        // Per-thread: allocate and register a dedicated alternate signal stack so the
+        // SIGSEGV handler can run even when the task's stack is exhausted.
+        static thread_local bool alt_stack_set = false;
+        if (!alt_stack_set) {
+            void* alt_mem = mmap(nullptr, SIGSTKSZ, PROT_READ | PROT_WRITE,
+                                 MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+            if (alt_mem != MAP_FAILED) {
+                stack_t ss;
+                ss.ss_sp = alt_mem;
+                ss.ss_size = SIGSTKSZ;
+                ss.ss_flags = 0;
+                sigaltstack(&ss, nullptr);
+            }
+            alt_stack_set = true;
+        }
+
+        // Process-wide: install the SIGSEGV handler exactly once.
+        static std::once_flag handler_flag;
+        std::call_once(handler_flag, []() {
+            struct sigaction sa;
+            sigemptyset(&sa.sa_mask);
+            sa.sa_sigaction = __sigsegv_handler;
+            sa.sa_flags = SA_SIGINFO | SA_ONSTACK;
+            sigaction(SIGSEGV, &sa, &__old_sigsegv_action);
+        });
     }
 
     //create proper guard page
@@ -262,6 +274,9 @@ namespace fast_task {
     }
 
     void unlimited_buffer(stack_context& sctx) {
+        // Restore the guard page before returning the stack to the pool so the
+        // next task using this stack gets proper overflow detection.
+        mprotect(static_cast<char*>(sctx.sp) - sctx.size, guard_page_size, PROT_NONE);
         if (!stack_allocations.enqueue(sctx))
             destroy_stack(sctx);
         else
@@ -269,6 +284,8 @@ namespace fast_task {
     }
 
     void limited_buffer(stack_context& sctx) {
+        // Restore the guard page before returning the stack to the pool.
+        mprotect(static_cast<char*>(sctx.sp) - sctx.size, guard_page_size, PROT_NONE);
         if (++stack_allocations_buffer < light_stack::max_buffer_size) {
             if (!stack_allocations.enqueue(sctx)) {
                 destroy_stack(sctx);

@@ -63,6 +63,12 @@ namespace fast_task {
         }
     };
 
+    struct FT_API stack_overflow final : public exception {
+        inline const char* what() const noexcept override {
+            return "Task stack overflow: the task exhausted its stack space.";
+        }
+    };
+
     //this exception should never be catched
     class FT_API task_cancellation {
         bool in_landing = false;
