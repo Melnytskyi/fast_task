@@ -8,6 +8,12 @@ option(FAST_TASK_ENABLE_ABORT_IF_NEVER_STARTED "Abort if task's destructor calle
 option(FAST_TASK_ENABLE_PREEMPTIVE_SCHEDULER "Enables time sliced preemption for tasks, the tasks should use interrupt_unsafe_region on regions where preemption should be disabled." OFF)
 option(FAST_TASK_INCLUDE_THREAD_INTERRUPT_CODE "Allows the code to stop the thread and execute custom function on top of its stack, doesn't have effect if FAST_TASK_ENABLE_PREEMPTIVE_SCHEDULER enabled" ON)
 
+set(FAST_TASK_GUARD_PAGE_COUNT 1 CACHE STRING
+  "Number of PROT_NONE (Linux) / PAGE_GUARD (Windows) pages placed at the bottom of each task stack. Set to 0 to disable guard pages entirely.")
+if(NOT FAST_TASK_GUARD_PAGE_COUNT MATCHES "^[0-9]+$")
+  message(FATAL_ERROR "FAST_TASK_GUARD_PAGE_COUNT must be a non-negative integer.")
+endif()
+
 
 set(FAST_TASK_EXCEPTION_POLICY "NONE" CACHE 
 STRING 
@@ -99,6 +105,8 @@ elseif(FAST_TASK_EXCEPTION_POLICY STREQUAL "PRESERVE")
   target_compile_definitions(fast_task PRIVATE FT_EXCEPTION_POLICY_PRESERVE)
 endif()
 
+target_compile_definitions(fast_task PRIVATE FT_GUARD_PAGE_COUNT=${FAST_TASK_GUARD_PAGE_COUNT})
+
 find_package(Boost COMPONENTS context lockfree)
 if(NOT Boost_FOUND)
   FetchContent_Declare(
@@ -175,6 +183,15 @@ else()
   target_compile_options(fast_task PRIVATE -Wall)
   target_compile_options(fast_task PRIVATE -Wextra)
   target_compile_options(fast_task PRIVATE --pedantic)
+
+  # Use real Valgrind headers when available; fall back to lightweight stubs otherwise.
+  find_path(VALGRIND_INCLUDE_DIR valgrind/valgrind.h)
+  if(VALGRIND_INCLUDE_DIR)
+    target_include_directories(fast_task PRIVATE ${VALGRIND_INCLUDE_DIR})
+  else()
+    target_include_directories(fast_task PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/third_party/valgrind-stubs)
+  endif()
 endif()
 
 if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")

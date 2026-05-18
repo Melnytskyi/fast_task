@@ -125,7 +125,7 @@ namespace fast_task::scheduler {
         }
     }
 
-    void close_bind_only_executor(uint16_t id) {
+    void close_bind_only_executor(uint16_t id, bool abort_tasks) {
         mutex_unify unify(glob.binded_workers_safety);
         fast_task::unique_lock guard(unify);
         decltype(glob.binded_workers[id].tasks) transfer_tasks;
@@ -149,6 +149,7 @@ namespace fast_task::scheduler {
             if (context.in_close)
                 return;
             context.in_close = true;
+            context.abort_tasks_on_close = abort_tasks;
 
             std::swap(transfer_tasks, context.tasks);
             for (uint16_t i = 0; i < context.executors; i++) {
@@ -171,8 +172,32 @@ namespace fast_task::scheduler {
             glob.binded_workers.erase(id);
         }
         std::shared_ptr<task> task;
-        while (transfer_tasks.try_dequeue(task))
-            transfer_task(std::move(task));
+        while (transfer_tasks.try_dequeue(task)) {
+            if (!abort_tasks) {
+                transfer_task(std::move(task));
+                continue;
+            }
+            if (!task)
+                continue;
+
+            bool should_decrement = false;
+            {
+                fast_task::lock_guard task_guard(get_data(task).no_race);
+                if (!get_data(task).completed) {
+                    get_data(task).completed = true;
+                    get_data(task).end_of_life = true;
+                    get_data(task).started = true;
+                    should_decrement = true;
+                }
+                get_data(task).result_notify.notify_all();
+            }
+
+            if (should_decrement) {
+                --glob.executing_tasks;
+                fast_task::shared_lock notify_guard(glob.task_thread_safety);
+                glob.no_tasks_execute_notifier.notify_all_guarded();
+            }
+        }
     }
 
     void create_executor(size_t count) {
