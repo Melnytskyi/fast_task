@@ -753,10 +753,22 @@ namespace fast_task {
                     while (context.tasks.size_approx())
                         while (context.tasks.try_dequeue(loc.curr_task)) {
                             if (context.abort_tasks_on_close) {
-                                fast_task::lock_guard task_guard(get_data(loc.curr_task).no_race);
-                                get_data(loc.curr_task).end_of_life = true;
-                                get_data(loc.curr_task).started = true;
-                                get_data(loc.curr_task).result_notify.notify_all();
+                                bool should_decrement = false;
+                                {
+                                    fast_task::lock_guard task_guard(get_data(loc.curr_task).no_race);
+                                    if (!get_data(loc.curr_task).completed) {
+                                        get_data(loc.curr_task).completed = true;
+                                        get_data(loc.curr_task).end_of_life = true;
+                                        get_data(loc.curr_task).started = true;
+                                        should_decrement = true;
+                                    }
+                                    get_data(loc.curr_task).result_notify.notify_all();
+                                }
+                                if (should_decrement) {
+                                    --glob.executing_tasks;
+                                    fast_task::shared_lock notify_guard(glob.task_thread_safety);
+                                    glob.no_tasks_execute_notifier.notify_all_guarded();
+                                }
                             } else {
                                 get_data(loc.curr_task).bind_to_worker_id = (uint16_t)-1;
                                 glob.tasks.enqueue(std::move(loc.curr_task));

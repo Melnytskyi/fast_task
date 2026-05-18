@@ -10,6 +10,9 @@ option(FAST_TASK_INCLUDE_THREAD_INTERRUPT_CODE "Allows the code to stop the thre
 
 set(FAST_TASK_GUARD_PAGE_COUNT 1 CACHE STRING
   "Number of PROT_NONE (Linux) / PAGE_GUARD (Windows) pages placed at the bottom of each task stack. Set to 0 to disable guard pages entirely.")
+if(NOT FAST_TASK_GUARD_PAGE_COUNT MATCHES "^[0-9]+$")
+  message(FATAL_ERROR "FAST_TASK_GUARD_PAGE_COUNT must be a non-negative integer.")
+endif()
 
 
 set(FAST_TASK_EXCEPTION_POLICY "NONE" CACHE 
@@ -187,7 +190,7 @@ else()
     target_include_directories(fast_task PRIVATE ${VALGRIND_INCLUDE_DIR})
   else()
     target_include_directories(fast_task PRIVATE
-      ${CMAKE_SOURCE_DIR}/third_party/valgrind-stubs)
+      ${CMAKE_CURRENT_SOURCE_DIR}/third_party/valgrind-stubs)
   endif()
 endif()
 

@@ -6,6 +6,8 @@
 
 #include <helpers.hpp>
 #include <atomic>
+#include <chrono>
+#include <thread>
 
 TEST(BindExecutor, CreateAndClose) {
     fast_task::scheduler::create_executor(2);
@@ -66,5 +68,42 @@ TEST(BindExecutor, SetWorkerIdOnTask) {
     EXPECT_TRUE(ran.load());
 
     fast_task::scheduler::close_bind_only_executor(id);
+    fast_task::scheduler::shut_down();
+}
+
+TEST(BindExecutor, CloseAbortTasksAbortsQueuedAndAllowsShutdown) {
+    fast_task::scheduler::create_executor(2);
+    uint16_t id = fast_task::scheduler::create_bind_only_executor(1, true);
+
+    std::atomic<bool> blocker_started{false};
+    std::atomic<bool> blocker_release{false};
+    std::atomic<bool> queued_ran{false};
+
+    auto blocker = std::make_shared<fast_task::task>([&] {
+        blocker_started.store(true, std::memory_order_release);
+        while (!blocker_release.load(std::memory_order_acquire))
+            std::this_thread::yield();
+    });
+    blocker->set_worker_id(id);
+    fast_task::scheduler::start(blocker);
+
+    while (!blocker_started.load(std::memory_order_acquire))
+        std::this_thread::yield();
+
+    auto queued = std::make_shared<fast_task::task>([&] { queued_ran.store(true, std::memory_order_release); });
+    queued->set_worker_id(id);
+    fast_task::scheduler::start(queued);
+
+    fast_task::thread closer([&] { fast_task::scheduler::close_bind_only_executor(id, true); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    blocker_release.store(true, std::memory_order_release);
+    closer.join();
+
+    queued->await_task();
+    blocker->await_task();
+
+    EXPECT_FALSE(queued_ran.load(std::memory_order_acquire));
+
+    fast_task::scheduler::await_no_tasks();
     fast_task::scheduler::shut_down();
 }

@@ -81,7 +81,9 @@ namespace fast_task {
             if (!flush_used_stacks)
                 return result;
             else {
-                memset(static_cast<char*>(result.sp) - result.size, 0xCC, result.size);
+                auto* stack_base = static_cast<char*>(result.sp) - result.size;
+                const size_t clear_offset = std::min(guard_page_size, result.size);
+                memset(stack_base + clear_offset, 0xCC, result.size - clear_offset);
                 return result;
             }
         } else
@@ -189,7 +191,9 @@ namespace fast_task {
             if (!flush_used_stacks)
                 return result;
             else {
-                memset(static_cast<char*>(result.sp) - result.size, 0xCC, result.size);
+                auto* stack_base = static_cast<char*>(result.sp) - result.size;
+                const size_t clear_offset = std::min(guard_page_size, result.size);
+                memset(stack_base + clear_offset, 0xCC, result.size - clear_offset);
                 return result;
             }
         } else
