@@ -6,3 +6,4 @@ vcpkg/*
 .VSCodeCounter
 .PVS-Studio
 out/*
+build2/

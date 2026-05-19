@@ -1009,6 +1009,31 @@ namespace fast_task::networking {
                 return {};
             return to_address(addr);
         }
+
+        future_ptr<std::vector<char>> make_read(uint32_t len) override {
+            return future<std::vector<char>>::start([this, len]() -> std::vector<char> {
+                fast_task::lock_guard lg(mutex);
+                if (!checkup())
+                    return {};
+                std::vector<char> buf(len);
+                buf.resize(len);
+                int32_t readed = 0;
+                handle->read(buf.data(), len, readed);
+                if (readed == 0)
+                    return {};
+                buf.resize(readed);
+                return buf;
+            });
+        }
+
+        future_ptr<void> make_write(const char* data, uint32_t len) override {
+            return future<void>::start([this, data, len]() {
+                fast_task::lock_guard lg(mutex);
+                if (!checkup())
+                    return;
+                handle->send(data, (int)len);
+            });
+        }
     };
 
     #pragma endregion
@@ -2325,6 +2350,28 @@ namespace fast_task::networking {
                 return {};
             return to_address(addr);
         }
+
+        future_ptr<std::vector<char>> make_read(uint32_t len) override {
+            return future<std::vector<char>>::start([this, len]() -> std::vector<char> {
+                read_lock lock(mutex);
+                if (!checkup())
+                    return {};
+                std::vector<char> buf(len);
+                int readed = 0;
+                handle->read(buf.data(), (int)len, readed);
+                buf.resize((size_t)readed);
+                return buf;
+            });
+        }
+
+        future_ptr<void> make_write(const char* data, uint32_t len) override {
+            return future<void>::start([this, data, len]() {
+                read_lock lock(mutex);
+                if (!checkup())
+                    return;
+                handle->send(data, (int)len);
+            });
+        }
     };
 
     #pragma endregion
@@ -2471,6 +2518,30 @@ namespace fast_task::networking {
             if (getpeername(handle->socket, (sockaddr*)&addr, &socklen) == -1)
                 return {};
             return to_address(addr);
+        }
+
+        future_ptr<std::vector<char>> make_read(uint32_t len) override {
+            return future<std::vector<char>>::start([this, len]() -> std::vector<char> {
+                fast_task::lock_guard lg(mutex);
+                if (!checkup())
+                    return {};
+                std::vector<char> buf(len);
+                int32_t readed = 0;
+                handle->read(buf.data(), len, readed);
+                if (readed == 0)
+                    return {};
+                buf.resize(readed);
+                return buf;
+            });
+        }
+
+        future_ptr<void> make_write(const char* data, uint32_t len) override {
+            return future<void>::start([this, data, len]() {
+                fast_task::lock_guard lg(mutex);
+                if (!checkup())
+                    return;
+                handle->send(data, (int)len);
+            });
         }
     };
 
@@ -3259,6 +3330,12 @@ namespace fast_task::networking {
 
     tcp_network_stream* tcp_network_server::accept_stream(bool ignore_acceptors) {
         return handle->accept_stream(ignore_acceptors);
+    }
+
+    future_ptr<tcp_network_blocking*> tcp_network_server::make_accept(bool ignore_acceptors) {
+        return future<tcp_network_blocking*>::start([this, ignore_acceptors]() -> tcp_network_blocking* {
+            return handle->accept_blocking(ignore_acceptors);
+        });
     }
 
     void tcp_network_server::_await() {
