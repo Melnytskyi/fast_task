@@ -303,13 +303,13 @@ namespace fast_task::files {
                     return true;
                 }
             }
-            case ((NTSTATUS)0xC037002BL)://STATUS_VID_INSUFFICIENT_RESOURCES_RESERVE:
+            case ((NTSTATUS)0xC037002BL): //STATUS_VID_INSUFFICIENT_RESOURCES_RESERVE:
                 exception(io_errors::no_enough_memory);
                 return true;
-            case ((NTSTATUS)0x80000005L)://STATUS_BUFFER_OVERFLOW:
+            case ((NTSTATUS)0x80000005L): //STATUS_BUFFER_OVERFLOW:
                 exception(io_errors::invalid_user_buffer);
                 return true;
-            case ((NTSTATUS)0xC0000017L)://STATUS_NO_MEMORY: //yea strange name
+            case ((NTSTATUS)0xC0000017L): //STATUS_NO_MEMORY: //yea strange name
                 exception(io_errors::no_enough_quota);
                 return true;
             default:
@@ -365,7 +365,7 @@ namespace fast_task::files {
     public:
         std::optional<task_mutex> mimic_non_async;
 
-        static std::variant<file_manager*, std::string> open(const std::filesystem::path& path, open_mode open, on_open_action action, share_mode share, _sync_flags flags, files::pointer_mode pointer_mode){
+        static std::variant<file_manager*, std::string> open(const std::filesystem::path& path, open_mode open, on_open_action action, share_mode share, file_flags flags, files::pointer_mode pointer_mode) {
             std::unique_ptr<file_manager> ptr;
             ptr.reset(new file_manager{});
             ptr->pointer_mode = pointer_mode;
@@ -465,7 +465,7 @@ namespace fast_task::files {
                 CloseHandle(_handle);
         }
 
-        future_ptr<std::vector<uint8_t>> read(uint32_t size, bool require_all = true) {
+        future_ptr<std::vector<uint8_t>> fut_read(uint32_t size, bool require_all) {
             File_* file = File_::command_read(this, _handle, size, read_pointer, require_all);
             switch (pointer_mode) {
             case pointer_mode::separated:
@@ -494,7 +494,7 @@ namespace fast_task::files {
             });
         }
 
-        future_ptr<std::vector<uint8_t>> read_at(uint64_t offset, uint32_t size, bool require_all = true) {
+        future_ptr<std::vector<uint8_t>> fut_read_at(uint64_t offset, uint32_t size, bool require_all) {
             File_* file = File_::command_read(this, _handle, size, offset, require_all);
             auto [data, task_] = create_dummy_handle(file);
             try {
@@ -515,7 +515,41 @@ namespace fast_task::files {
             });
         }
 
-        uint32_t read(uint8_t* data_, uint32_t size, bool require_all = true) {
+        std::shared_ptr<task> fmake_read(uint32_t size, bool require_all) {
+            File_* file = File_::command_read(this, _handle, size, read_pointer, require_all);
+            switch (pointer_mode) {
+            case pointer_mode::separated:
+                read_pointer += size;
+                break;
+            case pointer_mode::combined:
+                write_pointer = read_pointer = read_pointer + size;
+                break;
+            }
+            auto [data, task_] = create_dummy_handle(file);
+            try {
+                file->awaiter = task_;
+                file->ststd();
+            } catch (...) {
+                file->awaiter = nullptr;
+                throw;
+            }
+            return task_;
+        }
+
+        std::shared_ptr<task> fmake_read_at(uint64_t offset, uint32_t size, bool require_all) {
+            File_* file = File_::command_read(this, _handle, size, offset, require_all);
+            auto [data, task_] = create_dummy_handle(file);
+            try {
+                file->awaiter = task_;
+                file->ststd();
+            } catch (...) {
+                file->awaiter = nullptr;
+                throw;
+            }
+            return task_;
+        }
+
+        uint32_t read(uint8_t* data_, uint32_t size, bool require_all) {
             File_* file = File_::command_read_inline(this, _handle, (char*)data_, size, read_pointer, require_all);
             switch (pointer_mode) {
             case pointer_mode::separated:
@@ -543,7 +577,7 @@ namespace fast_task::files {
                 return data->completed_bytes;
         }
 
-        uint32_t read_at(uint64_t offset, uint8_t* data_, uint32_t size, bool require_all = true) {
+        uint32_t read_at(uint64_t offset, uint8_t* data_, uint32_t size, bool require_all) {
             File_* file = File_::command_read_inline(this, _handle, (char*)data_, size, offset, require_all);
             auto [data, task_] = create_dummy_handle(file);
             try {
@@ -563,9 +597,9 @@ namespace fast_task::files {
                 return data->completed_bytes;
         }
 
-        future_ptr<void> write(const uint8_t* data_, uint32_t size) {
+        future_ptr<void> fut_write(const uint8_t* data_, uint32_t size) {
             if (make_append)
-                return append(data_, size);
+                return fut_append(data_, size);
 
             File_* file = File_::command_write(this, _handle, (char*)data_, size, write_pointer);
             switch (pointer_mode) {
@@ -594,9 +628,9 @@ namespace fast_task::files {
             });
         }
 
-        future_ptr<void> write_at(uint64_t offset, const uint8_t* data_, uint32_t size) {
+        future_ptr<void> fut_write_at(uint64_t offset, const uint8_t* data_, uint32_t size) {
             if (make_append)
-                return append(data_, size);
+                return fut_append(data_, size);
 
             File_* file = File_::command_write(this, _handle, (char*)data_, size, offset);
             auto [data, task_] = create_dummy_handle(file);
@@ -615,6 +649,46 @@ namespace fast_task::files {
                     throw std::runtime_error("Unreachable");
                 }
             });
+        }
+
+        std::shared_ptr<task> fmake_write(const uint8_t* data_, uint32_t size) {
+            if (make_append)
+                return fmake_append(data_, size);
+
+            File_* file = File_::command_write(this, _handle, (char*)data_, size, write_pointer);
+            switch (pointer_mode) {
+            case pointer_mode::separated:
+                write_pointer += size;
+                break;
+            case pointer_mode::combined:
+                write_pointer = read_pointer = write_pointer + size;
+                break;
+            }
+            auto [data, task_] = create_dummy_handle(file);
+            try {
+                file->awaiter = task_;
+                file->ststd();
+            } catch (...) {
+                file->awaiter = nullptr;
+                throw;
+            }
+            return task_;
+        }
+
+        std::shared_ptr<task> fmake_write_at(uint64_t offset, const uint8_t* data_, uint32_t size) {
+            if (make_append)
+                return fmake_append(data_, size);
+
+            File_* file = File_::command_write(this, _handle, (char*)data_, size, offset);
+            auto [data, task_] = create_dummy_handle(file);
+            try {
+                file->awaiter = task_;
+                file->ststd();
+            } catch (...) {
+                file->awaiter = nullptr;
+                throw;
+            }
+            return task_;
         }
 
         void write_inline(const uint8_t* data_, uint32_t size) {
@@ -663,7 +737,7 @@ namespace fast_task::files {
             }
         }
 
-        future_ptr<void> append(const uint8_t* data_, uint32_t size) {
+        future_ptr<void> fut_append(const uint8_t* data_, uint32_t size) {
             File_* file = File_::command_write(this, _handle, (char*)data_, size, (uint64_t)-1);
             auto [data, task_] = create_dummy_handle(file);
             try {
@@ -681,6 +755,19 @@ namespace fast_task::files {
                     throw std::runtime_error("Unreachable");
                 }
             });
+        }
+
+        std::shared_ptr<task> fmake_append(const uint8_t* data_, uint32_t size) {
+            File_* file = File_::command_write(this, _handle, (char*)data_, size, (uint64_t)-1);
+            auto [data, task_] = create_dummy_handle(file);
+            try {
+                file->awaiter = task_;
+                file->ststd();
+            } catch (...) {
+                file->awaiter = nullptr;
+                throw;
+            }
+            return task_;
         }
 
         void append_inline(const uint8_t* data_, uint32_t size) {
@@ -1088,7 +1175,7 @@ namespace fast_task::files {
     public:
         std::optional<task_mutex> mimic_non_async;
 
-        static std::variant<file_manager*, std::string> open(const std::filesystem::path& path, open_mode open, on_open_action action, [[maybe_unused]] share_mode share, _sync_flags flags, pointer_mode _pointer_mode) {
+        static std::variant<file_manager*, std::string> open(const std::filesystem::path& path, open_mode open, on_open_action action, [[maybe_unused]] share_mode share, file_flags flags, pointer_mode _pointer_mode) {
             std::unique_ptr<file_manager> ptr;
             ptr.reset(new file_manager{});
             ptr->_pointer_mode = _pointer_mode;
@@ -1189,7 +1276,7 @@ namespace fast_task::files {
                 close(_handle);
         }
 
-        future_ptr<std::vector<uint8_t>> read(uint32_t size, bool require_all = true) {
+        future_ptr<std::vector<uint8_t>> fut_read(uint32_t size, bool require_all) {
             File_* file = File_::command_read(this, _handle, size, read_pointer, require_all);
             switch (_pointer_mode) {
             case pointer_mode::separated:
@@ -1218,7 +1305,7 @@ namespace fast_task::files {
             });
         }
 
-        future_ptr<std::vector<uint8_t>> read_at(uint64_t offset, uint32_t size, bool require_all = true) {
+        future_ptr<std::vector<uint8_t>> fut_read_at(uint64_t offset, uint32_t size, bool require_all) {
             File_* file = File_::command_read(this, _handle, size, offset, require_all);
             auto [data, task_] = create_dummy_handle(file);
             try {
@@ -1239,7 +1326,41 @@ namespace fast_task::files {
             });
         }
 
-        uint32_t read(uint8_t* data_, uint32_t size, bool require_all = true) {
+        std::shared_ptr<task> fmake_read(uint32_t size, bool require_all) {
+            File_* file = File_::command_read(this, _handle, size, read_pointer, require_all);
+            switch (_pointer_mode) {
+            case pointer_mode::separated:
+                read_pointer += size;
+                break;
+            case pointer_mode::combined:
+                write_pointer = read_pointer = read_pointer + size;
+                break;
+            }
+            auto [data, task_] = create_dummy_handle(file);
+            try {
+                file->awaiter = task_;
+                file->ststd();
+            } catch (...) {
+                file->awaiter = nullptr;
+                throw;
+            }
+            return task_;
+        }
+
+        std::shared_ptr<task> fmake_read_at(uint64_t offset, uint32_t size, bool require_all) {
+            File_* file = File_::command_read(this, _handle, size, offset, require_all);
+            auto [data, task_] = create_dummy_handle(file);
+            try {
+                file->awaiter = task_;
+                file->ststd();
+            } catch (...) {
+                file->awaiter = nullptr;
+                throw;
+            }
+            return task_;
+        }
+
+        uint32_t read(uint8_t* data_, uint32_t size, bool require_all) {
             File_* file = File_::command_read_inline(this, _handle, (char*)data_, size, read_pointer, require_all);
             switch (_pointer_mode) {
             case pointer_mode::separated:
@@ -1266,7 +1387,7 @@ namespace fast_task::files {
                 return data->completed_bytes;
         }
 
-        uint32_t read_at(uint64_t offset, uint8_t* data_, uint32_t size, bool require_all = true) {
+        uint32_t read_at(uint64_t offset, uint8_t* data_, uint32_t size, bool require_all) {
             File_* file = File_::command_read_inline(this, _handle, (char*)data_, size, offset, require_all);
             auto [data, task_] = create_dummy_handle(file);
             try {
@@ -1285,7 +1406,7 @@ namespace fast_task::files {
                 return data->completed_bytes;
         }
 
-        future_ptr<void> write(const uint8_t* data_, uint32_t size) {
+        future_ptr<void> fut_write(const uint8_t* data_, uint32_t size) {
             File_* file = File_::command_write(this, _handle, (char*)data_, size, write_pointer);
             switch (_pointer_mode) {
             case pointer_mode::separated:
@@ -1313,7 +1434,7 @@ namespace fast_task::files {
             });
         }
 
-        future_ptr<void> write_at(uint64_t offset, const uint8_t* data_, uint32_t size) {
+        future_ptr<void> fut_write_at(uint64_t offset, const uint8_t* data_, uint32_t size) {
             File_* file = File_::command_write(this, _handle, (char*)data_, size, offset);
             auto [data, task_] = create_dummy_handle(file);
             try {
@@ -1331,6 +1452,40 @@ namespace fast_task::files {
                     throw std::runtime_error("Unreachable");
                 }
             });
+        }
+
+        std::shared_ptr<task> fmake_write(const uint8_t* data_, uint32_t size) {
+            File_* file = File_::command_write(this, _handle, (char*)data_, size, write_pointer);
+            switch (_pointer_mode) {
+            case pointer_mode::separated:
+                write_pointer += size;
+                break;
+            case pointer_mode::combined:
+                write_pointer = read_pointer = write_pointer + size;
+                break;
+            }
+            auto [data, task_] = create_dummy_handle(file);
+            try {
+                file->awaiter = task_;
+                file->ststd();
+            } catch (...) {
+                file->awaiter = nullptr;
+                throw;
+            }
+            return task_;
+        }
+
+        std::shared_ptr<task> fmake_write_at(uint64_t offset, const uint8_t* data_, uint32_t size) {
+            File_* file = File_::command_write(this, _handle, (char*)data_, size, offset);
+            auto [data, task_] = create_dummy_handle(file);
+            try {
+                file->awaiter = task_;
+                file->ststd();
+            } catch (...) {
+                file->awaiter = nullptr;
+                throw;
+            }
+            return task_;
         }
 
         void write_inline(const uint8_t* data_, uint32_t size) {
@@ -1377,7 +1532,7 @@ namespace fast_task::files {
             }
         }
 
-        future_ptr<void> append(const uint8_t* data_, uint32_t size) {
+        future_ptr<void> fut_append(const uint8_t* data_, uint32_t size) {
             File_* file = File_::command_write(this, _handle, (char*)data_, size, (uint64_t)-1);
             auto [data, task_] = create_dummy_handle(file);
             try {
@@ -1395,6 +1550,19 @@ namespace fast_task::files {
                     throw std::runtime_error("Unreachable");
                 }
             });
+        }
+
+        std::shared_ptr<task> fmake_append(const uint8_t* data_, uint32_t size) {
+            File_* file = File_::command_write(this, _handle, (char*)data_, size, (uint64_t)-1);
+            auto [data, task_] = create_dummy_handle(file);
+            try {
+                file->awaiter = task_;
+                file->ststd();
+            } catch (...) {
+                file->awaiter = nullptr;
+                throw;
+            }
+            return task_;
         }
 
         void append_inline(const uint8_t* data_, uint32_t size) {
@@ -1513,7 +1681,7 @@ namespace fast_task::files {
         }
 
         bool flush() {
-            return (bool)fsync(_handle) == 0; //replace with post_fsync
+            return (bool)fsync(_handle) == 0; //TODO replace with post_fsync
         }
 
         uint64_t file_size() {
@@ -1559,33 +1727,110 @@ namespace fast_task::files {
 
 namespace fast_task::files {
 
-    file_handle file_handle::open(const std::filesystem::path& path, open_mode open, on_open_action action, _async_flags flags, share_mode share, pointer_mode pointer_mode) {
-        file_handle res;
-        res.handle = nullptr;
-        _sync_flags sync_flags;
-        sync_flags.delete_on_close = flags.delete_on_close;
-        sync_flags.posix_semantics = flags.posix_semantics;
-        sync_flags.random_access = flags.random_access;
-        sync_flags.sequential_scan = flags.sequential_scan;
-        sync_flags.at_end = flags.at_end;
-        std::visit(
-            [&res]<class T>(T&& value) {
-                if constexpr(std::is_same_v<file_manager*, T>)
-                    res.handle = value;
-            },
-            file_manager::open(path, open, action, share, sync_flags, pointer_mode)
-        );
+    bool io_operation<std::vector<uint8_t>>::is_done() const noexcept {
+        return slot_->is_ended();
+    }
+
+    std::optional<io_errors> io_operation<std::vector<uint8_t>>::get_error() {
+        if (!slot_->is_ended())
+            return std::nullopt;
+        std::optional<io_errors> res;
+        slot_->access_dummy([&](void* e_data) {
+            auto data = (completion_struct*)e_data;
+            if (data->error != io_errors::no_error)
+                res = data->error;
+        });
         return res;
     }
 
-    file_handle file_handle::open(const std::filesystem::path& path, open_mode open, on_open_action action, _sync_flags flags, share_mode share, pointer_mode pointer_mode) {
+    std::optional<std::vector<uint8_t>> io_operation<std::vector<uint8_t>>::try_get() {
+        if (!slot_->is_ended())
+            return std::nullopt;
+        std::optional<std::vector<uint8_t>> res;
+        slot_->access_dummy([&](void* e_data) {
+            auto data = (completion_struct*)e_data;
+
+            if (data->error == io_errors::no_error || data->error == io_errors::eof)
+                res = {data->data, data->data + data->completed_bytes};
+        });
+        return res;
+    }
+
+    std::vector<uint8_t> io_operation<std::vector<uint8_t>>::get() {
+        if (!slot_->is_ended())
+            throw std::runtime_error("The operations is not complete");
+        std::optional<std::vector<uint8_t>> res;
+        slot_->access_dummy([&](void* e_data) {
+            auto data = (completion_struct*)e_data;
+
+            if (data->error == io_errors::no_error || data->error == io_errors::eof)
+                res = {data->data, data->data + data->completed_bytes};
+            else
+                io_error_to_exception(data->error);
+        });
+        return res.value_or(std::vector<uint8_t>{});
+    }
+
+    bool io_operation<std::vector<uint8_t>>::enter_wait(const std::shared_ptr<task>& t) {
+        return slot_->enter_wait(t);
+    }
+
+    bool io_operation<std::vector<uint8_t>>::enter_wait_until(const std::shared_ptr<task>& t, std::chrono::high_resolution_clock::time_point tp) {
+        return slot_->enter_wait_until(t, tp);
+    }
+
+    bool io_operation<void>::is_done() const noexcept {
+        return slot_->is_ended();
+    }
+
+    std::optional<io_errors> io_operation<void>::get_error() {
+        if (!slot_->is_ended())
+            return std::nullopt;
+        std::optional<io_errors> res;
+        slot_->access_dummy([&](void* e_data) {
+            auto data = (completion_struct*)e_data;
+            if (data->error != io_errors::no_error)
+                res = data->error;
+        });
+        return res;
+    }
+
+    bool io_operation<void>::try_get() {
+        return slot_->is_ended();
+    }
+
+    void io_operation<void>::get() {
+        if (!slot_->is_ended())
+            throw std::runtime_error("The operations is not complete");
+        slot_->access_dummy([&](void* e_data) {
+            auto data = (completion_struct*)e_data;
+
+            if (data->error != io_errors::no_error && data->error != io_errors::eof)
+                io_error_to_exception(data->error);
+        });
+    }
+
+    bool io_operation<void>::enter_wait(const std::shared_ptr<task>& t) {
+        return slot_->enter_wait(t);
+    }
+
+    bool io_operation<void>::enter_wait_until(const std::shared_ptr<task>& t, std::chrono::high_resolution_clock::time_point tp) {
+        return slot_->enter_wait_until(t, tp);
+    }
+
+    file_handle file_handle::open(const std::filesystem::path& path, open_mode open, on_open_action action, file_flags flags, share_mode share, pointer_mode pointer_mode) {
         file_handle res;
         res.handle = nullptr;
+        if (flags.use_lock) {
+            flags.no_buffering = true;
+            flags.write_through = true;
+        }
         std::visit(
-            [&res]<class T>(T&& value) {
-                if constexpr (std::is_same_v<file_manager*, T>){
+            [&res, &flags]<class T>(T&& value) {
+                if constexpr (std::is_same_v<file_manager*, T>) {
                     res.handle = value;
-                    res.handle->mimic_non_async.emplace();
+                    if (flags.use_lock)
+                        res.handle->mimic_non_async.emplace();
                 }
             },
             file_manager::open(path, open, action, share, flags, pointer_mode)
@@ -1593,35 +1838,19 @@ namespace fast_task::files {
         return res;
     }
 
-    file_handle file_handle::open_throws(const std::filesystem::path& path, open_mode open, on_open_action action, _async_flags flags, share_mode share, pointer_mode pointer_mode) {
+    file_handle file_handle::open_throws(const std::filesystem::path& path, open_mode open, on_open_action action, file_flags flags, share_mode share, pointer_mode pointer_mode) {
         file_handle res;
         res.handle = nullptr;
-        _sync_flags sync_flags;
-        sync_flags.delete_on_close = flags.delete_on_close;
-        sync_flags.posix_semantics = flags.posix_semantics;
-        sync_flags.random_access = flags.random_access;
-        sync_flags.sequential_scan = flags.sequential_scan;
-        sync_flags.at_end = flags.at_end;
+        if (flags.use_lock) {
+            flags.no_buffering = true;
+            flags.write_through = true;
+        }
         std::visit(
-            [&res]<class T>(T&& value) {
-                if constexpr (std::is_same_v<file_manager*, T>)
-                    res.handle = value;
-                else
-                    throw std::runtime_error(std::move(value));
-            },
-            file_manager::open(path, open, action, share, sync_flags, pointer_mode)
-        );
-        return res;
-    }
-
-    file_handle file_handle::open_throws(const std::filesystem::path& path, open_mode open, on_open_action action, _sync_flags flags, share_mode share, pointer_mode pointer_mode) {
-        file_handle res;
-        res.handle = nullptr;
-        std::visit(
-            [&res]<class T>(T&& value) {
+            [&res, &flags]<class T>(T&& value) {
                 if constexpr (std::is_same_v<file_manager*, T>) {
                     res.handle = value;
-                    res.handle->mimic_non_async.emplace();
+                    if (flags.use_lock)
+                        res.handle->mimic_non_async.emplace();
                 } else
                     throw std::runtime_error(std::move(value));
             },
@@ -1664,38 +1893,14 @@ namespace fast_task::files {
         handle = nullptr;
     }
 
-    future_ptr<std::vector<uint8_t>> file_handle::read(uint32_t size) {
-        if (!handle)
-            throw file_closed();
-        if (handle->mimic_non_async.has_value()) {
-            fast_task::lock_guard<task_mutex> lock(*handle->mimic_non_async);
-            auto res = handle->read(size, false);
-            res->wait();
-            return res;
-        } else
-            return handle->read(size, false);
-    }
-
-    future_ptr<std::vector<uint8_t>> file_handle::read_at(uint64_t offset, uint32_t size) {
-        if (!handle)
-            throw file_closed();
-        if (handle->mimic_non_async.has_value()) {
-            fast_task::lock_guard<task_mutex> lock(*handle->mimic_non_async);
-            auto res = handle->read_at(offset, size, false);
-            res->wait();
-            return res;
-        } else
-            return handle->read_at(offset, size, false);
-    }
-
     uint32_t file_handle::read(uint8_t* data, uint32_t size) {
         if (!handle)
             throw file_closed();
         if (handle->mimic_non_async.has_value()) {
             fast_task::lock_guard<task_mutex> lock(*handle->mimic_non_async);
-            return handle->read(data, size);
+            return handle->read(data, size, false);
         } else
-            return handle->read(data, size);
+            return handle->read(data, size, false);
     }
 
     uint32_t file_handle::read_at(uint64_t offset, uint8_t* data, uint32_t size) {
@@ -1703,33 +1908,9 @@ namespace fast_task::files {
             throw file_closed();
         if (handle->mimic_non_async.has_value()) {
             fast_task::lock_guard<task_mutex> lock(*handle->mimic_non_async);
-            return handle->read_at(offset, data, size);
+            return handle->read_at(offset, data, size, false);
         } else
-            return handle->read_at(offset, data, size);
-    }
-
-    future_ptr<std::vector<uint8_t>> file_handle::read_fixed(uint32_t size) {
-        if (!handle)
-            throw file_closed();
-        if (handle->mimic_non_async.has_value()) {
-            fast_task::lock_guard<task_mutex> lock(*handle->mimic_non_async);
-            auto res = handle->read(size, true);
-            res->wait();
-            return res;
-        } else
-            return handle->read(size, true);
-    }
-
-    future_ptr<std::vector<uint8_t>> file_handle::read_fixed_at(uint64_t offset, uint32_t size) {
-        if (!handle)
-            throw file_closed();
-        if (handle->mimic_non_async.has_value()) {
-            fast_task::lock_guard<task_mutex> lock(*handle->mimic_non_async);
-            auto res = handle->read_at(offset, size, true);
-            res->wait();
-            return res;
-        } else
-            return handle->read_at(offset, size, true);
+            return handle->read_at(offset, data, size, false);
     }
 
     uint32_t file_handle::read_fixed(uint8_t* data, uint32_t size) {
@@ -1752,31 +1933,7 @@ namespace fast_task::files {
             return handle->read_at(offset, data, size, true);
     }
 
-    future_ptr<void> file_handle::write(const uint8_t* data, uint32_t size) {
-        if (!handle)
-            throw file_closed();
-        if (handle->mimic_non_async.has_value()) {
-            fast_task::lock_guard<task_mutex> lock(*handle->mimic_non_async);
-            auto res = handle->write(data, size);
-            res->wait();
-            return res;
-        } else
-            return handle->write(data, size);
-    }
-
-    future_ptr<void> file_handle::write_at(uint64_t offset, const uint8_t* data, uint32_t size) {
-        if (!handle)
-            throw file_closed();
-        if (handle->mimic_non_async.has_value()) {
-            fast_task::lock_guard<task_mutex> lock(*handle->mimic_non_async);
-            auto res = handle->write_at(offset, data, size);
-            res->wait();
-            return res;
-        } else
-            return handle->write_at(offset, data, size);
-    }
-
-    void file_handle::write_inline(const uint8_t* data, uint32_t size) {
+    void file_handle::write(const uint8_t* data, uint32_t size) {
         if (!handle)
             throw file_closed();
         if (handle->mimic_non_async.has_value()) {
@@ -1786,7 +1943,7 @@ namespace fast_task::files {
             handle->write_inline(data, size);
     }
 
-    void file_handle::write_inline_at(uint64_t offset, const uint8_t* data, uint32_t size) {
+    void file_handle::write_at(uint64_t offset, const uint8_t* data, uint32_t size) {
         if (!handle)
             throw file_closed();
         if (handle->mimic_non_async.has_value()) {
@@ -1796,19 +1953,7 @@ namespace fast_task::files {
             handle->write_inline_at(offset, data, size);
     }
 
-    future_ptr<void> file_handle::append(const uint8_t* data, uint32_t size) {
-        if (!handle)
-            throw file_closed();
-        if (handle->mimic_non_async.has_value()) {
-            fast_task::lock_guard<task_mutex> lock(*handle->mimic_non_async);
-            auto res = handle->append(data, size);
-            res->wait();
-            return res;
-        } else
-            return handle->append(data, size);
-    }
-
-    void file_handle::append_inline(const uint8_t* data, uint32_t size) {
+    void file_handle::append(const uint8_t* data, uint32_t size) {
         if (!handle)
             throw file_closed();
         if (handle->mimic_non_async.has_value()) {
@@ -1872,5 +2017,145 @@ namespace fast_task::files {
         if (!handle)
             throw file_closed();
         return handle->get_path();
+    }
+
+    future_ptr<std::vector<uint8_t>> file_handle::fut_read(uint32_t size) {
+        if (!handle)
+            throw file_closed();
+        if (handle->mimic_non_async.has_value()) {
+            fast_task::lock_guard<task_mutex> lock(*handle->mimic_non_async);
+            auto res = handle->fut_read(size, false);
+            res->wait();
+            return res;
+        } else
+            return handle->fut_read(size, false);
+    }
+
+    future_ptr<std::vector<uint8_t>> file_handle::fut_read_at(uint64_t offset, uint32_t size) {
+        if (!handle)
+            throw file_closed();
+        if (handle->mimic_non_async.has_value()) {
+            fast_task::lock_guard<task_mutex> lock(*handle->mimic_non_async);
+            auto res = handle->fut_read_at(offset, size, false);
+            res->wait();
+            return res;
+        } else
+            return handle->fut_read_at(offset, size, false);
+    }
+
+    future_ptr<std::vector<uint8_t>> file_handle::fut_read_fixed(uint32_t size) {
+        if (!handle)
+            throw file_closed();
+        if (handle->mimic_non_async.has_value()) {
+            fast_task::lock_guard<task_mutex> lock(*handle->mimic_non_async);
+            auto res = handle->fut_read(size, true);
+            res->wait();
+            return res;
+        } else
+            return handle->fut_read(size, true);
+    }
+
+    future_ptr<std::vector<uint8_t>> file_handle::fut_read_fixed_at(uint64_t offset, uint32_t size) {
+        if (!handle)
+            throw file_closed();
+        if (handle->mimic_non_async.has_value()) {
+            fast_task::lock_guard<task_mutex> lock(*handle->mimic_non_async);
+            auto res = handle->fut_read_at(offset, size, true);
+            res->wait();
+            return res;
+        } else
+            return handle->fut_read_at(offset, size, true);
+    }
+
+    future_ptr<void> file_handle::fut_write(const uint8_t* data, uint32_t size) {
+        if (!handle)
+            throw file_closed();
+        if (handle->mimic_non_async.has_value()) {
+            fast_task::lock_guard<task_mutex> lock(*handle->mimic_non_async);
+            auto res = handle->fut_write(data, size);
+            res->wait();
+            return res;
+        } else
+            return handle->fut_write(data, size);
+    }
+
+    future_ptr<void> file_handle::fut_write_at(uint64_t offset, const uint8_t* data, uint32_t size) {
+        if (!handle)
+            throw file_closed();
+        if (handle->mimic_non_async.has_value()) {
+            fast_task::lock_guard<task_mutex> lock(*handle->mimic_non_async);
+            auto res = handle->fut_write_at(offset, data, size);
+            res->wait();
+            return res;
+        } else
+            return handle->fut_write_at(offset, data, size);
+    }
+
+    future_ptr<void> file_handle::fut_append(const uint8_t* data, uint32_t size) {
+        if (!handle)
+            throw file_closed();
+        if (handle->mimic_non_async.has_value()) {
+            fast_task::lock_guard<task_mutex> lock(*handle->mimic_non_async);
+            auto res = handle->fut_append(data, size);
+            res->wait();
+            return res;
+        } else
+            return handle->fut_append(data, size);
+    }
+
+    io_operation<std::vector<uint8_t>> file_handle::make_read(uint32_t size) {
+        if (!handle)
+            throw file_closed();
+        if (handle->mimic_non_async.has_value())
+            throw std::runtime_error("Non-async mode not supported for make_read");
+        return io_operation<std::vector<uint8_t>>(handle->fmake_read(size, false));
+    }
+
+    io_operation<std::vector<uint8_t>> file_handle::make_read_at(uint64_t offset, uint32_t size) {
+        if (!handle)
+            throw file_closed();
+        if (handle->mimic_non_async.has_value())
+            throw std::runtime_error("Non-async mode not supported for make_read_at");
+        return io_operation<std::vector<uint8_t>>(handle->fmake_read_at(offset, size, false));
+    }
+
+    io_operation<std::vector<uint8_t>> file_handle::make_read_fixed(uint32_t size) {
+        if (!handle)
+            throw file_closed();
+        if (handle->mimic_non_async.has_value())
+            throw std::runtime_error("Non-async mode not supported for make_read_fixed");
+        return io_operation<std::vector<uint8_t>>(handle->fmake_read(size, true));
+    }
+
+    io_operation<std::vector<uint8_t>> file_handle::make_read_fixed_at(uint64_t offset, uint32_t size) {
+        if (!handle)
+            throw file_closed();
+        if (handle->mimic_non_async.has_value())
+            throw std::runtime_error("Non-async mode not supported for make_read_fixed_at");
+        return io_operation<std::vector<uint8_t>>(handle->fmake_read_at(offset, size, true));
+    }
+
+    io_operation<void> file_handle::make_write(const uint8_t* data, uint32_t size) {
+        if (!handle)
+            throw file_closed();
+        if (handle->mimic_non_async.has_value())
+            throw std::runtime_error("Non-async mode not supported for make_write");
+        return io_operation<void>(handle->fmake_write(data, size));
+    }
+
+    io_operation<void> file_handle::make_write_at(uint64_t offset, const uint8_t* data, uint32_t size) {
+        if (!handle)
+            throw file_closed();
+        if (handle->mimic_non_async.has_value())
+            throw std::runtime_error("Non-async mode not supported for make_write_at");
+        return io_operation<void>(handle->fmake_write_at(offset, data, size));
+    }
+
+    io_operation<void> file_handle::make_append(const uint8_t* data, uint32_t size) {
+        if (!handle)
+            throw file_closed();
+        if (handle->mimic_non_async.has_value())
+            throw std::runtime_error("Non-async mode not supported for make_append");
+        return io_operation<void>(handle->fmake_append(data, size));
     }
 }

@@ -24,7 +24,7 @@ namespace fast_task {
             template <class Promise>
             bool await_suspend(std::coroutine_handle<Promise> h) {
                 if constexpr (std::derived_from<Promise, task_promise_base>) {
-                    return t->enter_wait(h.promise().task_object);
+                    return !t->enter_wait(h.promise().task_object);
                 } else {
                     auto on_start_resume = [](void* handle_addr) {
                         std::coroutine_handle<>::from_address(handle_addr).resume();
@@ -269,7 +269,7 @@ namespace fast_task {
             template <class Promise>
             bool await_suspend(std::coroutine_handle<Promise> h) {
                 if constexpr (std::derived_from<Promise, task_promise_base>) {
-                    return task_handle->enter_wait(h.promise().task_object);
+                    return !task_handle->enter_wait(h.promise().task_object);
                 } else {
                     auto on_start_resume = [](void* handle_addr) {
                         std::coroutine_handle<>::from_address(handle_addr).resume();

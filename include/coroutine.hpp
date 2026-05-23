@@ -18,4 +18,6 @@
     #include "coroutine/query.hpp"
     #include "coroutine/semaphore.hpp"
     #include "coroutine/this_task.hpp"
+
+    #include "coroutine/file.hpp"
 #endif

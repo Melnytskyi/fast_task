@@ -62,7 +62,7 @@ while ($pendingTests.Count -gt 0 -or $activeJobs.Count -gt 0) {
             $tempErr = [System.IO.Path]::GetTempFileName()
             $hung = $false
             
-            for ($attempt = 1; $attempt -le 200; $attempt++) {
+            for ($attempt = 1; $attempt -le 20; $attempt++) {
                 $process = Start-Process -FilePath $testPath -ArgumentList "--gtest_catch_exceptions=0", "-halt_on_exception" -PassThru -WindowStyle Hidden -RedirectStandardOutput $tempOut -RedirectStandardError $tempErr
                 $timeoutMs = 4000
                 $exitedCleanly = $process.WaitForExit($timeoutMs)
@@ -111,7 +111,7 @@ while ($pendingTests.Count -gt 0 -or $activeJobs.Count -gt 0) {
             Remove-Item $tempOut, $tempErr -ErrorAction SilentlyContinue
             
             if (-not $hung) {
-                $jobOutput += "Result: COMPLETED 200 ATTEMPTS WITHOUT HANGING"
+                $jobOutput += "Result: COMPLETED 20 ATTEMPTS WITHOUT HANGING"
             }
             $jobOutput += "--- Finished hunt for: $testPath ---"
             
