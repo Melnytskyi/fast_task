@@ -228,6 +228,7 @@ namespace fast_task {
         bool in_close : 1 = false;
         bool allow_implicit_start : 1 = false;
         bool fixed_size : 1 = false;
+        bool abort_tasks_on_close : 1 = false;
         scheduler::executor_policy policy = scheduler::executor_policy::default_policy;
     };
 

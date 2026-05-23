@@ -68,3 +68,20 @@ TEST(BindExecutor, SetWorkerIdOnTask) {
     fast_task::scheduler::close_bind_only_executor(id);
     fast_task::scheduler::shut_down();
 }
+
+TEST(BindExecutor, CloseAbortTasksAbortsQueuedAndAllowsShutdown) {
+    fast_task::scheduler::create_executor(2);
+    uint16_t id = fast_task::scheduler::create_bind_only_executor(0, false);
+    std::atomic<bool> queued_ran{false};
+
+    auto queued = std::make_shared<fast_task::task>([&] { queued_ran.store(true, std::memory_order_release); });
+    queued->set_worker_id(id);
+    fast_task::scheduler::start(queued);
+
+    fast_task::scheduler::close_bind_only_executor(id, true);
+    queued->await_task();
+    EXPECT_FALSE(queued_ran.load(std::memory_order_acquire));
+
+    fast_task::scheduler::await_no_tasks();
+    fast_task::scheduler::shut_down();
+}
