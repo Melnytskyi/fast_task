@@ -70,12 +70,16 @@ namespace fast_task {
 
         static std::shared_ptr<future> make_ready(const T& value) {
             std::shared_ptr<future> future_ = std::make_shared<future>();
+            future_->task_ = task::callback_dummy(nullptr, nullptr, nullptr, nullptr, nullptr);
+            future_->task_->end_dummy([](auto) {});
             future_->result = std::make_optional<T>(value);
             return future_;
         }
 
         static std::shared_ptr<future> make_ready(T&& value) {
             std::shared_ptr<future> future_ = std::make_shared<future>();
+            future_->task_ = task::callback_dummy(nullptr, nullptr, nullptr, nullptr, nullptr);
+            future_->task_->end_dummy([](auto) {});
             future_->result = std::make_optional<T>(std::move(value));
             return future_;
         }
@@ -85,9 +89,8 @@ namespace fast_task {
                 task_->await_task();
             if (ex_ptr)
                 std::rethrow_exception(ex_ptr);
-            if (!result)
-                if (task_->is_cancellation_requested())
-                    throw std::runtime_error("Task has been canceled. Can not receive result.");
+            if (task_->is_cancellation_requested())
+                throw std::runtime_error("Task has been canceled. Can not receive result.");
             return *result;
         }
 
@@ -96,9 +99,8 @@ namespace fast_task {
                 task_->await_task();
             if (ex_ptr)
                 std::rethrow_exception(ex_ptr);
-            if (!result)
-                if (task_->is_cancellation_requested())
-                    throw std::runtime_error("Task has been canceled. Can not receive result.");
+            if (task_->is_cancellation_requested())
+                throw std::runtime_error("Task has been canceled. Can not receive result.");
             return std::move(*result);
         }
 
@@ -139,9 +141,8 @@ namespace fast_task {
                 task_->await_task();
             if (ex_ptr)
                 std::rethrow_exception(ex_ptr);
-            if (!result)
-                if (task_->is_cancellation_requested())
-                    throw std::runtime_error("Task has been canceled. Can not receive result.");
+            if (task_->is_cancellation_requested())
+                throw std::runtime_error("Task has been canceled. Can not receive result.");
         }
 
         template <class Dur_resolution, class Dur_type>
@@ -155,9 +156,8 @@ namespace fast_task {
                     return false;
             if (ex_ptr)
                 std::rethrow_exception(ex_ptr);
-            if (!result)
-                if (task_->is_cancellation_requested())
-                    throw std::runtime_error("Task has been canceled. Can not receive result.");
+            if (task_->is_cancellation_requested())
+                throw std::runtime_error("Task has been canceled. Can not receive result.");
             return true;
         }
 

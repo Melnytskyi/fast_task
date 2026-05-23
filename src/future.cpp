@@ -11,6 +11,8 @@ namespace fast_task {
 
     std::shared_ptr<future<void>> future<void>::make_ready() {
         std::shared_ptr<future> future_ = std::make_shared<future>();
+        future_->task_ = task::callback_dummy(nullptr, nullptr, nullptr, nullptr, nullptr);
+        future_->task_->end_dummy([](auto) {});
         future_->has_result = true;
         return future_;
     }
@@ -36,9 +38,8 @@ namespace fast_task {
             task_->await_task();
         if (ex_ptr)
             std::rethrow_exception(ex_ptr);
-        if (!has_result)
-            if (task_->is_cancellation_requested())
-                throw std::runtime_error("Task has been canceled. Can not receive result.");
+        if (task_->is_cancellation_requested())
+            throw std::runtime_error("Task has been canceled. Can not receive result.");
     }
 
     bool future<void>::wait_until(std::chrono::time_point<std::chrono::high_resolution_clock> time) {
@@ -47,9 +48,8 @@ namespace fast_task {
                 return false;
         if (ex_ptr)
             std::rethrow_exception(ex_ptr);
-        if (!has_result)
-            if (task_->is_cancellation_requested())
-                throw std::runtime_error("Task has been canceled. Can not receive result.");
+        if (task_->is_cancellation_requested())
+            throw std::runtime_error("Task has been canceled. Can not receive result.");
         return true;
     }
 
