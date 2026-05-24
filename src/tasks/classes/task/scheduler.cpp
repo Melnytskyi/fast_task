@@ -352,15 +352,19 @@ namespace fast_task::scheduler {
 
         while (!glob.binded_workers.empty())
             close_bind_only_executor(glob.binded_workers.begin()->first);
+        {
+            fast_task::unique_lock guard(glob.task_thread_safety);
+            glob.executor_shutting_down.store(true, std::memory_order_release);
+            glob.tasks_notifier.notify_all();
+            while (glob.executors)
+                glob.executor_shutdown_notifier.wait(guard);
+        }
+        {
+            fast_task::unique_lock guard(glob.task_timer_safety);
+            glob.time_control_enabled = false;
+            glob.time_notifier.notify_all();
+        }
 
-        fast_task::unique_lock guard(glob.task_thread_safety);
-        glob.executor_shutting_down.store(true, std::memory_order_release);
-        glob.tasks_notifier.notify_all();
-        while (glob.executors)
-            glob.executor_shutdown_notifier.wait(guard);
-        glob.time_control_enabled = false;
-        glob.time_notifier.notify_all();
-        guard.unlock();
 
         while (glob.thread_count.load())
             std::this_thread::yield();

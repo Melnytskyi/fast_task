@@ -208,6 +208,8 @@ namespace fast_task {
     #endif
             std::shared_ptr<task> pending = nullptr;
         } transfer_state;
+
+        void reset();
     };
 
     struct FT_API_LOCAL timing {

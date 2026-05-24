@@ -653,6 +653,7 @@ namespace fast_task {
 
         lock.lock();
         --glob.executors;
+        loc.reset();
         --glob.thread_count;
         glob.tasks_notifier.unsafe_notify_all();
         glob.executor_shutdown_notifier.notify_all();
@@ -820,7 +821,9 @@ namespace fast_task {
             }
         }
         fast_task::lock_guard lock(glob.task_thread_safety);
+        loc.reset();
         --glob.thread_count;
+        glob.executor_shutdown_notifier.notify_all();
     }
 
 #pragma endregion
@@ -937,6 +940,7 @@ namespace fast_task {
         }
 
         fast_task::shared_lock _guard(glob.task_thread_safety);
+        loc.reset();
         --glob.thread_count;
         glob.executor_shutdown_notifier.notify_all();
     }

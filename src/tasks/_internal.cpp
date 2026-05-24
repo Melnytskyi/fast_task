@@ -61,6 +61,13 @@ namespace fast_task {
         return engine;
     }
 
+    void executors_local::reset() {
+        local_tasks.reset();
+        ex_ptr = nullptr;
+        curr_task.reset();
+        transfer_state.pending.reset();
+    }
+
 #if PLATFORM_WINDOWS
     std::wstring s2ws(const std::string& str) {
         int len = MultiByteToWideChar(CP_UTF8, 0, str.c_str(), -1, NULL, 0);
