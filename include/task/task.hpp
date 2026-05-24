@@ -232,6 +232,7 @@ namespace fast_task {
 
         bool enter_wait(const std::shared_ptr<task>&);
         bool enter_wait_until(const std::shared_ptr<task>&, std::chrono::high_resolution_clock::time_point);
+        bool enter_cancel(const std::shared_ptr<task>&);
 
         static std::shared_ptr<task> run(std::function<void()>&& func);
         static std::shared_ptr<task> create(std::function<void()>&& func);

@@ -347,16 +347,16 @@ namespace fast_task::files {
         bool make_append = false;
         friend class File_;
 
-        uint64_t _file_size() {
-            uint64_t size = 0;
+        int64_t _file_size() {
+            int64_t size = 0;
             FILE_STANDARD_INFO finfo = {};
             if (GetFileInformationByHandleEx(_handle, FileStandardInfo, &finfo, sizeof(finfo))) {
                 if (finfo.EndOfFile.QuadPart > 0)
                     size = finfo.EndOfFile.QuadPart;
                 else
-                    size = (uint64_t)-1;
+                    size = -1;
             } else
-                size = (uint64_t)-1;
+                size = -1;
             return size;
         }
 
@@ -787,22 +787,22 @@ namespace fast_task::files {
             }
         }
 
-        bool seek_pos(uint64_t offset, pointer_offset pointer_offset, pointer pointer) {
+        bool seek_pos(int64_t offset, pointer_offset pointer_offset, pointer pointer) {
             switch (pointer_offset) {
             case pointer_offset::begin:
                 switch (pointer_mode) {
                 case pointer_mode::separated:
                     switch (pointer) {
                     case pointer::read:
-                        read_pointer = offset;
+                        read_pointer = static_cast<int64_t>(offset);
                         break;
                     case pointer::write:
-                        write_pointer = offset;
+                        write_pointer = static_cast<int64_t>(offset);
                         break;
                     }
                     break;
                 case pointer_mode::combined:
-                    read_pointer = write_pointer = offset;
+                    read_pointer = write_pointer = static_cast<int64_t>(offset);
                     break;
                 }
                 break;
@@ -830,15 +830,15 @@ namespace fast_task::files {
                     case pointer_mode::separated:
                         switch (pointer) {
                         case pointer::read:
-                            read_pointer = size + offset;
+                            read_pointer = static_cast<uint64_t>(size + offset);
                             break;
                         case pointer::write:
-                            write_pointer = size + offset;
+                            write_pointer = static_cast<uint64_t>(size + offset);
                             break;
                         }
                         break;
                     case pointer_mode::combined:
-                        read_pointer = write_pointer = size + offset;
+                        read_pointer = write_pointer = static_cast<uint64_t>(size + offset);
                         break;
                     }
                 } else
@@ -851,10 +851,10 @@ namespace fast_task::files {
             return true;
         }
 
-        bool seek_pos(uint64_t offset, pointer_offset pointer_offset) {
+        bool seek_pos(int64_t offset, pointer_offset pointer_offset) {
             switch (pointer_offset) {
             case pointer_offset::begin:
-                read_pointer = write_pointer = offset;
+                read_pointer = write_pointer = static_cast<uint64_t>(offset);
                 break;
             case pointer_offset::current:
                 read_pointer = write_pointer += offset;
@@ -862,7 +862,7 @@ namespace fast_task::files {
             case pointer_offset::end: {
                 auto size = _file_size();
                 if (size != -1)
-                    read_pointer = write_pointer = size + offset;
+                    read_pointer = write_pointer = static_cast<uint64_t>(size + offset);
                 else
                     return false;
                 break;
@@ -873,12 +873,12 @@ namespace fast_task::files {
             return true;
         }
 
-        uint64_t tell_pos(pointer pointer) {
+        int64_t tell_pos(pointer pointer) {
             switch (pointer) {
             case pointer::read:
-                return read_pointer;
+                return static_cast<int64_t>(read_pointer);
             case pointer::write:
-                return write_pointer;
+                return static_cast<int64_t>(write_pointer);
             default:
                 throw std::runtime_error("Invalid pointer type");
             }
@@ -888,7 +888,7 @@ namespace fast_task::files {
             return (bool)FlushFileBuffers(_handle);
         }
 
-        uint64_t file_size() {
+        int64_t file_size() {
             auto res = _file_size();
             if (res == -1)
                 return 0;
@@ -1164,8 +1164,8 @@ namespace fast_task::files {
 
         uint16_t uflags = 0;
 
-        uint64_t _file_size() {
-            uint64_t size = 0;
+        int64_t _file_size() {
+            int64_t size = 0;
             struct stat st;
             if (fstat(_handle, &st) == 0)
                 size = st.st_size;
@@ -1583,22 +1583,22 @@ namespace fast_task::files {
             }
         }
 
-        bool seek_pos(uint64_t offset, pointer_offset pointer_offset, pointer pointer) {
+        bool seek_pos(int64_t offset, pointer_offset pointer_offset, pointer pointer) {
             switch (pointer_offset) {
             case pointer_offset::begin:
                 switch (_pointer_mode) {
                 case pointer_mode::separated:
                     switch (pointer) {
                     case pointer::read:
-                        read_pointer = offset;
+                        read_pointer = static_cast<uint64_t>(offset);
                         break;
                     case pointer::write:
-                        write_pointer = offset;
+                        write_pointer = static_cast<uint64_t>(offset);
                         break;
                     }
                     break;
                 case pointer_mode::combined:
-                    read_pointer = write_pointer = offset;
+                    read_pointer = write_pointer = static_cast<uint64_t>(offset);
                     break;
                 }
                 break;
@@ -1621,20 +1621,20 @@ namespace fast_task::files {
                 break;
             case pointer_offset::end: {
                 auto size = _file_size();
-                if (size != (uint64_t)-1) {
+                if (size != -1) {
                     switch (_pointer_mode) {
                     case pointer_mode::separated:
                         switch (pointer) {
                         case pointer::read:
-                            read_pointer = size + offset;
+                            read_pointer = static_cast<uint64_t>(size + offset);
                             break;
                         case pointer::write:
-                            write_pointer = size + offset;
+                            write_pointer = static_cast<uint64_t>(size + offset);
                             break;
                         }
                         break;
                     case pointer_mode::combined:
-                        read_pointer = write_pointer = size + offset;
+                        read_pointer = write_pointer = static_cast<uint64_t>(size + offset);
                         break;
                     }
                 } else
@@ -1647,18 +1647,18 @@ namespace fast_task::files {
             return true;
         }
 
-        bool seek_pos(uint64_t offset, pointer_offset pointer_offset) {
+        bool seek_pos(int64_t offset, pointer_offset pointer_offset) {
             switch (pointer_offset) {
             case pointer_offset::begin:
-                read_pointer = write_pointer = offset;
+                read_pointer = write_pointer = static_cast<uint64_t>(offset);
                 break;
             case pointer_offset::current:
                 read_pointer = write_pointer += offset;
                 break;
             case pointer_offset::end: {
                 auto size = _file_size();
-                if (size != (uint64_t)-1)
-                    read_pointer = write_pointer = size + offset;
+                if (size != -1)
+                    read_pointer = write_pointer = static_cast<uint64_t>(size + offset);
                 else
                     return false;
                 break;
@@ -1669,12 +1669,12 @@ namespace fast_task::files {
             return true;
         }
 
-        uint64_t tell_pos(pointer pointer) {
+        int64_t tell_pos(pointer pointer) {
             switch (pointer) {
             case pointer::read:
-                return read_pointer;
+                return static_cast<int64_t>(read_pointer);
             case pointer::write:
-                return write_pointer;
+                return static_cast<int64_t>(write_pointer);
             default:
                 return 0;
             }
@@ -1684,9 +1684,9 @@ namespace fast_task::files {
             return (bool)fsync(_handle) == 0; //TODO replace with post_fsync
         }
 
-        uint64_t file_size() {
+        int64_t file_size() {
             auto res = _file_size();
-            if (res == (uint64_t)-1)
+            if (res == -1)
                 return 0;
             else
                 return res;
@@ -1728,11 +1728,11 @@ namespace fast_task::files {
 namespace fast_task::files {
 
     bool io_operation<std::vector<uint8_t>>::is_done() const noexcept {
-        return slot_->is_ended();
+        return slot_ && slot_->is_ended();
     }
 
     std::optional<io_errors> io_operation<std::vector<uint8_t>>::get_error() {
-        if (!slot_->is_ended())
+        if (!slot_ || !slot_->is_ended())
             return std::nullopt;
         std::optional<io_errors> res;
         slot_->access_dummy([&](void* e_data) {
@@ -1744,7 +1744,7 @@ namespace fast_task::files {
     }
 
     std::optional<std::vector<uint8_t>> io_operation<std::vector<uint8_t>>::try_get() {
-        if (!slot_->is_ended())
+        if (!slot_ || !slot_->is_ended())
             return std::nullopt;
         std::optional<std::vector<uint8_t>> res;
         slot_->access_dummy([&](void* e_data) {
@@ -1757,7 +1757,7 @@ namespace fast_task::files {
     }
 
     std::vector<uint8_t> io_operation<std::vector<uint8_t>>::get() {
-        if (!slot_->is_ended())
+        if (!slot_ || !slot_->is_ended())
             throw std::runtime_error("The operations is not complete");
         std::optional<std::vector<uint8_t>> res;
         slot_->access_dummy([&](void* e_data) {
@@ -1772,18 +1772,26 @@ namespace fast_task::files {
     }
 
     bool io_operation<std::vector<uint8_t>>::enter_wait(const std::shared_ptr<task>& t) {
-        return slot_->enter_wait(t);
+        if (slot_)
+            return slot_->enter_wait(t);
+        else
+            return true;
     }
 
     bool io_operation<std::vector<uint8_t>>::enter_wait_until(const std::shared_ptr<task>& t, std::chrono::high_resolution_clock::time_point tp) {
-        return slot_->enter_wait_until(t, tp);
+        if (slot_)
+            return slot_->enter_wait_until(t, tp);
+        else
+            return true;
     }
 
     bool io_operation<void>::is_done() const noexcept {
-        return slot_->is_ended();
+        return !slot_ || slot_->is_ended();
     }
 
     std::optional<io_errors> io_operation<void>::get_error() {
+        if (!slot_)
+            return io_errors::unknown_error;
         if (!slot_->is_ended())
             return std::nullopt;
         std::optional<io_errors> res;
@@ -1796,11 +1804,11 @@ namespace fast_task::files {
     }
 
     bool io_operation<void>::try_get() {
-        return slot_->is_ended();
+        return slot_ && slot_->is_ended();
     }
 
     void io_operation<void>::get() {
-        if (!slot_->is_ended())
+        if (!slot_ || !slot_->is_ended())
             throw std::runtime_error("The operations is not complete");
         slot_->access_dummy([&](void* e_data) {
             auto data = (completion_struct*)e_data;
@@ -1816,6 +1824,10 @@ namespace fast_task::files {
 
     bool io_operation<void>::enter_wait_until(const std::shared_ptr<task>& t, std::chrono::high_resolution_clock::time_point tp) {
         return slot_->enter_wait_until(t, tp);
+    }
+
+    bool io_operation<void>::enter_cancel(const std::shared_ptr<task>& t) {
+        return slot_->enter_cancel(t);
     }
 
     file_handle file_handle::open(const std::filesystem::path& path, open_mode open, on_open_action action, file_flags flags, share_mode share, pointer_mode pointer_mode) {
@@ -1963,7 +1975,7 @@ namespace fast_task::files {
             handle->append_inline(data, size);
     }
 
-    bool file_handle::seek_pos(uint64_t offset, pointer_offset pointer_offset, pointer pointer) {
+    bool file_handle::seek_pos(int64_t offset, pointer_offset pointer_offset, pointer pointer) {
         if (!handle)
             throw file_closed();
         if (handle->mimic_non_async.has_value()) {
@@ -1973,7 +1985,7 @@ namespace fast_task::files {
             return handle->seek_pos(offset, pointer_offset, pointer);
     }
 
-    bool file_handle::seek_pos(uint64_t offset, pointer_offset pointer_offset) {
+    bool file_handle::seek_pos(int64_t offset, pointer_offset pointer_offset) {
         if (!handle)
             throw file_closed();
         if (handle->mimic_non_async.has_value()) {
@@ -1983,7 +1995,7 @@ namespace fast_task::files {
             return handle->seek_pos(offset, pointer_offset);
     }
 
-    uint64_t file_handle::tell_pos(pointer pointer) {
+    int64_t file_handle::tell_pos(pointer pointer) {
         if (!handle)
             throw file_closed();
         if (handle->mimic_non_async.has_value()) {
@@ -2003,7 +2015,7 @@ namespace fast_task::files {
             return handle->flush();
     }
 
-    uint64_t file_handle::size() {
+    int64_t file_handle::size() {
         if (!handle)
             throw file_closed();
         if (handle->mimic_non_async.has_value()) {

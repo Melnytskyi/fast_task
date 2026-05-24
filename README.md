@@ -87,13 +87,14 @@ target_link_libraries(YOUR_PROJECT_NAME PRIVATE fast_task)
 ```
 
 ### CMake Configuration Options
-Customize the library build using the following CMake flags:
+Customize the library build using the following CMake settings:
 - `FAST_TASK_STATIC`: Build `fast_task` as a static library.
 - `FAST_TASK_ENABLE_DEBUG_API`: Enables debugging utilities found in `include/debug.hpp`.
 - `FAST_TASK_ENABLE_PREEMPTIVE_SCHEDULER`: Enables time-sliced preemption for tasks.
 - `FAST_TASK_ENABLE_ABORT_IF_ALREADY_STARTED`: Forces an abort if a task is started multiple times.
 - `FAST_TASK_ENABLE_ABORT_IF_NEVER_STARTED`: Forces an abort if a task is destroyed before execution.
 - `FAST_TASK_EXCEPTION_POLICY`: Defines context switch exception behavior (`NONE`, `CHECK`, or `PRESERVE`).
+- `FAST_TASK_TASK_TRANSFERS_LIMIT`: Limits the number of consecutive cooperative transfers before yielding to the scheduler.
 
 ## Architecture Overview
 

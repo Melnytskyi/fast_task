@@ -105,6 +105,7 @@ namespace fast_task::files {
         io_operation& operator=(const io_operation&) = delete;
 
         io_operation(io_operation&& o) noexcept = default;
+        io_operation& operator=(io_operation&& o) noexcept = default;
 
         bool is_done() const noexcept;
         std::optional<io_errors> get_error();
@@ -113,6 +114,8 @@ namespace fast_task::files {
         T get();
         bool enter_wait(const std::shared_ptr<task>& t);
         bool enter_wait_until(const std::shared_ptr<task>& t, std::chrono::high_resolution_clock::time_point tp);
+
+        bool enter_cancel(const std::shared_ptr<task>& t);
     };
 
     extern template io_operation<std::vector<uint8_t>>;
@@ -145,13 +148,13 @@ namespace fast_task::files {
         void append(const uint8_t* data, uint32_t size);
 
 
-        bool seek_pos(uint64_t offset, pointer_offset pointer_offset, pointer pointer);
-        bool seek_pos(uint64_t offset, pointer_offset pointer_offset);
-        uint64_t tell_pos(pointer pointer);
+        bool seek_pos(int64_t offset, pointer_offset pointer_offset, pointer pointer);
+        bool seek_pos(int64_t offset, pointer_offset pointer_offset);
+        int64_t tell_pos(pointer pointer);
 
         bool flush();
 
-        uint64_t size();
+        int64_t size();
 
         future_ptr<std::vector<uint8_t>> fut_read(uint32_t size);
         future_ptr<std::vector<uint8_t>> fut_read_at(uint64_t offset, uint32_t size);
@@ -362,7 +365,7 @@ namespace fast_task::files {
 
                     pointer pointer_type = (which & std::ios_base::out) ? pointer::write : pointer::read;
 
-                    if (!_handle.seek_pos(static_cast<uint64_t>(off), offset_mode, pointer_type))
+                    if (!_handle.seek_pos(static_cast<int64_t>(off), offset_mode, pointer_type))
                         return std::streampos(std::streamoff(-1));
 
                     return std::streampos(static_cast<std::streamoff>(_handle.tell_pos(pointer_type)));

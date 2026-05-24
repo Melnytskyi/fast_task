@@ -321,6 +321,11 @@ namespace fast_task {
             return false;
     }
 
+    bool task::enter_cancel(const std::shared_ptr<task>& t) {
+        notify_cancel();
+        return enter_wait(t);
+    }
+
     std::shared_ptr<task> task::run(std::function<void()>&& func) {
         auto r = std::make_shared<task>(std::move(func));
         scheduler::start(r);
