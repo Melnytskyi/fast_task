@@ -303,29 +303,49 @@ namespace fast_task {
     }
 
     void task_condition_variable::callback(fast_task::unique_lock<mutex_unify>& mut, const std::shared_ptr<task>& task) {
-        if (get_data(task).started)
-            throw std::logic_error("Task already started");
+        {
+            fast_task::lock_guard guard(get_data(task).no_race);
+            if (get_data(task).running || get_data(task).end_of_life)
+                throw std::runtime_error("Task is running or completed and cannot be registered");
+            if (get_data(task).started && (!get_data(task).suspended && get_data(task).is_on_scheduler))
+                throw std::runtime_error("Task is already in the scheduler queue");
+            if (!get_data(task).callbacks.on_start)
+                throw std::logic_error("task_condition_variable::callback requires the on_start callback to be set");
+        }
         if (*mut.mutex() == values.no_race) {
             values.resume_task.emplace_back(task, get_data(task).awake_check);
         } else {
             fast_task::lock_guard guard(values.no_race);
             values.resume_task.emplace_back(task, get_data(task).awake_check);
         }
-        get_data(task).started = true;
-        ++glob.executing_tasks;
+        if (!get_data(task).started) {
+            get_data(task).started = true;
+            ++glob.executing_tasks;
+        } else if (get_data(task).suspended)
+            get_data(task).suspended = false;
     }
 
     void task_condition_variable::callback(std::unique_lock<mutex_unify>& mut, const std::shared_ptr<task>& task) {
-        if (get_data(task).started)
-            throw std::logic_error("Task already started");
+        {
+            fast_task::lock_guard guard(get_data(task).no_race);
+            if (get_data(task).running || get_data(task).end_of_life)
+                throw std::runtime_error("Task is running or completed and cannot be registered");
+            if (get_data(task).started && (!get_data(task).suspended && get_data(task).is_on_scheduler))
+                throw std::runtime_error("Task is already in the scheduler queue");
+            if (!get_data(task).callbacks.on_start)
+                throw std::logic_error("task_condition_variable::callback requires the on_start callback to be set");
+        }
         if (*mut.mutex() == values.no_race) {
             values.resume_task.emplace_back(task, get_data(task).awake_check);
         } else {
             fast_task::lock_guard guard(values.no_race);
             values.resume_task.emplace_back(task, get_data(task).awake_check);
         }
-        get_data(task).started = true;
-        ++glob.executing_tasks;
+        if (!get_data(task).started) {
+            get_data(task).started = true;
+            ++glob.executing_tasks;
+        } else if (get_data(task).suspended)
+            get_data(task).suspended = false;
     }
 
     bool task_condition_variable::enter_wait(mutex_unify& mut, const std::shared_ptr<task>& task) {

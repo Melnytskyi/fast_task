@@ -98,8 +98,10 @@ namespace fast_task {
             uint16_t bind_to_worker_id = (uint16_t)-1;
             bool time_end_flag : 1 = false;
             bool started : 1 = false;
-            bool awaked : 1 = false;
+            bool running : 1 = false;
+            bool suspended : 1 = false;
             bool end_of_life : 1 = false;
+            bool awaked : 1 = false;
             bool make_cancel : 1 = false;
             bool auto_bind_worker : 1 = false;
             bool invalid_switch_caught : 1 = false;

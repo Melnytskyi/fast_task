@@ -170,18 +170,19 @@ namespace fast_task {
     }
 
     void task_rw_mutex::lifecycle_read_lock(std::shared_ptr<task>&& lock_task) {
-        if (get_data(lock_task).started)
-            throw std::logic_error("Task already started");
-        if (!get_data(lock_task).callbacks.on_start)
-            throw std::logic_error("lifecycle_lock requires the on_start variable to be set");
-        else if (!get_data(lock_task).is_restartable)
-            throw std::logic_error("lifecycle_lock requires the restartable mode to be disabled");
-        else {
-            task::run([lock_task, this]() {
-                fast_task::read_lock guard(*this);
-                task::await_task(lock_task, true);
-            });
+        {
+            fast_task::lock_guard guard(get_data(lock_task).no_race);
+            if (get_data(lock_task).running || get_data(lock_task).end_of_life)
+                throw std::runtime_error("Task is running or completed and cannot be registered");
+            if (get_data(lock_task).started && (!get_data(lock_task).suspended && get_data(lock_task).is_on_scheduler))
+                throw std::runtime_error("Task is already in the scheduler queue");
+            if (!get_data(lock_task).callbacks.on_start)
+                throw std::logic_error("task_rw_mutex::lifecycle_read_lock requires the on_start callback to be set");
         }
+        task::run([lock_task, this]() {
+            fast_task::read_lock guard(*this);
+            task::await_task(lock_task, true);
+        });
     }
 
     void task_rw_mutex::write_lock() {
@@ -353,18 +354,19 @@ namespace fast_task {
     }
 
     void task_rw_mutex::lifecycle_write_lock(std::shared_ptr<task>&& lock_task) {
-        if (get_data(lock_task).started)
-            throw std::logic_error("Task already started");
-        if (!get_data(lock_task).callbacks.on_start)
-            throw std::logic_error("lifecycle_lock requires the on_start variable to be set");
-        else if (!get_data(lock_task).is_restartable)
-            throw std::logic_error("lifecycle_lock requires the restartable mode be to disabled");
-        else {
-            task::run([lock_task, this]() {
-                fast_task::write_lock guard(*this);
-                task::await_task(lock_task, true);
-            });
+        {
+            fast_task::lock_guard guard(get_data(lock_task).no_race);
+            if (get_data(lock_task).running || get_data(lock_task).end_of_life)
+                throw std::runtime_error("Task is running or completed and cannot be registered");
+            if (get_data(lock_task).started && (!get_data(lock_task).suspended && get_data(lock_task).is_on_scheduler))
+                throw std::runtime_error("Task is already in the scheduler queue");
+            if (!get_data(lock_task).callbacks.on_start)
+                throw std::logic_error("task_rw_mutex::lifecycle_write_lock requires the on_start callback to be set");
         }
+        task::run([lock_task, this]() {
+            fast_task::write_lock guard(*this);
+            task::await_task(lock_task, true);
+        });
     }
 
     bool task_rw_mutex::is_own() {

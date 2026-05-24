@@ -53,6 +53,8 @@ namespace fast_task {
 
     task::task(task&& mov) noexcept
         : data_{.callbacks = std::move(mov.data_.callbacks), .timeout = std::move(mov.data_.timeout)} {
+        if (mov.data_.started)
+            assert(false && "Moving started tasks is not allowed");
         data_.time_end_flag = mov.data_.time_end_flag;
         data_.awaked = mov.data_.awaked;
         data_.started = mov.data_.started;
@@ -165,7 +167,7 @@ namespace fast_task {
 
         mutex_unify uni(data_.no_race);
         fast_task::unique_lock l(uni);
-        if (!data_.started && !data_.is_restartable)
+        if (!data_.started)
             return;
         awaitEnd(l);
     }
@@ -181,11 +183,18 @@ namespace fast_task {
 
     void task::notify_cancel() {
         data_.callbacks.make_cancel();
+        fast_task::lock_guard l(data_.no_race);
         data_.make_cancel = true;
+
+        if (data_.suspended && !data_.end_of_life && !data_.time_end_flag) {
+            data_.time_end_flag = true;
+            data_.awaked = true;
+            fast_task::transfer_task(shared_from_this());
+        }
     }
 
     void task::await_notify_cancel() {
-        data_.callbacks.make_cancel();
+        notify_cancel();
 
         mutex_unify uni(data_.no_race);
         fast_task::unique_lock l(uni);
@@ -222,7 +231,7 @@ namespace fast_task {
                 while (true) {
                     if (data.self->data_.end_of_life) {
                         if (!fast_task::this_task::transfer_to(data.wake))
-                            fast_task::scheduler::start(data.wake);
+                            fast_task::transfer_task(std::shared_ptr<fast_task::task>(data.wake));
                         this_task::the_coroutine_ended(data.bridge.lock());
                         break;
                     } else if (!data.self->data_.result_notify.enter_wait(unify, data.bridge.lock())) {
@@ -237,6 +246,9 @@ namespace fast_task {
             true,
             true
         );
+        bridge->data_.started = true;
+        ++glob.executing_tasks;
+
         ew_data->bridge = bridge;
         bridge->data_.callbacks.buf.dat.data = ew_data.release();
         return data_.result_notify.enter_wait(unify, bridge);
@@ -273,12 +285,12 @@ namespace fast_task {
                     if (bridge->data_.time_end_flag) {
                         data.wake->data_.time_end_flag = true;
                         if (!fast_task::this_task::transfer_to(data.wake))
-                            fast_task::scheduler::start(data.wake);
+                            fast_task::transfer_task(std::shared_ptr<fast_task::task>(data.wake));
                         this_task::the_coroutine_ended(bridge);
                         break;
                     } else if (data.self->data_.end_of_life) {
                         if (!fast_task::this_task::transfer_to(data.wake))
-                            fast_task::scheduler::start(data.wake);
+                            fast_task::transfer_task(std::shared_ptr<fast_task::task>(data.wake));
                         this_task::the_coroutine_ended(bridge);
                         break;
                     } else {
@@ -297,6 +309,9 @@ namespace fast_task {
             true,
             true
         );
+        bridge->data_.started = true;
+        ++glob.executing_tasks;
+
         ew_data->bridge = bridge;
         bridge->data_.callbacks.buf.dat.data = ew_data.release();
         if (data_.result_notify.enter_wait_until(unify, bridge, time_point)) {

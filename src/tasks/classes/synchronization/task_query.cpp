@@ -62,10 +62,19 @@ namespace fast_task {
     }
 
     void task_query::add(std::shared_ptr<task>&& querying_task) {
-        if (get_data(querying_task).started)
-            throw std::runtime_error("Task already started");
+        {
+            fast_task::lock_guard guard(get_data(querying_task).no_race);
+            if (get_data(querying_task).running || get_data(querying_task).end_of_life)
+                throw std::runtime_error("Task is running or completed and cannot be added");
+            if (get_data(querying_task).started && (!get_data(querying_task).suspended && get_data(querying_task).is_on_scheduler))
+                throw std::runtime_error("Task is already in the scheduler queue");
+            if (!get_data(querying_task).callbacks.on_start)
+                throw std::logic_error("task_query::add requires the on_start callback to be set");
+        }
+
         auto new_task = redefine_start_function(querying_task, handle);
         fast_task::lock_guard lock(handle->no_race);
+
         if (handle->is_running && handle->now_at_execution < handle->at_execution_max) {
             scheduler::start(std::move(new_task));
             handle->now_at_execution++;
@@ -74,15 +83,24 @@ namespace fast_task {
     }
 
     void task_query::add(std::shared_ptr<task>& querying_task) {
-        if (get_data(querying_task).started)
-            throw std::runtime_error("Task already started");
+        {
+            fast_task::lock_guard guard(get_data(querying_task).no_race);
+            if (get_data(querying_task).running || get_data(querying_task).end_of_life)
+                throw std::runtime_error("Task is running or completed and cannot be added");
+            if (get_data(querying_task).started && (!get_data(querying_task).suspended && get_data(querying_task).is_on_scheduler))
+                throw std::runtime_error("Task is already in the scheduler queue");
+            if (!get_data(querying_task).callbacks.on_start)
+                throw std::logic_error("task_query::add requires the on_start callback to be set");
+        }
+
         auto new_task = redefine_start_function(querying_task, handle);
         fast_task::lock_guard lock(handle->no_race);
+
         if (handle->is_running && handle->now_at_execution < handle->at_execution_max) {
-            scheduler::start(new_task);
+            scheduler::start(std::move(new_task));
             handle->now_at_execution++;
         } else
-            handle->tasks.push_back(new_task);
+            handle->tasks.push_back(std::move(new_task));
     }
 
     void task_query::enable() {
@@ -102,8 +120,13 @@ namespace fast_task {
     }
 
     bool task_query::in_query(const std::shared_ptr<task>& task) {
-        if (get_data(task).started)
-            return false;
+        {
+            fast_task::lock_guard guard(get_data(task).no_race);
+            if (get_data(task).running || get_data(task).end_of_life)
+                return false;
+            if (get_data(task).started && (!get_data(task).suspended && get_data(task).is_on_scheduler))
+                return false;
+        }
         fast_task::lock_guard lock(handle->no_race);
         return std::find(handle->tasks.begin(), handle->tasks.end(), task) != handle->tasks.end();
     }

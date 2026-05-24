@@ -43,7 +43,6 @@ namespace fast_task::this_task {
                 fast_task::lock_guard guard(get_data(task).no_race);
                 get_data(task).is_restartable = false;
                 get_data(task).end_of_life = true;
-                get_data(task).started = true;
             }
             get_data(task).result_notify.notify_all();
         }
@@ -60,7 +59,7 @@ namespace fast_task::this_task {
             if (!(
                     get_data(loc.curr_task).is_on_scheduler == true &&
                     get_data(target).is_on_scheduler == true &&
-                    (get_data(target).started == false || get_data(target).is_restartable == true)
+                    (get_data(target).started == false || (get_data(target).suspended == true && get_data(target).is_restartable == true))
                 ))
                 return false;
 
@@ -73,8 +72,12 @@ namespace fast_task::this_task {
                 return false;
             ++loc.transfer_state.transfers;
 #endif
-            get_data(target).started = true;
-            ++glob.executing_tasks;
+            if (!get_data(target).started) {
+                get_data(target).started = true;
+                ++glob.executing_tasks;
+            } else if (get_data(target).suspended)
+                get_data(target).suspended = false;
+
             loc.transfer_state.pending = target;
             return true;
         } else

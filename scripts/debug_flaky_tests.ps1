@@ -1,6 +1,6 @@
 Set-Location -Path "$PSScriptRoot/../out/build/Win-Test/"
 $logFile = "$PSScriptRoot/../out/build/Win-Test/test_hunt_results_$(Get-Date -Format 'yyyyMMdd_HHmmss').log"
-$maxConcurrentJobs = 8
+$maxConcurrentJobs = 24
 $testExecutables = Get-ChildItem -Path ".\tests\*\Debug\*.exe" 
 
 # Initialize the log file
@@ -62,7 +62,7 @@ while ($pendingTests.Count -gt 0 -or $activeJobs.Count -gt 0) {
             $tempErr = [System.IO.Path]::GetTempFileName()
             $hung = $false
             
-            for ($attempt = 1; $attempt -le 20; $attempt++) {
+            for ($attempt = 1; $attempt -le 400; $attempt++) {
                 $process = Start-Process -FilePath $testPath -ArgumentList "--gtest_catch_exceptions=0", "-halt_on_exception" -PassThru -WindowStyle Hidden -RedirectStandardOutput $tempOut -RedirectStandardError $tempErr
                 $timeoutMs = 4000
                 $exitedCleanly = $process.WaitForExit($timeoutMs)
@@ -91,7 +91,7 @@ while ($pendingTests.Count -gt 0 -or $activeJobs.Count -gt 0) {
                     $jobOutput += "=== END HANG DATA ==="
                     break 
                 }elseif ($process.ExitCode -ne 0) {
-                    $hung = $true # Reuse the flag to break the 200-attempt loop
+                    $hung = $true # Reuse the flag to break the 400-attempt loop
                     
                     $jobOutput += "=== FAST CRASH at attempt $attempt ==="
                     $jobOutput += "Exit Code: $($process.ExitCode)"
@@ -111,7 +111,7 @@ while ($pendingTests.Count -gt 0 -or $activeJobs.Count -gt 0) {
             Remove-Item $tempOut, $tempErr -ErrorAction SilentlyContinue
             
             if (-not $hung) {
-                $jobOutput += "Result: COMPLETED 20 ATTEMPTS WITHOUT HANGING"
+                $jobOutput += "Result: COMPLETED 400 ATTEMPTS WITHOUT HANGING"
             }
             $jobOutput += "--- Finished hunt for: $testPath ---"
             
