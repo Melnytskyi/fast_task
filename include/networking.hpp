@@ -83,7 +83,6 @@ namespace fast_task::networking {
         } keep_alive_settings{};
     };
 
-
     enum class tcp_error : uint8_t {
         none = 0,
         remote_close = 1,
@@ -94,109 +93,104 @@ namespace fast_task::networking {
         undefined_error = 0xFF
     };
 
-    class FT_API tcp_network_stream {
-    public:
-        virtual ~tcp_network_stream() noexcept(false) {};
-        virtual std::span<char> read_available_ref() = 0;
-        virtual int read_available(char* buffer, int buffer_len) = 0;
-        virtual bool data_available() = 0;
-        virtual void write(const char* data, size_t size) = 0;
-        virtual bool write_file(char* path, size_t path_len, uint64_t data_len = 0, uint64_t offset = 0, uint32_t chunks_size = 0) = 0;
-#ifdef _WIN64
-        virtual bool write_file(void* fhandle, uint64_t data_len = 0, uint64_t offset = 0, uint32_t chunks_size = 0) = 0;
-#else
-        virtual bool write_file(int fhandle, uint64_t data_len = 0, uint64_t offset = 0, uint32_t chunks_size = 0) = 0;
-#endif
-        virtual void force_write() = 0;
-        virtual void force_write_and_close(const char* data, size_t size) = 0;
-        virtual void close() = 0;
-        virtual void reset() = 0;
-        virtual void rebuffer(int32_t new_size) = 0;
-        virtual bool is_closed() = 0;
-        virtual tcp_error error() = 0;
-        virtual address local_address() = 0;
-        virtual address remote_address() = 0;
+    enum class shutdown_mode : uint8_t {
+        read,
+        write,
+        read_write
     };
 
-    class FT_API tcp_network_blocking {
-    public:
-        virtual ~tcp_network_blocking() noexcept(false) {};
-        virtual std::vector<char> read(uint32_t len) = 0;
-        virtual uint32_t available_bytes() = 0;
-        virtual int64_t write(const char* data, uint32_t len) = 0;
-        virtual bool write_file(char* path, size_t len, uint64_t data_len = 0, uint64_t offset = 0, uint32_t block_size = 0) = 0;
-#ifdef _WIN64
-        virtual bool write_file(void* fhandle, uint64_t data_len = 0, uint64_t offset = 0, uint32_t block_size = 0) = 0;
-#else
-        virtual bool write_file(int fhandle, uint64_t data_len = 0, uint64_t offset = 0, uint32_t block_size = 0) = 0;
-#endif
-        virtual void close() = 0;
-        virtual void reset() = 0;
-        virtual void rebuffer(int32_t new_size) = 0;
-        virtual bool is_closed() = 0;
-        virtual tcp_error error() = 0;
-        virtual address local_address() = 0;
-        virtual address remote_address() = 0;
+    struct alignas(std::max_align_t) opaque_network_state {
+        std::byte data[192];
+
+        tcp_error get_error() const noexcept;
     };
 
-    class FT_API tcp_network_server {
-        class tcp_network_manager* handle;
+    class FT_API tcp_socket {
+        class manager;
+        std::unique_ptr<manager> handle;
 
     public:
-        tcp_network_server(std::function<void(tcp_network_blocking&)> on_connect, const address& ip_port, size_t acceptors = 10, const tcp_configuration& config = {});
-        tcp_network_server(std::function<void(tcp_network_stream&)> on_connect, const address& ip_port, size_t acceptors = 10, const tcp_configuration& config = {});
-        ~tcp_network_server();
-        void start();
-        void pause();
-        void resume();
-        void stop();
-        tcp_network_blocking* accept_blocking(bool ignore_acceptors = false);
-        tcp_network_stream* accept_stream(bool ignore_acceptors = false);
-        void _await();
+        tcp_socket();
+        tcp_socket(tcp_socket&&);
+        tcp_socket& operator=(tcp_socket&&);
+        ~tcp_socket();
 
-        std::vector<std::string> get_errors();
+        static std::optional<tcp_socket> connect(const address& ip_port, const tcp_configuration& config = {});
+        static std::optional<tcp_socket> connect(const address& ip_port, char* data, int32_t& size, const tcp_configuration& config = {});
 
-        bool is_running();
-        bool is_paused();
-        bool is_corrupted();
+        int32_t recv(std::span<char> data);
+        bool send(std::span<const uint8_t> data);
+        bool sendv(std::span<const std::span<const uint8_t>> data);
+        bool send_file(const char* file_path, size_t file_path_len, uint32_t data_len, uint64_t offset, uint32_t chunks_size);
+        bool send_file(class fast_task::files::file_handle& file_path, uint32_t data_len, uint64_t offset, uint32_t chunks_size);
 
-        uint16_t server_port();
-        std::string server_ip();
-        address server_address();
-        //apply to new connections
+        bool sendv_file(std::span<const std::span<const uint8_t>> prefix, const std::span<const uint8_t> postfix, const char* file_path, size_t file_path_len, uint32_t data_len, uint64_t offset, uint32_t chunks_size);
+        bool sendv_file(std::span<const std::span<const uint8_t>> prefix, const std::span<const uint8_t> postfix, class fast_task::files::file_handle& file_path, uint32_t data_len, uint64_t offset, uint32_t chunks_size);
+
+        void shutdown(shutdown_mode mode);
+        void reset(); //TCP RST
+        void close(); //shutdown + reset
+
+
         void set_configuration(const tcp_configuration& config);
-        void set_accept_filter(std::function<bool(address& client, address& server)>&& filter);
+        uint32_t available_bytes() const noexcept;
+        bool is_open() const noexcept;
+        tcp_error error() const noexcept;
+        address local_address() const noexcept;
+        address remote_address() const noexcept;
+
+        static bool enter_connect(const std::shared_ptr<task>& t, opaque_network_state& state, std::optional<tcp_socket>& res, const address& ip_port, const tcp_configuration& config = {});
+        static bool enter_connect(const std::shared_ptr<task>& t, opaque_network_state& state, std::optional<tcp_socket>& res, const address& ip_port, char* data, int32_t& size, const tcp_configuration& config = {});
+
+        bool enter_recv(const std::shared_ptr<task>& t, opaque_network_state& state, int32_t& bytes_read, std::span<char> data);
+        bool enter_send(const std::shared_ptr<task>& t, opaque_network_state& state, bool& success, std::span<const uint8_t> data);
+        bool enter_sendv(const std::shared_ptr<task>& t, opaque_network_state& state, bool& success, std::span<const std::span<const uint8_t>> data);
+        bool enter_send_file(const std::shared_ptr<task>& t, opaque_network_state& state, bool& success, const char* file_path, size_t file_path_len, uint32_t data_len, uint64_t offset, uint32_t chunks_size);
+        bool enter_send_file(const std::shared_ptr<task>& t, opaque_network_state& state, bool& success, class fast_task::files::file_handle& file_path, uint32_t data_len, uint64_t offset, uint32_t chunks_size);
+
+        bool enter_sendv_file(const std::shared_ptr<task>& t, opaque_network_state& state, bool& success, const std::span<const uint8_t> prefix, const std::span<const uint8_t> postfix, const char* file_path, size_t file_path_len, uint32_t data_len, uint64_t offset, uint32_t chunks_size);
+        bool enter_sendv_file(const std::shared_ptr<task>& t, opaque_network_state& state, bool& success, const std::span<const uint8_t> prefix, const std::span<const uint8_t> postfix, class fast_task::files::file_handle& file_path, uint32_t data_len, uint64_t offset, uint32_t chunks_size);
+
+        bool enter_shutdown(const std::shared_ptr<task>& t, opaque_network_state& state, shutdown_mode mode);
+        bool enter_reset(const std::shared_ptr<task>& t, opaque_network_state& state); //TCP RST
+        bool enter_close(const std::shared_ptr<task>& t, opaque_network_state& state); //shutdown + reset
     };
 
-    class FT_API tcp_client_socket {
-        class tcp_client_manager* handle;
-        tcp_client_socket();
+    class FT_API tcp_listener {
+        class manager;
+        std::unique_ptr<manager> handle;
 
     public:
-        ~tcp_client_socket();
-        static tcp_client_socket* connect(const address& ip_port, const tcp_configuration& config = {});
-        static tcp_client_socket* connect(const address& ip_port, char* data, uint32_t size, const tcp_configuration& config = {});
-        //apply to current connection
-        void set_configuration(const tcp_configuration& config);
-        int32_t recv(uint8_t* data, int32_t size);
-        bool send(uint8_t* data, int32_t size);
-        bool send_file(const char* file_path, size_t file_path_len, uint64_t data_len, uint64_t offset, uint32_t chunks_size);
-        bool send_file(class fast_task::files::file_handle& file_path, uint64_t data_len, uint64_t offset, uint32_t chunks_size);
+        tcp_listener();
+        tcp_listener(tcp_listener&&);
+        tcp_listener& operator=(tcp_listener&&);
+        ~tcp_listener();
+
+        static tcp_listener bind(const address& ip_port, const tcp_configuration& config = {});
+
+        std::optional<tcp_socket> accept();
+        bool enter_accept(const std::shared_ptr<task>& t, opaque_network_state& state, std::optional<tcp_socket>& res);
+
         void close();
-        void reset();
-        void rebuffer(int32_t size);
+        bool is_open() const noexcept;
+        bool enter_close(const std::shared_ptr<task>& t, opaque_network_state& state);
     };
 
-    struct FT_API udp_socket {
+    class FT_API udp_socket {
         class udp_handle* handle;
+
+    public:
         udp_socket(const address& ip_port, uint32_t timeout_ms);
         ~udp_socket();
 
-        uint32_t recv(uint8_t* data, uint32_t size, address& sender);
-        uint32_t send(uint8_t* data, uint32_t size, address& to);
+        uint32_t recv(std::span<uint8_t> data, address& sender);
+        uint32_t send(std::span<const uint8_t> data, address& to);
 
         address local_address();
         address remote_address();
+
+        bool enter_recv(const std::shared_ptr<task>& t, opaque_network_state& state, uint32_t& bytes_read, std::span<uint8_t> data, address& sender);
+        bool enter_send(const std::shared_ptr<task>& t, opaque_network_state& state, uint32_t& bytes_sent, std::span<const uint8_t> data, address& to);
     };
 
     uint8_t FT_API init_networking();
