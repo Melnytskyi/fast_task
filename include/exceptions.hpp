@@ -14,16 +14,16 @@ namespace fast_task {
         virtual const char* what() const noexcept = 0;
     };
 
-    //this exception should never be thrown
+    //this exception should never be thrown by user code
     struct FT_API invalid_switch final : public exception {
         inline const char* what() const noexcept override {
-            return "Caught task that switched context but not scheduled or finalized self. This could happen if the scheduler functions been called directly or the synchronization primitives is broken.";
+            return "Caught task which switched context but haven't scheduled or marked itself complete. This could happen if the scheduler functions has been called directly or the primitives are broken.";
         }
     };
 
     struct FT_API invalid_context : public exception {
         inline const char* what() const noexcept override {
-            return "Used function for invalid context";
+            return "Used function in invalid context.";
         }
     };
 
@@ -47,7 +47,7 @@ namespace fast_task {
 
     struct FT_API no_assignable_workers final : public exception {
         inline const char* what() const noexcept override {
-            return "Tried to assign task to binded workers, but there no worker that allows implicit start.";
+            return "Tried to assign task to binded workers, but there's no worker that allows implicit start.";
         }
     };
 
@@ -59,11 +59,11 @@ namespace fast_task {
 
     struct FT_API no_return_value final : public exception {
         inline const char* what() const noexcept override {
-            return "The coroutine not started and doesn't has any result.";
+            return "The coroutine is not started and doesn't has any result.";
         }
     };
 
-    //this exception should never be catched
+    //this exception should never be caught by the user code
     class FT_API task_cancellation {
         bool in_landing = false;
         friend void forceCancelCancellation(const task_cancellation& cancel_token);

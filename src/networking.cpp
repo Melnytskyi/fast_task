@@ -358,7 +358,7 @@ namespace fast_task::networking {
 
     struct native_state : public util::native_worker_handle {
         std::shared_ptr<task> awaiting_task;
-        int32_t* out_bytes_read = nullptr;
+        int32_t* out_processed_bytes = nullptr;
         int error = 0;
         void (*on_complete)(void*) = nullptr;
 
@@ -423,15 +423,15 @@ namespace fast_task::networking {
             DWORD cbTransfer = 0;
             if (!::WSAGetOverlappedResult(sock, &state->overlapped, &cbTransfer, FALSE, &dwFlags)) {
                 state->error = ::WSAGetLastError();
-            } else 
+            } else
                 state->error = 0;
 
             if (state->awaiting_task) {
-                if (state->out_bytes_read)
+                if (state->out_processed_bytes)
                     if (state->error)
-                        *state->out_bytes_read = -1;
+                        *state->out_processed_bytes = -1;
                     else
-                        *state->out_bytes_read = dwBytesTransferred;
+                        *state->out_processed_bytes = dwBytesTransferred;
                 if (state->on_complete)
                     state->on_complete(static_cast<void*>(state));
                 {
@@ -444,7 +444,7 @@ namespace fast_task::networking {
         bool set_configuration(const tcp_configuration& config) {
             int cfg = !config.allow_ip4;
 
-            if (setsockopt(sock, IPPROTO_IPV6, IPV6_V6ONLY, (char*)&cfg, sizeof(cfg)) == -1) 
+            if (setsockopt(sock, IPPROTO_IPV6, IPV6_V6ONLY, (char*)&cfg, sizeof(cfg)) == -1)
                 return false;
             //cfg = !config.enable_timestamps;
             //if (setsockopt(sock, IPPROTO_TCP, TCP_TIMESTAMPS, (char*)&cfg, sizeof(cfg)) == -1)
@@ -473,8 +473,8 @@ namespace fast_task::networking {
                     return false;
     #ifdef TCP_MAXRTMS
                 cfg = config.keep_alive_settings.user_timeout_ms;
-                if (setsockopt(sock, IPPROTO_TCP, TCP_MAXRTMS, (char*)&cfg, sizeof(cfg)) == -1) 
-                return false;
+                if (setsockopt(sock, IPPROTO_TCP, TCP_MAXRTMS, (char*)&cfg, sizeof(cfg)) == -1)
+                    return false;
     #else
                 cfg = config.keep_alive_settings.user_timeout_ms / 1000;
                 if (setsockopt(sock, IPPROTO_TCP, TCP_MAXRT, (char*)&cfg, sizeof(cfg)) == -1)
@@ -513,36 +513,348 @@ namespace fast_task::networking {
                 done = true;
                 cv.notify_one();
             });
-            
-            if (!tcp_socket::enter_connect(t, state, res, ip_port, config)){
+
+            if (!tcp_socket::enter_connect(t, state, res, ip_port, config)) {
                 std::unique_lock lock(mtx);
                 cv.wait(lock, [&] { return done; });
             }
         }
         return res;
     }
-    std::optional<tcp_socket> connect(const address& ip_port, char* data, int32_t& size, const tcp_configuration& config = {});
 
-    int32_t recv(std::span<char> data);
-    bool send(std::span<const uint8_t> data);
-    bool sendv(std::span<const std::span<const uint8_t>> data);
-    bool send_file(const char* file_path, size_t file_path_len, uint32_t data_len, uint64_t offset, uint32_t chunks_size);
-    bool send_file(class fast_task::files::file_handle& file_path, uint32_t data_len, uint64_t offset, uint32_t chunks_size);
+    std::optional<tcp_socket> tcp_socket::connect(const address& ip_port, char* data, int32_t& size, const tcp_configuration& config) {
+        std::optional<tcp_socket> res;
+        opaque_network_state state;
 
-    bool sendv_file(std::span<const std::span<const uint8_t>> prefix, const std::span<const uint8_t> postfix, const char* file_path, size_t file_path_len, uint32_t data_len, uint64_t offset, uint32_t chunks_size);
-    bool sendv_file(std::span<const std::span<const uint8_t>> prefix, const std::span<const uint8_t> postfix, class fast_task::files::file_handle& file_path, uint32_t data_len, uint64_t offset, uint32_t chunks_size);
+        if (loc.is_task_thread) {
+            mutex_unify mut(get_data(loc.curr_task).no_race);
+            std::lock_guard guard(mut);
+            if (!tcp_socket::enter_connect(loc.curr_task, state, res, ip_port, data, size, config))
+                swapCtxRelock(mut);
+        } else {
+            std::mutex mtx;
+            std::condition_variable cv;
+            bool done = false;
 
-    void shutdown(shutdown_mode mode);
-    void reset(); //TCP RST
-    void close(); //shutdown + reset
+            auto t = task::create([&] {
+                std::lock_guard lock(mtx);
+                done = true;
+                cv.notify_one();
+            });
 
+            if (!tcp_socket::enter_connect(t, state, res, ip_port, data, size, config)) {
+                std::unique_lock lock(mtx);
+                cv.wait(lock, [&] { return done; });
+            }
+        }
+        return res;
+    }
 
-    void set_configuration(const tcp_configuration& config);
-    uint32_t available_bytes() const noexcept;
-    bool is_open() const noexcept;
-    tcp_error error() const noexcept;
-    address local_address() const noexcept;
-    address remote_address() const noexcept;
+    int32_t tcp_socket::recv(std::span<char> data) {
+        opaque_network_state state;
+        int32_t bytes_read = 0;
+
+        if (loc.is_task_thread) {
+            mutex_unify mut(get_data(loc.curr_task).no_race);
+            std::lock_guard guard(mut);
+            if (!tcp_socket::enter_recv(loc.curr_task, state, bytes_read, data))
+                swapCtxRelock(mut);
+        } else {
+            std::mutex mtx;
+            std::condition_variable cv;
+            bool done = false;
+
+            auto t = task::create([&] {
+                std::lock_guard lock(mtx);
+                done = true;
+                cv.notify_one();
+            });
+
+            if (!tcp_socket::enter_recv(t, state, bytes_read, data)) {
+                std::unique_lock lock(mtx);
+                cv.wait(lock, [&] { return done; });
+            }
+        }
+        return bytes_read;
+    }
+
+    int32_t tcp_socket::send(std::span<const uint8_t> data) {
+        opaque_network_state state;
+        int32_t res = 0;
+
+        if (loc.is_task_thread) {
+            mutex_unify mut(get_data(loc.curr_task).no_race);
+            std::lock_guard guard(mut);
+            if (!tcp_socket::enter_send(loc.curr_task, state, res, data))
+                swapCtxRelock(mut);
+        } else {
+            std::mutex mtx;
+            std::condition_variable cv;
+            bool done = false;
+
+            auto t = task::create([&] {
+                std::lock_guard lock(mtx);
+                done = true;
+                cv.notify_one();
+            });
+
+            if (!tcp_socket::enter_send(t, state, res, data)) {
+                std::unique_lock lock(mtx);
+                cv.wait(lock, [&] { return done; });
+            }
+        }
+        return res;
+    }
+
+    int32_t tcp_socket::sendv(std::span<const std::span<const uint8_t>> data) {
+        opaque_network_state state;
+        int32_t res = 0;
+
+        if (loc.is_task_thread) {
+            mutex_unify mut(get_data(loc.curr_task).no_race);
+            std::lock_guard guard(mut);
+            if (!tcp_socket::enter_sendv(loc.curr_task, state, res, data))
+                swapCtxRelock(mut);
+        } else {
+            std::mutex mtx;
+            std::condition_variable cv;
+            bool done = false;
+            auto t = task::create([&] {
+                std::lock_guard lock(mtx);
+                done = true;
+                cv.notify_one();
+            });
+
+            if (!tcp_socket::enter_sendv(t, state, res, data)) {
+                std::unique_lock lock(mtx);
+                cv.wait(lock, [&] { return done; });
+            }
+        }
+        return res;
+    }
+
+    int32_t tcp_socket::send_file(const char* file_path, size_t file_path_len, uint32_t data_len, uint64_t offset, uint32_t chunks_size) {
+        opaque_network_state state;
+        int32_t res = 0;
+
+        if (loc.is_task_thread) {
+            mutex_unify mut(get_data(loc.curr_task).no_race);
+            std::lock_guard guard(mut);
+            if (!tcp_socket::enter_send_file(loc.curr_task, state, res, file_path, file_path_len, data_len, offset, chunks_size))
+                swapCtxRelock(mut);
+        } else {
+            std::mutex mtx;
+            std::condition_variable cv;
+            bool done = false;
+            auto t = task::create([&] {
+                std::lock_guard lock(mtx);
+                done = true;
+                cv.notify_one();
+            });
+
+            if (!tcp_socket::enter_send_file(t, state, res, file_path, file_path_len, data_len, offset, chunks_size)) {
+                std::unique_lock lock(mtx);
+                cv.wait(lock, [&] { return done; });
+            }
+        }
+        return res;
+    }
+
+    int32_t tcp_socket::send_file(class fast_task::files::file_handle& file, uint32_t data_len, uint64_t offset, uint32_t chunks_size) {
+        opaque_network_state state;
+        int32_t res = 0;
+
+        if (loc.is_task_thread) {
+            mutex_unify mut(get_data(loc.curr_task).no_race);
+            std::lock_guard guard(mut);
+            if (!tcp_socket::enter_send_file(loc.curr_task, state, res, file, data_len, offset, chunks_size))
+                swapCtxRelock(mut);
+        } else {
+            std::mutex mtx;
+            std::condition_variable cv;
+            bool done = false;
+            auto t = task::create([&] {
+                std::lock_guard lock(mtx);
+                done = true;
+                cv.notify_one();
+            });
+
+            if (!tcp_socket::enter_send_file(t, state, res, file, data_len, offset, chunks_size)) {
+                std::unique_lock lock(mtx);
+                cv.wait(lock, [&] { return done; });
+            }
+        }
+        return res;
+    }
+
+    int32_t tcp_socket::sendv_file(const std::span<const uint8_t> prefix, const std::span<const uint8_t> postfix, const char* file_path, size_t file_path_len, uint32_t data_len, uint64_t offset, uint32_t chunks_size) {
+        opaque_network_state state;
+        int32_t res = 0;
+
+        if (loc.is_task_thread) {
+            mutex_unify mut(get_data(loc.curr_task).no_race);
+            std::lock_guard guard(mut);
+            if (!tcp_socket::enter_sendv_file(loc.curr_task, state, res, prefix, postfix, file_path, file_path_len, data_len, offset, chunks_size))
+                swapCtxRelock(mut);
+        } else {
+            std::mutex mtx;
+            std::condition_variable cv;
+            bool done = false;
+            auto t = task::create([&] {
+                std::lock_guard lock(mtx);
+                done = true;
+                cv.notify_one();
+            });
+
+            if (!tcp_socket::enter_sendv_file(t, state, res, prefix, postfix, file_path, file_path_len, data_len, offset, chunks_size)) {
+                std::unique_lock lock(mtx);
+                cv.wait(lock, [&] { return done; });
+            }
+        }
+        return res;
+    }
+
+    int32_t tcp_socket::sendv_file(const std::span<const uint8_t> prefix, const std::span<const uint8_t> postfix, class fast_task::files::file_handle& file, uint32_t data_len, uint64_t offset, uint32_t chunks_size) {
+        opaque_network_state state;
+        int32_t res = 0;
+
+        if (loc.is_task_thread) {
+            mutex_unify mut(get_data(loc.curr_task).no_race);
+            std::lock_guard guard(mut);
+            if (!tcp_socket::enter_sendv_file(loc.curr_task, state, res, prefix, postfix, file, data_len, offset, chunks_size))
+                swapCtxRelock(mut);
+        } else {
+            std::mutex mtx;
+            std::condition_variable cv;
+            bool done = false;
+            auto t = task::create([&] {
+                std::lock_guard lock(mtx);
+                done = true;
+                cv.notify_one();
+            });
+
+            if (!tcp_socket::enter_sendv_file(t, state, res, prefix, postfix, file, data_len, offset, chunks_size)) {
+                std::unique_lock lock(mtx);
+                cv.wait(lock, [&] { return done; });
+            }
+        }
+        return res;
+    }
+
+    void tcp_socket::shutdown(shutdown_mode mode) {
+        opaque_network_state state;
+
+        if (loc.is_task_thread) {
+            mutex_unify mut(get_data(loc.curr_task).no_race);
+            std::lock_guard guard(mut);
+            if (!tcp_socket::enter_shutdown(loc.curr_task, state, mode))
+                swapCtxRelock(mut);
+        } else {
+            std::mutex mtx;
+            std::condition_variable cv;
+            bool done = false;
+            auto t = task::create([&] {
+                std::lock_guard lock(mtx);
+                done = true;
+                cv.notify_one();
+            });
+
+            if (!tcp_socket::enter_shutdown(t, state, mode)) {
+                std::unique_lock lock(mtx);
+                cv.wait(lock, [&] { return done; });
+            }
+        }
+    }
+
+    void tcp_socket::reset() {
+        opaque_network_state state;
+
+        if (loc.is_task_thread) {
+            mutex_unify mut(get_data(loc.curr_task).no_race);
+            std::lock_guard guard(mut);
+            if (!tcp_socket::enter_reset(loc.curr_task, state))
+                swapCtxRelock(mut);
+        } else {
+            std::mutex mtx;
+            std::condition_variable cv;
+            bool done = false;
+            auto t = task::create([&] {
+                std::lock_guard lock(mtx);
+                done = true;
+                cv.notify_one();
+            });
+
+            if (!tcp_socket::enter_reset(t, state)) {
+                std::unique_lock lock(mtx);
+                cv.wait(lock, [&] { return done; });
+            }
+        }
+    }
+
+    void tcp_socket::close() {
+        opaque_network_state state;
+
+        if (loc.is_task_thread) {
+            mutex_unify mut(get_data(loc.curr_task).no_race);
+            std::lock_guard guard(mut);
+            if (!tcp_socket::enter_close(loc.curr_task, state))
+                swapCtxRelock(mut);
+        } else {
+            std::mutex mtx;
+            std::condition_variable cv;
+            bool done = false;
+            auto t = task::create([&] {
+                std::lock_guard lock(mtx);
+                done = true;
+                cv.notify_one();
+            });
+
+            if (!tcp_socket::enter_close(t, state)) {
+                std::unique_lock lock(mtx);
+                cv.wait(lock, [&] { return done; });
+            }
+        }
+    }
+
+    void tcp_socket::set_configuration(const tcp_configuration& config) {
+        if (handle)
+            handle->set_configuration(config);
+    }
+
+    uint32_t tcp_socket::available_bytes() const noexcept {
+        if (!handle || handle->get_socket() == INVALID_SOCKET)
+            return 0;
+        u_long bytes = 0;
+        if (ioctlsocket(handle->get_socket(), FIONREAD, &bytes) == SOCKET_ERROR)
+            return 0;
+        return bytes;
+    }
+
+    bool tcp_socket::is_open() const noexcept {
+        return handle && handle->get_socket() != INVALID_SOCKET;
+    }
+
+    address tcp_socket::local_address() const noexcept {
+        if (!handle || handle->get_socket() == INVALID_SOCKET)
+            return address();
+
+        sockaddr_storage addr;
+        socklen_t addr_len = sizeof(addr);
+        if (getsockname(handle->get_socket(), (sockaddr*)&addr, &addr_len) == -1)
+            return address();
+        return to_address(&addr);
+    }
+
+    address tcp_socket::remote_address() const noexcept {
+        if (!handle || handle->get_socket() == INVALID_SOCKET)
+            return address();
+
+        sockaddr_storage addr;
+        socklen_t addr_len = sizeof(addr);
+        if (getpeername(handle->get_socket(), (sockaddr*)&addr, &addr_len) == -1)
+            return address();
+        return to_address(&addr);
+    }
 
     bool tcp_socket::enter_connect(const std::shared_ptr<task>& t, opaque_network_state& state, std::optional<tcp_socket>& res, const address& ip_port, const tcp_configuration& config) {
         SOCKET sock = ::WSASocketW(AF_INET, SOCK_STREAM, IPPROTO_TCP, NULL, 0, WSA_FLAG_OVERLAPPED);
@@ -598,7 +910,7 @@ namespace fast_task::networking {
 
         auto& n_state = *new (&state) native_state(mgr.get());
         n_state.awaiting_task = t;
-        n_state.out_bytes_read = &size;
+        n_state.out_processed_bytes = &size;
 
         if (!_ConnectEx(sock, (sockaddr*)ip_port.get_data(), ip_port.data_size(), data, 0, (PDWORD)&size, &n_state.overlapped)) {
             int err = ::WSAGetLastError();
@@ -629,16 +941,15 @@ namespace fast_task::networking {
 
         auto& n_state = *new (&state) native_state(handle.get());
         n_state.awaiting_task = t;
-        n_state.out_bytes_read = &bytes_read;
+        n_state.out_processed_bytes = &bytes_read;
 
         WSABUF wsaBuf;
         wsaBuf.buf = data.data();
         wsaBuf.len = static_cast<ULONG>(data.size());
 
         DWORD flags = 0;
-        DWORD bytesReceived = 0;
 
-        if (::WSARecv(handle->get_socket(), &wsaBuf, 1, &bytesReceived, &flags, &n_state.overlapped, NULL) == SOCKET_ERROR) {
+        if (::WSARecv(handle->get_socket(), &wsaBuf, 1, (PDWORD)&bytes_read, &flags, &n_state.overlapped, NULL) == SOCKET_ERROR) {
             int err = ::WSAGetLastError();
             if (err != WSA_IO_PENDING) {
                 n_state.error = err;
@@ -650,7 +961,6 @@ namespace fast_task::networking {
             return false;
         }
 
-        bytes_read = bytesReceived;
         n_state.error = 0;
         return true;
     }
@@ -661,26 +971,23 @@ namespace fast_task::networking {
         send_state(util::native_worker_manager* mgr) : native_state(mgr) {}
     };
 
-    bool tcp_socket::enter_send(const std::shared_ptr<task>& t, opaque_network_state& state, bool& success, std::span<const uint8_t> data) {
-
+    bool tcp_socket::enter_send(const std::shared_ptr<task>& t, opaque_network_state& state, int32_t& bytes_sent, std::span<const uint8_t> data) {
         auto& ns = *new (&state) send_state(handle.get());
         ns.awaiting_task = t;
+        ns.out_processed_bytes = &bytes_sent;
         ns.buf.buf = (CHAR*)data.data();
         ns.buf.len = (ULONG)data.size();
 
-        DWORD bytesSent = 0;
-        int res = ::WSASend(handle->get_socket(), &ns.buf, 1, &bytesSent, 0, &ns.overlapped, NULL);
+        int res = ::WSASend(handle->get_socket(), &ns.buf, 1, (PDWORD)&bytes_sent, 0, &ns.overlapped, NULL);
 
-        if (res == 0) {
-            success = true;
+        if (res == 0)
             return true;
-        }
 
         int err = ::WSAGetLastError();
         if (err == WSA_IO_PENDING)
             return false;
 
-        success = false;
+        bytes_sent = -1;
         ns.error = err;
         return true;
     }
@@ -702,9 +1009,10 @@ namespace fast_task::networking {
         }
     };
 
-    bool tcp_socket::enter_sendv(const std::shared_ptr<task>& t, opaque_network_state& state, bool& success, std::span<const std::span<const uint8_t>> data) {
+    bool tcp_socket::enter_sendv(const std::shared_ptr<task>& t, opaque_network_state& state, int32_t& bytes_sent, std::span<const std::span<const uint8_t>> data) {
         auto& ns = *new (&state) sendv_state(handle.get());
         ns.awaiting_task = t;
+        ns.out_processed_bytes = &bytes_sent;
 
         if (data.size() <= sendv_state::max_inline_buffers)
             ns.bufs = ns.inline_bufs;
@@ -722,20 +1030,16 @@ namespace fast_task::networking {
             }
         }
 
-        DWORD bytesSent = 0;
-        int res = ::WSASend(handle->get_socket(), ns.bufs, buf_count, &bytesSent, 0, &ns.overlapped, NULL);
+        int res = ::WSASend(handle->get_socket(), ns.bufs, buf_count, (PDWORD)&bytes_sent, 0, &ns.overlapped, NULL);
 
-        if (res == 0) {
-            success = true;
+        if (res == 0)
             return false;
-        }
 
         int err = ::WSAGetLastError();
-        if (err == WSA_IO_PENDING) {
+        if (err == WSA_IO_PENDING)
             return true;
-        }
 
-        success = false;
+        bytes_sent = -1;
         ns.error = err;
         return false;
     }
@@ -767,13 +1071,14 @@ namespace fast_task::networking {
         }
     };
 
-    bool tcp_socket::enter_send_file(const std::shared_ptr<task>& t, opaque_network_state& state, bool& success, const char* file_path, size_t file_path_len, uint32_t data_len, uint64_t offset, uint32_t chunks_size) {
+    bool tcp_socket::enter_send_file(const std::shared_ptr<task>& t, opaque_network_state& state, int32_t& bytes_sent, const char* file_path, size_t file_path_len, uint32_t data_len, uint64_t offset, uint32_t chunks_size) {
         auto& ns = *new (&state) transmit_file_state(handle.get());
         ns.awaiting_task = t;
+        ns.out_processed_bytes = &bytes_sent;
 
         ns.file_handle = ::CreateFileA(file_path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, NULL);
         if (ns.file_handle == INVALID_HANDLE_VALUE) {
-            success = false;
+            bytes_sent = 0;
             ns.error = ::GetLastError();
             return true;
         }
@@ -785,7 +1090,7 @@ namespace fast_task::networking {
         BOOL res = _TransmitFile(handle->get_socket(), ns.file_handle, data_len, chunks_size, &ns.overlapped, NULL, 0);
 
         if (res == TRUE) {
-            success = true;
+            bytes_sent = static_cast<int32_t>(data_len);
             return true;
         }
         int err = ::WSAGetLastError();
@@ -795,14 +1100,15 @@ namespace fast_task::networking {
         ::CloseHandle(ns.file_handle);
         ns.file_handle = INVALID_HANDLE_VALUE;
         ns.close_file_on_complete = false;
-        success = false;
+        bytes_sent = -1;
         ns.error = err;
         return true;
     }
 
-    bool tcp_socket::enter_send_file(const std::shared_ptr<task>& t, opaque_network_state& state, bool& success, class fast_task::files::file_handle& file_path, uint32_t data_len, uint64_t offset, uint32_t chunks_size) {
+    bool tcp_socket::enter_send_file(const std::shared_ptr<task>& t, opaque_network_state& state, int32_t& bytes_sent, class fast_task::files::file_handle& file_path, uint32_t data_len, uint64_t offset, uint32_t chunks_size) {
         auto& ns = *new (&state) transmit_file_state(handle.get());
         ns.awaiting_task = t;
+        ns.out_processed_bytes = &bytes_sent;
 
         ns.file_handle = (HANDLE)file_path.internal_get_handle();
         ns.close_file_on_complete = false;
@@ -813,14 +1119,14 @@ namespace fast_task::networking {
         BOOL res = _TransmitFile(handle->get_socket(), ns.file_handle, data_len, chunks_size, &ns.overlapped, NULL, 0);
 
         if (res == TRUE) {
-            success = true;
+            bytes_sent = static_cast<int32_t>(data_len);
             return true;
         }
         int err = ::WSAGetLastError();
         if (err == ERROR_IO_PENDING || err == WSA_IO_PENDING)
             return false;
 
-        success = false;
+        bytes_sent = -1;
         ns.error = err;
         return true;
     }
@@ -831,16 +1137,17 @@ namespace fast_task::networking {
         transmit_filev_state(util::native_worker_manager* mgr) : transmit_file_state(mgr) {}
     };
 
-    bool tcp_socket::enter_sendv_file(const std::shared_ptr<task>& t, opaque_network_state& state, bool& success, const std::span<const uint8_t> prefix, const std::span<const uint8_t> postfix, const char* file_path, size_t file_path_len, uint32_t data_len, uint64_t offset, uint32_t chunks_size) {
+    bool tcp_socket::enter_sendv_file(const std::shared_ptr<task>& t, opaque_network_state& state, int32_t& bytes_sent, const std::span<const uint8_t> prefix, const std::span<const uint8_t> postfix, const char* file_path, size_t file_path_len, uint32_t data_len, uint64_t offset, uint32_t chunks_size) {
         if (prefix.size() > 0xFFFFFFFF || postfix.size() > 0xFFFFFFFF)
             throw std::invalid_argument("Prefix or postfix too large for TransmitFile");
 
         auto& ns = *new (&state) transmit_filev_state(handle.get());
         ns.awaiting_task = t;
+        ns.out_processed_bytes = &bytes_sent;
 
         ns.file_handle = ::CreateFileA(file_path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, NULL);
         if (ns.file_handle == INVALID_HANDLE_VALUE) {
-            success = false;
+            bytes_sent = -1;
             ns.error = ::GetLastError();
             return true;
         }
@@ -861,7 +1168,7 @@ namespace fast_task::networking {
         BOOL res = _TransmitFile(handle->get_socket(), ns.file_handle, data_len, chunks_size, &ns.overlapped, (ns.tfb.HeadLength || ns.tfb.TailLength) ? &ns.tfb : NULL, 0);
 
         if (res == TRUE) {
-            success = true;
+            bytes_sent = static_cast<int32_t>(data_len) + static_cast<int32_t>(prefix.size()) + static_cast<int32_t>(postfix.size());
             return true;
         }
         int err = ::WSAGetLastError();
@@ -872,16 +1179,17 @@ namespace fast_task::networking {
         ns.file_handle = INVALID_HANDLE_VALUE;
         ns.close_file_on_complete = false;
 
-        success = false;
+        bytes_sent = -1;
         ns.error = err;
         return true;
     }
 
-    bool tcp_socket::enter_sendv_file(const std::shared_ptr<task>& t, opaque_network_state& state, bool& success, const std::span<const uint8_t> prefix, const std::span<const uint8_t> postfix, class fast_task::files::file_handle& file_path, uint32_t data_len, uint64_t offset, uint32_t chunks_size) {
+    bool tcp_socket::enter_sendv_file(const std::shared_ptr<task>& t, opaque_network_state& state, int32_t& bytes_sent, const std::span<const uint8_t> prefix, const std::span<const uint8_t> postfix, class fast_task::files::file_handle& file_path, uint32_t data_len, uint64_t offset, uint32_t chunks_size) {
         if (prefix.size() > 0xFFFFFFFF || postfix.size() > 0xFFFFFFFF)
             throw std::invalid_argument("Prefix or postfix too large for TransmitFile");
         auto& ns = *new (&state) transmit_filev_state(handle.get());
         ns.awaiting_task = t;
+        ns.out_processed_bytes = &bytes_sent;
 
         ns.file_handle = (HANDLE)file_path.internal_get_handle();
         ns.close_file_on_complete = false;
@@ -901,15 +1209,14 @@ namespace fast_task::networking {
         BOOL res = _TransmitFile(handle->get_socket(), ns.file_handle, data_len, chunks_size, &ns.overlapped, (ns.tfb.HeadLength || ns.tfb.TailLength) ? &ns.tfb : NULL, 0);
 
         if (res == TRUE) {
-            success = true;
+            bytes_sent = static_cast<int32_t>(data_len) + static_cast<int32_t>(prefix.size()) + static_cast<int32_t>(postfix.size());
             return true;
         }
         int err = ::WSAGetLastError();
         if (err == ERROR_IO_PENDING || err == WSA_IO_PENDING)
             return false;
 
-
-        success = false;
+        bytes_sent = -1;
         ns.error = err;
         return true;
     }
@@ -933,7 +1240,7 @@ namespace fast_task::networking {
         auto& ns = *new (&state) native_state(handle.get());
         ns.awaiting_task = nullptr;
 
-        if (res == SOCKET_ERROR) 
+        if (res == SOCKET_ERROR)
             ns.error = ::WSAGetLastError();
 
         return true;
@@ -950,11 +1257,11 @@ namespace fast_task::networking {
 
         BOOL res = _DisconnectEx(handle->get_socket(), &ns.overlapped, 0, 0);
 
-        if (res == TRUE) 
+        if (res == TRUE)
             return true;
 
         int err = ::WSAGetLastError();
-        if (err == WSA_IO_PENDING) 
+        if (err == WSA_IO_PENDING)
             return false;
 
         ns.error = err;
@@ -967,7 +1274,7 @@ namespace fast_task::networking {
 
         BOOL res = _DisconnectEx(handle->get_socket(), &ns.overlapped, 0, 0);
 
-        if (res == TRUE) 
+        if (res == TRUE)
             return true;
 
         int err = ::WSAGetLastError();
@@ -2496,214 +2803,6 @@ namespace fast_task::networking {
         inited = false;
     }
 #endif
-
-    tcp_network_server::tcp_network_server(std::function<void(tcp_network_blocking&)> on_connect, const address& ip_port, size_t acceptors, const tcp_configuration& config) {
-        if (!inited)
-            init_networking();
-        handle = new tcp_network_manager(ip_port, acceptors, config);
-        handle->set_on_connect(on_connect);
-    }
-
-    tcp_network_server::tcp_network_server(std::function<void(tcp_network_stream&)> on_connect, const address& ip_port, size_t acceptors, const tcp_configuration& config) {
-        if (!inited)
-            init_networking();
-        handle = new tcp_network_manager(ip_port, acceptors, config);
-        handle->set_on_connect(on_connect);
-    }
-
-    tcp_network_server::~tcp_network_server() {
-        if (handle)
-            delete handle;
-        handle = nullptr;
-    }
-
-    void tcp_network_server::start() {
-        handle->start();
-    }
-
-    void tcp_network_server::pause() {
-        handle->pause();
-    }
-
-    void tcp_network_server::resume() {
-        handle->resume();
-    }
-
-    void tcp_network_server::stop() {
-        handle->shutdown();
-    }
-
-    bool tcp_network_server::is_running() {
-        return handle->in_run();
-    }
-
-    tcp_network_blocking* tcp_network_server::accept_blocking(bool ignore_acceptors) {
-        return handle->accept_blocking(ignore_acceptors);
-    }
-
-    tcp_network_stream* tcp_network_server::accept_stream(bool ignore_acceptors) {
-        return handle->accept_stream(ignore_acceptors);
-    }
-
-    void tcp_network_server::_await() {
-        handle->_await();
-    }
-
-    std::vector<std::string> tcp_network_server::get_errors() {
-        return handle->get_errors();
-    }
-
-    bool tcp_network_server::is_corrupted() {
-        return handle->is_corrupted();
-    }
-
-    uint16_t tcp_network_server::server_port() {
-        return handle->port();
-    }
-
-    std::string tcp_network_server::server_ip() {
-        return handle->ip();
-    }
-
-    address tcp_network_server::server_address() {
-        return handle->get_address();
-    }
-
-    bool tcp_network_server::is_paused() {
-        return handle->is_paused();
-    }
-
-    void tcp_network_server::set_configuration(const tcp_configuration& config) {
-        if (handle)
-            handle->set_configuration(config);
-    }
-
-    void tcp_network_server::set_accept_filter(std::function<bool(address&, address&)>&& filter) {
-        if (handle)
-            handle->set_accept_filter(std::move(filter));
-    }
-
-    tcp_client_socket::tcp_client_socket()
-        : handle(nullptr) {}
-
-    tcp_client_socket::~tcp_client_socket() {
-        if (handle)
-            delete handle;
-        handle = nullptr;
-    }
-
-    tcp_client_socket* tcp_client_socket::connect(const address& ip_port, const tcp_configuration& configuration) {
-        if (!inited)
-            init_networking();
-        sockaddr_storage& address = from_address(ip_port);
-        std::unique_ptr<tcp_client_socket> result;
-        result.reset(new tcp_client_socket());
-        result->handle = new tcp_client_manager((sockaddr_in6&)address, configuration);
-        return result.release();
-    }
-
-    tcp_client_socket* tcp_client_socket::connect(const address& ip_port, char* data, uint32_t size, const tcp_configuration& configuration) {
-        if (!inited)
-            init_networking();
-        sockaddr_storage& address = from_address(ip_port);
-        std::unique_ptr<tcp_client_socket> result;
-        result.reset(new tcp_client_socket());
-        result->handle = new tcp_client_manager((sockaddr_in6&)address, data, size, configuration);
-        return result.release();
-    }
-
-    void tcp_client_socket::set_configuration(const tcp_configuration& config) {
-        if (handle)
-            handle->set_configuration(config);
-    }
-
-    int32_t tcp_client_socket::recv(uint8_t* data, int32_t size) {
-        if (!inited)
-            init_networking();
-
-        if (handle)
-            return handle->read((char*)data, size);
-        return 0;
-    }
-
-    bool tcp_client_socket::send(uint8_t* data, int32_t size) {
-        if (!inited)
-            init_networking();
-        if (handle)
-            return handle->write((char*)data, size);
-        return false;
-    }
-
-    bool tcp_client_socket::send_file(const char* file_path, size_t file_path_len, uint64_t data_len, uint64_t offset, uint32_t chunks_size) {
-        if (!handle)
-            return false;
-        return handle->write_file(file_path, file_path_len, data_len, offset, chunks_size);
-    }
-
-    bool tcp_client_socket::send_file(class fast_task::files::file_handle& file, uint64_t data_len, uint64_t offset, uint32_t chunks_size) {
-        if (!handle)
-            return false;
-        return handle->write_file(file.internal_get_handle(), data_len, offset, chunks_size);
-    }
-
-    void tcp_client_socket::close() {
-        if (handle) {
-            handle->close();
-            delete handle;
-            handle = nullptr;
-        }
-    }
-
-    void tcp_client_socket::reset() {
-        if (handle) {
-            handle->reset();
-            delete handle;
-            handle = nullptr;
-        }
-    }
-
-    void tcp_client_socket::rebuffer(int32_t size) {
-        if (handle)
-            handle->rebuffer(size);
-    }
-
-    udp_socket::udp_socket(const address& ip_port, uint32_t timeout_ms) {
-        handle = new udp_handle((sockaddr_in6&)from_address(ip_port), timeout_ms);
-    }
-
-    udp_socket::~udp_socket() {
-        if (handle)
-            delete handle;
-    }
-
-    uint32_t udp_socket::recv(uint8_t* data, uint32_t size, address& sender) {
-        sockaddr_storage& sender_address = from_address(sender);
-        int sender_len = sizeof(sender_address);
-        handle->recv(data, size, sender_address, sender_len);
-        if (handle->fullifed_bytes == 0 && handle->last_error != 0)
-            throw std::runtime_error("Received error while trying to receive data from udp socket with error or status code: " + std::to_string(handle->last_error));
-        return handle->fullifed_bytes;
-    }
-
-    uint32_t udp_socket::send(uint8_t* data, uint32_t size, address& to) {
-        sockaddr_storage& to_ip_port = from_address(to);
-        handle->send(data, size, to_ip_port);
-        if (handle->fullifed_bytes == 0 && handle->last_error != 0)
-            throw std::runtime_error("Received error while trying to receive data from udp socket with error or status code: " + std::to_string(handle->last_error));
-        return handle->fullifed_bytes;
-    }
-
-    address udp_socket::local_address() {
-        if (!handle)
-            return {};
-        return handle->local_address();
-    }
-
-    address udp_socket::remote_address() {
-        if (!handle)
-            return {};
-        return handle->remote_address();
-    }
 
     bool ipv6_supported() {
         if (!inited)
