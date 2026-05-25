@@ -1,6 +1,6 @@
 #ifndef INCLUDE_COROUTINE_FILE
 #define INCLUDE_COROUTINE_FILE
-#include "../files.hpp"
+#include "../file.hpp"
 #include "../polyfill/expected.hpp"
 #include "core.hpp"
 #include "detail/lock_misc.hpp"
@@ -9,10 +9,10 @@ namespace fast_task {
     namespace detail {
         template <typename T>
         class [[nodiscard("I/O operations must be awaited or explicitly canceled")]] io_handle {
-            files::io_operation<T> op;
+            file::io_operation<T> op;
 
         public:
-            io_handle(files::io_operation<T>&& op)
+            io_handle(file::io_operation<T>&& op)
                 : op(std::move(op)) {}
 
             io_handle(const io_handle&) = delete;
@@ -67,10 +67,10 @@ namespace fast_task {
 
         template <>
         class [[nodiscard("I/O operations must be awaited or explicitly canceled")]] io_handle<void> {
-            files::io_operation<void> op;
+            file::io_operation<void> op;
 
         public:
-            io_handle(files::io_operation<void>&& op)
+            io_handle(file::io_operation<void>&& op)
                 : op(std::move(op)) {}
 
             io_handle(const io_handle&) = delete;
@@ -125,11 +125,11 @@ namespace fast_task {
 
         template <typename T>
         class [[nodiscard("I/O operations must be awaited or explicitly canceled")]] io_handle_until {
-            files::io_operation<T> op;
+            file::io_operation<T> op;
             std::chrono::high_resolution_clock::time_point tp;
 
         public:
-            io_handle_until(files::io_operation<T>&& op, std::chrono::high_resolution_clock::time_point tp)
+            io_handle_until(file::io_operation<T>&& op, std::chrono::high_resolution_clock::time_point tp)
                 : op(std::move(op)), tp(tp) {}
 
             io_handle_until(const io_handle_until&) = delete;
@@ -186,11 +186,11 @@ namespace fast_task {
 
         template <>
         class [[nodiscard("I/O operations must be awaited or explicitly canceled")]] io_handle_until<void> {
-            files::io_operation<void> op;
+            file::io_operation<void> op;
             std::chrono::high_resolution_clock::time_point tp;
 
         public:
-            io_handle_until(files::io_operation<void>&& op, std::chrono::high_resolution_clock::time_point tp)
+            io_handle_until(file::io_operation<void>&& op, std::chrono::high_resolution_clock::time_point tp)
                 : op(std::move(op)), tp(tp) {}
 
             io_handle_until(const io_handle_until&) = delete;
@@ -249,10 +249,10 @@ namespace fast_task {
 
         template <typename T>
         class [[nodiscard("I/O operations must be awaited or explicitly canceled")]] safe_io_handle {
-            files::io_operation<T> op;
+            file::io_operation<T> op;
 
         public:
-            safe_io_handle(files::io_operation<T>&& op)
+            safe_io_handle(file::io_operation<T>&& op)
                 : op(std::move(op)) {}
 
             safe_io_handle(const safe_io_handle&) = delete;
@@ -277,7 +277,7 @@ namespace fast_task {
                     return !self.op.enter_wait(h.promise->task_object);
                 }
 
-                polyfill::expected<T, files::io_errors> await_resume() {
+                polyfill::expected<T, file::io_errors> await_resume() {
                     if (auto err = self.op.get_error())
                         return polyfill::unexpected(*err);
                     return *self.op.try_get();
@@ -309,10 +309,10 @@ namespace fast_task {
 
         template <>
         class [[nodiscard("I/O operations must be awaited or explicitly canceled")]] safe_io_handle<void> {
-            files::io_operation<void> op;
+            file::io_operation<void> op;
 
         public:
-            safe_io_handle(files::io_operation<void>&& op)
+            safe_io_handle(file::io_operation<void>&& op)
                 : op(std::move(op)) {}
 
             safe_io_handle(const safe_io_handle&) = delete;
@@ -337,7 +337,7 @@ namespace fast_task {
                     return !self.op.enter_wait(h.promise->task_object);
                 }
 
-                polyfill::expected<void, files::io_errors> await_resume() {
+                polyfill::expected<void, file::io_errors> await_resume() {
                     if (auto err = self.op.get_error())
                         return polyfill::unexpected(*err);
                     return {};
@@ -369,11 +369,11 @@ namespace fast_task {
 
         template <typename T>
         class [[nodiscard("I/O operations must be awaited or explicitly canceled")]] safe_io_handle_until {
-            files::io_operation<T> op;
+            file::io_operation<T> op;
             std::chrono::high_resolution_clock::time_point tp;
 
         public:
-            safe_io_handle_until(files::io_operation<T>&& op, std::chrono::high_resolution_clock::time_point tp)
+            safe_io_handle_until(file::io_operation<T>&& op, std::chrono::high_resolution_clock::time_point tp)
                 : op(std::move(op)), tp(tp) {}
 
             safe_io_handle_until(const safe_io_handle_until&) = delete;
@@ -430,11 +430,11 @@ namespace fast_task {
 
         template <>
         class [[nodiscard("I/O operations must be awaited or explicitly canceled")]] safe_io_handle_until<void> {
-            files::io_operation<void> op;
+            file::io_operation<void> op;
             std::chrono::high_resolution_clock::time_point tp;
 
         public:
-            safe_io_handle_until(files::io_operation<void>&& op, std::chrono::high_resolution_clock::time_point tp)
+            safe_io_handle_until(file::io_operation<void>&& op, std::chrono::high_resolution_clock::time_point tp)
                 : op(std::move(op)), tp(tp) {}
 
             safe_io_handle_until(const safe_io_handle_until&) = delete;
@@ -460,7 +460,7 @@ namespace fast_task {
                     return !self.op.enter_wait_until(h.promise->task_object, self.tp);
                 }
 
-                polyfill::expected<bool, files::io_errors> await_resume() {
+                polyfill::expected<bool, file::io_errors> await_resume() {
                     if (auto err = self.op.get_error())
                         return polyfill::unexpected(*err);
                     return {self.op.is_done()};
@@ -491,185 +491,185 @@ namespace fast_task {
         };
     }
 
-    inline auto async_read(files::file_handle& handle, uint32_t size) {
+    inline auto async_read(file::file_handle& handle, uint32_t size) {
         return detail::io_handle{handle.make_read(size)};
     }
 
-    inline auto async_read_at(files::file_handle& handle, uint64_t offset, uint32_t size) {
+    inline auto async_read_at(file::file_handle& handle, uint64_t offset, uint32_t size) {
         return detail::io_handle{handle.make_read_at(offset, size)};
     }
 
-    inline auto async_read_fixed(files::file_handle& handle, uint32_t size) {
+    inline auto async_read_fixed(file::file_handle& handle, uint32_t size) {
         return detail::io_handle{handle.make_read_fixed(size)};
     }
 
-    inline auto async_read_fixed_at(files::file_handle& handle, uint64_t offset, uint32_t size) {
+    inline auto async_read_fixed_at(file::file_handle& handle, uint64_t offset, uint32_t size) {
         return detail::io_handle{handle.make_read_fixed_at(offset, size)};
     }
 
-    inline auto async_write(files::file_handle& handle, const uint8_t* data, uint32_t size) {
+    inline auto async_write(file::file_handle& handle, const uint8_t* data, uint32_t size) {
         return detail::io_handle{handle.make_write(data, size)};
     }
 
-    inline auto async_write_at(files::file_handle& handle, uint64_t offset, const uint8_t* data, uint32_t size) {
+    inline auto async_write_at(file::file_handle& handle, uint64_t offset, const uint8_t* data, uint32_t size) {
         return detail::io_handle{handle.make_write_at(offset, data, size)};
     }
 
-    inline auto async_append(files::file_handle& handle, const uint8_t* data, uint32_t size) {
+    inline auto async_append(file::file_handle& handle, const uint8_t* data, uint32_t size) {
         return detail::io_handle{handle.make_append(data, size)};
     }
 
-    inline auto async_read_until(files::file_handle& handle, uint32_t size, std::chrono::high_resolution_clock::time_point time_point) {
+    inline auto async_read_until(file::file_handle& handle, uint32_t size, std::chrono::high_resolution_clock::time_point time_point) {
         return detail::io_handle_until{handle.make_read(size), time_point};
     }
 
-    inline auto async_read_at_until(files::file_handle& handle, uint64_t offset, uint32_t size, std::chrono::high_resolution_clock::time_point time_point) {
+    inline auto async_read_at_until(file::file_handle& handle, uint64_t offset, uint32_t size, std::chrono::high_resolution_clock::time_point time_point) {
         return detail::io_handle_until{handle.make_read_at(offset, size), time_point};
     }
 
-    inline auto async_read_fixed_until(files::file_handle& handle, uint32_t size, std::chrono::high_resolution_clock::time_point time_point) {
+    inline auto async_read_fixed_until(file::file_handle& handle, uint32_t size, std::chrono::high_resolution_clock::time_point time_point) {
         return detail::io_handle_until{handle.make_read_fixed(size), time_point};
     }
 
-    inline auto async_read_fixed_at_until(files::file_handle& handle, uint64_t offset, uint32_t size, std::chrono::high_resolution_clock::time_point time_point) {
+    inline auto async_read_fixed_at_until(file::file_handle& handle, uint64_t offset, uint32_t size, std::chrono::high_resolution_clock::time_point time_point) {
         return detail::io_handle_until{handle.make_read_fixed_at(offset, size), time_point};
     }
 
-    inline auto async_write_until(files::file_handle& handle, const uint8_t* data, uint32_t size, std::chrono::high_resolution_clock::time_point time_point) {
+    inline auto async_write_until(file::file_handle& handle, const uint8_t* data, uint32_t size, std::chrono::high_resolution_clock::time_point time_point) {
         return detail::io_handle_until{handle.make_write(data, size), time_point};
     }
 
-    inline auto async_write_at_until(files::file_handle& handle, uint64_t offset, const uint8_t* data, uint32_t size, std::chrono::high_resolution_clock::time_point time_point) {
+    inline auto async_write_at_until(file::file_handle& handle, uint64_t offset, const uint8_t* data, uint32_t size, std::chrono::high_resolution_clock::time_point time_point) {
         return detail::io_handle_until{handle.make_write_at(offset, data, size), time_point};
     }
 
-    inline auto async_append_until(files::file_handle& handle, const uint8_t* data, uint32_t size, std::chrono::high_resolution_clock::time_point time_point) {
+    inline auto async_append_until(file::file_handle& handle, const uint8_t* data, uint32_t size, std::chrono::high_resolution_clock::time_point time_point) {
         return detail::io_handle_until{handle.make_append(data, size), time_point};
     }
 
     template <class Rep, class Period>
-    inline auto async_read_for(files::file_handle& handle, uint32_t size, const std::chrono::duration<Rep, Period>& duration) {
+    inline auto async_read_for(file::file_handle& handle, uint32_t size, const std::chrono::duration<Rep, Period>& duration) {
         return detail::io_handle_until{handle.make_read(size), std::chrono::high_resolution_clock::now() + duration};
     }
 
     template <class Rep, class Period>
-    inline auto async_read_at_for(files::file_handle& handle, uint64_t offset, uint32_t size, const std::chrono::duration<Rep, Period>& duration) {
+    inline auto async_read_at_for(file::file_handle& handle, uint64_t offset, uint32_t size, const std::chrono::duration<Rep, Period>& duration) {
         return detail::io_handle_until{handle.make_read_at(offset, size), std::chrono::high_resolution_clock::now() + duration};
     }
 
     template <class Rep, class Period>
-    inline auto async_read_fixed_for(files::file_handle& handle, uint32_t size, const std::chrono::duration<Rep, Period>& duration) {
+    inline auto async_read_fixed_for(file::file_handle& handle, uint32_t size, const std::chrono::duration<Rep, Period>& duration) {
         return detail::io_handle_until{handle.make_read_fixed(size), std::chrono::high_resolution_clock::now() + duration};
     }
 
     template <class Rep, class Period>
-    inline auto async_read_fixed_at_for(files::file_handle& handle, uint64_t offset, uint32_t size, const std::chrono::duration<Rep, Period>& duration) {
+    inline auto async_read_fixed_at_for(file::file_handle& handle, uint64_t offset, uint32_t size, const std::chrono::duration<Rep, Period>& duration) {
         return detail::io_handle_until{handle.make_read_fixed_at(offset, size), std::chrono::high_resolution_clock::now() + duration};
     }
 
     template <class Rep, class Period>
-    inline auto async_write_for(files::file_handle& handle, const uint8_t* data, uint32_t size, const std::chrono::duration<Rep, Period>& duration) {
+    inline auto async_write_for(file::file_handle& handle, const uint8_t* data, uint32_t size, const std::chrono::duration<Rep, Period>& duration) {
         return detail::io_handle_until{handle.make_write(data, size), std::chrono::high_resolution_clock::now() + duration};
     }
 
     template <class Rep, class Period>
-    inline auto async_write_at_for(files::file_handle& handle, uint64_t offset, const uint8_t* data, uint32_t size, const std::chrono::duration<Rep, Period>& duration) {
+    inline auto async_write_at_for(file::file_handle& handle, uint64_t offset, const uint8_t* data, uint32_t size, const std::chrono::duration<Rep, Period>& duration) {
         return detail::io_handle_until{handle.make_write_at(offset, data, size), std::chrono::high_resolution_clock::now() + duration};
     }
 
     template <class Rep, class Period>
-    inline auto async_append_for(files::file_handle& handle, const uint8_t* data, uint32_t size, const std::chrono::duration<Rep, Period>& duration) {
+    inline auto async_append_for(file::file_handle& handle, const uint8_t* data, uint32_t size, const std::chrono::duration<Rep, Period>& duration) {
         return detail::io_handle_until{handle.make_append(data, size), std::chrono::high_resolution_clock::now() + duration};
     }
 
-    inline auto safe_async_read(files::file_handle& handle, uint32_t size) {
+    inline auto safe_async_read(file::file_handle& handle, uint32_t size) {
         return detail::safe_io_handle{handle.make_read(size)};
     }
 
-    inline auto safe_async_read_at(files::file_handle& handle, uint64_t offset, uint32_t size) {
+    inline auto safe_async_read_at(file::file_handle& handle, uint64_t offset, uint32_t size) {
         return detail::safe_io_handle{handle.make_read_at(offset, size)};
     }
 
-    inline auto safe_async_read_fixed(files::file_handle& handle, uint32_t size) {
+    inline auto safe_async_read_fixed(file::file_handle& handle, uint32_t size) {
         return detail::safe_io_handle{handle.make_read_fixed(size)};
     }
 
-    inline auto safe_async_read_fixed_at(files::file_handle& handle, uint64_t offset, uint32_t size) {
+    inline auto safe_async_read_fixed_at(file::file_handle& handle, uint64_t offset, uint32_t size) {
         return detail::safe_io_handle{handle.make_read_fixed_at(offset, size)};
     }
 
-    inline auto safe_async_write(files::file_handle& handle, const uint8_t* data, uint32_t size) {
+    inline auto safe_async_write(file::file_handle& handle, const uint8_t* data, uint32_t size) {
         return detail::safe_io_handle{handle.make_write(data, size)};
     }
 
-    inline auto safe_async_write_at(files::file_handle& handle, uint64_t offset, const uint8_t* data, uint32_t size) {
+    inline auto safe_async_write_at(file::file_handle& handle, uint64_t offset, const uint8_t* data, uint32_t size) {
         return detail::safe_io_handle{handle.make_write_at(offset, data, size)};
     }
 
-    inline auto safe_async_append(files::file_handle& handle, const uint8_t* data, uint32_t size) {
+    inline auto safe_async_append(file::file_handle& handle, const uint8_t* data, uint32_t size) {
         return detail::safe_io_handle{handle.make_append(data, size)};
     }
 
-    inline auto safe_async_read_until(files::file_handle& handle, uint32_t size, std::chrono::high_resolution_clock::time_point time_point) {
+    inline auto safe_async_read_until(file::file_handle& handle, uint32_t size, std::chrono::high_resolution_clock::time_point time_point) {
         return detail::safe_io_handle_until{handle.make_read(size), time_point};
     }
 
-    inline auto safe_async_read_at_until(files::file_handle& handle, uint64_t offset, uint32_t size, std::chrono::high_resolution_clock::time_point time_point) {
+    inline auto safe_async_read_at_until(file::file_handle& handle, uint64_t offset, uint32_t size, std::chrono::high_resolution_clock::time_point time_point) {
         return detail::safe_io_handle_until{handle.make_read_at(offset, size), time_point};
     }
 
-    inline auto safe_async_read_fixed_until(files::file_handle& handle, uint32_t size, std::chrono::high_resolution_clock::time_point time_point) {
+    inline auto safe_async_read_fixed_until(file::file_handle& handle, uint32_t size, std::chrono::high_resolution_clock::time_point time_point) {
         return detail::safe_io_handle_until{handle.make_read_fixed(size), time_point};
     }
 
-    inline auto safe_async_read_fixed_at_until(files::file_handle& handle, uint64_t offset, uint32_t size, std::chrono::high_resolution_clock::time_point time_point) {
+    inline auto safe_async_read_fixed_at_until(file::file_handle& handle, uint64_t offset, uint32_t size, std::chrono::high_resolution_clock::time_point time_point) {
         return detail::safe_io_handle_until{handle.make_read_fixed_at(offset, size), time_point};
     }
 
-    inline auto safe_async_write_until(files::file_handle& handle, const uint8_t* data, uint32_t size, std::chrono::high_resolution_clock::time_point time_point) {
+    inline auto safe_async_write_until(file::file_handle& handle, const uint8_t* data, uint32_t size, std::chrono::high_resolution_clock::time_point time_point) {
         return detail::safe_io_handle_until{handle.make_write(data, size), time_point};
     }
 
-    inline auto safe_async_write_at_until(files::file_handle& handle, uint64_t offset, const uint8_t* data, uint32_t size, std::chrono::high_resolution_clock::time_point time_point) {
+    inline auto safe_async_write_at_until(file::file_handle& handle, uint64_t offset, const uint8_t* data, uint32_t size, std::chrono::high_resolution_clock::time_point time_point) {
         return detail::safe_io_handle_until{handle.make_write_at(offset, data, size), time_point};
     }
 
-    inline auto safe_async_append_until(files::file_handle& handle, const uint8_t* data, uint32_t size, std::chrono::high_resolution_clock::time_point time_point) {
+    inline auto safe_async_append_until(file::file_handle& handle, const uint8_t* data, uint32_t size, std::chrono::high_resolution_clock::time_point time_point) {
         return detail::safe_io_handle_until{handle.make_append(data, size), time_point};
     }
 
     template <class Rep, class Period>
-    inline auto safe_async_read_for(files::file_handle& handle, uint32_t size, std::chrono::duration<Rep, Period> timeout) {
+    inline auto safe_async_read_for(file::file_handle& handle, uint32_t size, std::chrono::duration<Rep, Period> timeout) {
         return detail::safe_io_handle_until{handle.make_read(size), std::chrono::high_resolution_clock::now() + timeout};
     }
 
     template <class Rep, class Period>
-    inline auto safe_async_read_at_for(files::file_handle& handle, uint64_t offset, uint32_t size, std::chrono::duration<Rep, Period> timeout) {
+    inline auto safe_async_read_at_for(file::file_handle& handle, uint64_t offset, uint32_t size, std::chrono::duration<Rep, Period> timeout) {
         return detail::safe_io_handle_until{handle.make_read_at(offset, size), std::chrono::high_resolution_clock::now() + timeout};
     }
 
     template <class Rep, class Period>
-    inline auto safe_async_read_fixed_for(files::file_handle& handle, uint32_t size, std::chrono::duration<Rep, Period> timeout) {
+    inline auto safe_async_read_fixed_for(file::file_handle& handle, uint32_t size, std::chrono::duration<Rep, Period> timeout) {
         return detail::safe_io_handle_until{handle.make_read_fixed(size), std::chrono::high_resolution_clock::now() + timeout};
     }
 
     template <class Rep, class Period>
-    inline auto safe_async_read_fixed_at_for(files::file_handle& handle, uint64_t offset, uint32_t size, std::chrono::duration<Rep, Period> timeout) {
+    inline auto safe_async_read_fixed_at_for(file::file_handle& handle, uint64_t offset, uint32_t size, std::chrono::duration<Rep, Period> timeout) {
         return detail::safe_io_handle_until{handle.make_read_fixed_at(offset, size), std::chrono::high_resolution_clock::now() + timeout};
     }
 
     template <class Rep, class Period>
-    inline auto safe_async_write_for(files::file_handle& handle, const uint8_t* data, uint32_t size, std::chrono::duration<Rep, Period> timeout) {
+    inline auto safe_async_write_for(file::file_handle& handle, const uint8_t* data, uint32_t size, std::chrono::duration<Rep, Period> timeout) {
         return detail::safe_io_handle_until{handle.make_write(data, size), std::chrono::high_resolution_clock::now() + timeout};
     }
 
     template <class Rep, class Period>
-    inline auto safe_async_write_at_for(files::file_handle& handle, uint64_t offset, const uint8_t* data, uint32_t size, std::chrono::duration<Rep, Period> timeout) {
+    inline auto safe_async_write_at_for(file::file_handle& handle, uint64_t offset, const uint8_t* data, uint32_t size, std::chrono::duration<Rep, Period> timeout) {
         return detail::safe_io_handle_until{handle.make_write_at(offset, data, size), std::chrono::high_resolution_clock::now() + timeout};
     }
 
     template <class Rep, class Period>
-    inline auto safe_async_append_for(files::file_handle& handle, const uint8_t* data, uint32_t size, std::chrono::duration<Rep, Period> timeout) {
+    inline auto safe_async_append_for(file::file_handle& handle, const uint8_t* data, uint32_t size, std::chrono::duration<Rep, Period> timeout) {
         return detail::safe_io_handle_until{handle.make_append(data, size), std::chrono::high_resolution_clock::now() + timeout};
     }
 }

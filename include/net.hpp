@@ -4,18 +4,18 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
-#ifndef FAST_TASK_NETWORKING
-#define FAST_TASK_NETWORKING
+#ifndef FAST_TASK_NET
+#define FAST_TASK_NET
 #include "shared.hpp"
 #include "task.hpp"
 #include <functional>
 #include <span>
 
-namespace fast_task::files {
+namespace fast_task::file {
     class file_handle;
 }
 
-namespace fast_task::networking {
+namespace fast_task::net {
     class FT_API address {
         void* data = nullptr;
 
@@ -122,10 +122,10 @@ namespace fast_task::networking {
         int32_t send(std::span<const uint8_t> data);
         int32_t sendv(std::span<const std::span<const uint8_t>> data);
         int32_t send_file(const char* file_path, size_t file_path_len, uint32_t data_len, uint64_t offset, uint32_t chunks_size);
-        int32_t send_file(class fast_task::files::file_handle& file_path, uint32_t data_len, uint64_t offset, uint32_t chunks_size);
+        int32_t send_file(class fast_task::file::file_handle& file_path, uint32_t data_len, uint64_t offset, uint32_t chunks_size);
 
         int32_t sendv_file(const std::span<const uint8_t> prefix, const std::span<const uint8_t> postfix, const char* file_path, size_t file_path_len, uint32_t data_len, uint64_t offset, uint32_t chunks_size);
-        int32_t sendv_file(const std::span<const uint8_t> prefix, const std::span<const uint8_t> postfix, class fast_task::files::file_handle& file_path, uint32_t data_len, uint64_t offset, uint32_t chunks_size);
+        int32_t sendv_file(const std::span<const uint8_t> prefix, const std::span<const uint8_t> postfix, class fast_task::file::file_handle& file_path, uint32_t data_len, uint64_t offset, uint32_t chunks_size);
 
         void shutdown(shutdown_mode mode);
         void reset(); //TCP RST
@@ -145,10 +145,10 @@ namespace fast_task::networking {
         bool enter_send(const std::shared_ptr<task>& t, opaque_network_state& state, int32_t& bytes_sent, std::span<const uint8_t> data);
         bool enter_sendv(const std::shared_ptr<task>& t, opaque_network_state& state, int32_t& bytes_sent, std::span<const std::span<const uint8_t>> data);
         bool enter_send_file(const std::shared_ptr<task>& t, opaque_network_state& state, int32_t& bytes_sent, const char* file_path, size_t file_path_len, uint32_t data_len, uint64_t offset, uint32_t chunks_size);
-        bool enter_send_file(const std::shared_ptr<task>& t, opaque_network_state& state, int32_t& bytes_sent, class fast_task::files::file_handle& file_path, uint32_t data_len, uint64_t offset, uint32_t chunks_size);
+        bool enter_send_file(const std::shared_ptr<task>& t, opaque_network_state& state, int32_t& bytes_sent, class fast_task::file::file_handle& file_path, uint32_t data_len, uint64_t offset, uint32_t chunks_size);
 
         bool enter_sendv_file(const std::shared_ptr<task>& t, opaque_network_state& state, int32_t& bytes_sent, const std::span<const uint8_t> prefix, const std::span<const uint8_t> postfix, const char* file_path, size_t file_path_len, uint32_t data_len, uint64_t offset, uint32_t chunks_size);
-        bool enter_sendv_file(const std::shared_ptr<task>& t, opaque_network_state& state, int32_t& bytes_sent, const std::span<const uint8_t> prefix, const std::span<const uint8_t> postfix, class fast_task::files::file_handle& file_path, uint32_t data_len, uint64_t offset, uint32_t chunks_size);
+        bool enter_sendv_file(const std::shared_ptr<task>& t, opaque_network_state& state, int32_t& bytes_sent, const std::span<const uint8_t> prefix, const std::span<const uint8_t> postfix, class fast_task::file::file_handle& file_path, uint32_t data_len, uint64_t offset, uint32_t chunks_size);
 
         bool enter_shutdown(const std::shared_ptr<task>& t, opaque_network_state& state, shutdown_mode mode);
         bool enter_reset(const std::shared_ptr<task>& t, opaque_network_state& state); //TCP RST

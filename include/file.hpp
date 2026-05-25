@@ -4,8 +4,8 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
-#ifndef FAST_TASK_INCLUDE_FILES
-#define FAST_TASK_INCLUDE_FILES
+#ifndef FAST_TASK_INCLUDE_FILE
+#define FAST_TASK_INCLUDE_FILE
 #include "shared.hpp"
 #include "task.hpp"
 #include "task/future.hpp"
@@ -15,7 +15,7 @@
 #include <ostream>
 #include <vector>
 
-namespace fast_task::files {
+namespace fast_task::file {
     enum open_mode : uint8_t {
         read,
         write,
