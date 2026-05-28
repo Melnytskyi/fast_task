@@ -94,10 +94,11 @@ namespace fast_task {
     #define flush_interrupt_data
 #endif
 
-#pragma optimize("", off)
 #if defined(__GNUC__) && !defined(__clang__)
     #pragma GCC push_options
     #pragma GCC optimize("O0")
+#else
+    #pragma optimize("", off)
 #endif
 #pragma region TaskExecutor
 
@@ -947,8 +948,9 @@ namespace fast_task {
 
 #if defined(__GNUC__) && !defined(__clang__)
     #pragma GCC pop_options
+#else
+    #pragma optimize("", on)
 #endif
-#pragma optimize("", on)
 
     void startTimeController() {
         fast_task::lock_guard guard(glob.task_timer_safety);

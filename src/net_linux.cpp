@@ -240,7 +240,7 @@ namespace fast_task::net {
             return sock;
         }
 
-        void handle(util::native_worker_handle* overlap, int32_t res, uint32_t flags) override {
+        void handle(util::native_worker_handle* overlap, int32_t res, uint32_t) override {
             auto state = static_cast<native_state*>(overlap);
             state->error = res < 0 ? -res : 0;
 
@@ -779,7 +779,7 @@ namespace fast_task::net {
         }
     };
 
-    bool tcp_socket::enter_send_file(const std::shared_ptr<task>& t, opaque_network_state& state, int32_t& bytes_sent, const char* file_path, size_t file_path_len, uint32_t data_len, uint64_t offset, uint32_t chunks_size) {
+    bool tcp_socket::enter_send_file(const std::shared_ptr<task>& t, opaque_network_state& state, int32_t& bytes_sent, const char* file_path, size_t, uint32_t data_len, uint64_t offset, uint32_t) {
         auto& ns = *new (&state) transmit_file_state(handle.get());
         ns.awaiting_task = t;
         ns.out_processed_bytes = &bytes_sent;
@@ -807,7 +807,7 @@ namespace fast_task::net {
         return false;
     }
 
-    bool tcp_socket::enter_send_file(const std::shared_ptr<task>& t, opaque_network_state& state, int32_t& bytes_sent, class fast_task::file::file_handle& file_path, uint32_t data_len, uint64_t offset, uint32_t chunks_size) {
+    bool tcp_socket::enter_send_file(const std::shared_ptr<task>& t, opaque_network_state& state, int32_t& bytes_sent, class fast_task::file::file_handle& file_path, uint32_t data_len, uint64_t offset, uint32_t) {
         auto& ns = *new (&state) transmit_file_state(handle.get());
         ns.awaiting_task = t;
         ns.out_processed_bytes = &bytes_sent;
@@ -837,7 +837,7 @@ namespace fast_task::net {
         transmit_filev_state(util::native_worker_manager* mgr) : transmit_file_state(mgr) {}
     };
 
-    bool tcp_socket::enter_sendv_file(const std::shared_ptr<task>& t, opaque_network_state& state, int32_t& bytes_sent, const std::span<const uint8_t> prefix, const std::span<const uint8_t> postfix, const char* file_path, size_t file_path_len, uint32_t data_len, uint64_t offset, uint32_t chunks_size) {
+    bool tcp_socket::enter_sendv_file(const std::shared_ptr<task>& t, opaque_network_state& state, int32_t& bytes_sent, const std::span<const uint8_t> prefix, const std::span<const uint8_t> postfix, const char* file_path, size_t, uint32_t data_len, uint64_t offset, uint32_t) {
         auto& ns = *new (&state) transmit_filev_state(handle.get());
         ns.awaiting_task = t;
         ns.out_processed_bytes = &bytes_sent;
@@ -869,7 +869,7 @@ namespace fast_task::net {
         return false;
     }
 
-    bool tcp_socket::enter_sendv_file(const std::shared_ptr<task>& t, opaque_network_state& state, int32_t& bytes_sent, const std::span<const uint8_t> prefix, const std::span<const uint8_t> postfix, class fast_task::file::file_handle& file_path, uint32_t data_len, uint64_t offset, uint32_t chunks_size) {
+    bool tcp_socket::enter_sendv_file(const std::shared_ptr<task>& t, opaque_network_state& state, int32_t& bytes_sent, const std::span<const uint8_t> prefix, const std::span<const uint8_t> postfix, class fast_task::file::file_handle& file_path, uint32_t data_len, uint64_t offset, uint32_t) {
         auto& ns = *new (&state) transmit_filev_state(handle.get());
         ns.awaiting_task = t;
         ns.out_processed_bytes = &bytes_sent;
@@ -894,7 +894,7 @@ namespace fast_task::net {
         return false;
     }
 
-    bool tcp_socket::enter_shutdown(const std::shared_ptr<task>& t, opaque_network_state& state, shutdown_mode mode) {
+    bool tcp_socket::enter_shutdown(const std::shared_ptr<task>&, opaque_network_state& state, shutdown_mode mode) {
         int how = SHUT_RDWR;
         switch (mode) {
         case shutdown_mode::read:
@@ -951,7 +951,7 @@ namespace fast_task::net {
         uint32_t fullifed_bytes;
         uint32_t last_error;
 
-        udp_handle(sockaddr_in6& address, uint32_t _)
+        udp_handle(sockaddr_in6& address, uint32_t)
             : util::native_worker_handle(this), fullifed_bytes(0), last_error(0) {
             socket = ::socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP);
             if (socket == -1)
@@ -964,7 +964,7 @@ namespace fast_task::net {
             server_address = address;
         }
 
-        void handle(util::native_worker_handle* _, int32_t res, [[maybe_unused]] uint32_t flags) override {
+        void handle(util::native_worker_handle*, int32_t res, [[maybe_unused]] uint32_t flags) override {
             this->fullifed_bytes = res > -1 ? res : 0;
             this->last_error = res < 0 ? static_cast<uint32_t>(-res) : 0;
 

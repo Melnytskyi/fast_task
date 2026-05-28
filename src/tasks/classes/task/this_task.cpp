@@ -84,10 +84,11 @@ namespace fast_task::this_task {
             return false;
     }
 
-#pragma optimize("", off)
 #if defined(__GNUC__) && !defined(__clang__)
     #pragma GCC push_options
     #pragma GCC optimize("O0")
+#else
+    #pragma optimize("", off)
 #endif
 
     void sleep_until(std::chrono::high_resolution_clock::time_point time_point) {
@@ -126,6 +127,7 @@ namespace fast_task::this_task {
 
 #if defined(__GNUC__) && !defined(__clang__)
     #pragma GCC pop_options
+#else
+    #pragma optimize("", on)
 #endif
-#pragma optimize("", on)
 }

@@ -39,7 +39,15 @@ namespace fast_task {
     }
 
     task::task(void* data, void (*on_start)(void*), void (*on_await)(void*), void (*on_cancel)(void*), void (*on_destruct)(void*), bool is_restartable, bool is_on_scheduler)
-        : data_{.timeout = std::chrono::high_resolution_clock::time_point::min().time_since_epoch().count()} {
+        : data_{
+              .callbacks{},
+              .result_notify{},
+              .no_race{},
+              .relock_0{},
+              .relock_1{},
+              .relock_2{},
+              .timeout = std::chrono::high_resolution_clock::time_point::min().time_since_epoch().count()
+          } {
         data_.is_on_scheduler = is_on_scheduler;
         data_.is_restartable = is_restartable;
         data_.callbacks.is_sbo = false;
@@ -52,7 +60,15 @@ namespace fast_task {
     }
 
     task::task(task&& mov) noexcept
-        : data_{.callbacks = std::move(mov.data_.callbacks), .timeout = std::move(mov.data_.timeout)} {
+        : data_{
+              .callbacks = std::move(mov.data_.callbacks),
+              .result_notify{},
+              .no_race{},
+              .relock_0{},
+              .relock_1{},
+              .relock_2{},
+              .timeout = std::move(mov.data_.timeout)
+          } {
         if (mov.data_.started)
             assert(false && "Moving started tasks is not allowed");
         data_.time_end_flag = mov.data_.time_end_flag;
@@ -104,7 +120,7 @@ namespace fast_task {
         data_.auto_bind_worker = false;
     }
 
-    void task::set_priority(task_priority p) noexcept {
+    void task::set_priority([[maybe_unused]] task_priority p) noexcept {
 #ifdef FT_ENABLE_PREEMPTIVE_SCHEDULER
         if (!data_.exdata)
             data_.exdata = new execution_data();
@@ -240,8 +256,8 @@ namespace fast_task {
                     }
                 }
             },
-            [](void* ptr) {},
-            [](void* ptr) {},
+            [](void*) {},
+            [](void*) {},
             [](void* ptr) { if(ptr) delete static_cast<enter_data*>(ptr); },
             true,
             true
@@ -303,8 +319,8 @@ namespace fast_task {
                     }
                 }
             },
-            [](void* ptr) {},
-            [](void* ptr) {},
+            [](void*) {},
+            [](void*) {},
             [](void* ptr) { if(ptr) delete static_cast<enter_data*>(ptr); },
             true,
             true

@@ -22,8 +22,9 @@ namespace fast_task {
 #if defined(__GNUC__) && !defined(__clang__)
     #pragma GCC push_options
     #pragma GCC optimize("O0")
+#else
+    #pragma optimize("", off)
 #endif
-#pragma optimize("", off)
 
     void task_mutex::lock() {
         if (loc.is_task_thread) {
@@ -119,9 +120,10 @@ namespace fast_task {
         }
     }
 
-#pragma optimize("", on)
 #if defined(__GNUC__) && !defined(__clang__)
     #pragma GCC pop_options
+#else
+    #pragma optimize("", on)
 #endif
 
     void task_mutex::unlock() {

@@ -811,7 +811,7 @@ namespace fast_task::file {
                 return res;
         }
 
-        void handle(class util::native_worker_handle* overlapped, int32_t res, uint32_t flags) override {
+        void handle(class util::native_worker_handle* overlapped, int32_t res, uint32_t) override {
             auto file = (File_*)overlapped;
             if (res <= 0)
                 file->error_filter(-res);

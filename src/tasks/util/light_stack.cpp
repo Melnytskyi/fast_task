@@ -147,8 +147,8 @@ namespace fast_task {
     #endif
 
         if (RUNNING_ON_VALGRIND) {
-            void* stack_bottom = static_cast<uint8_t*>(vp) + guard_page_size;
-            void* stack_top = static_cast<uint8_t*>(vp) + total_size;
+            [[maybe_unused]] void* stack_bottom = static_cast<uint8_t*>(vp) + guard_page_size;
+            [[maybe_unused]] void* stack_top = static_cast<uint8_t*>(vp) + total_size;
             get_execution_data(loc.curr_task).valgrind_stack_id = VALGRIND_STACK_REGISTER(stack_bottom, stack_top);
         }
 

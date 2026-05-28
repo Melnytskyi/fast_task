@@ -539,7 +539,7 @@ namespace fast_task::debug {
         return {};
     }
 
-    void enable_init_stack_trace(bool enable) {}
+    void enable_init_stack_trace(bool) {}
 
     std::string raw_stack_trace::entry::symbol() {
         return "";

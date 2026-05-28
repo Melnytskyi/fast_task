@@ -192,6 +192,9 @@ else()
   target_compile_options(fast_task PRIVATE -Wall)
   target_compile_options(fast_task PRIVATE -Wextra)
   target_compile_options(fast_task PRIVATE --pedantic)
+  target_compile_options(fast_task PRIVATE -Wno-interference-size)
+  target_compile_options(fast_task PRIVATE -Wno-cast-function-type)
+  
 
   # Use real Valgrind headers when available; fall back to lightweight stubs otherwise.
   find_path(VALGRIND_INCLUDE_DIR valgrind/valgrind.h)

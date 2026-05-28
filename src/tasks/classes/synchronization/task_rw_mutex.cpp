@@ -21,7 +21,13 @@ namespace fast_task {
         }
     }
 
-#pragma optimize("", off)
+
+#if defined(__GNUC__) && !defined(__clang__)
+    #pragma GCC push_options
+    #pragma GCC optimize("O0")
+#else
+    #pragma optimize("", off)
+#endif
 
     void task_rw_mutex::read_lock() {
         if (loc.is_task_thread) {
@@ -342,7 +348,11 @@ namespace fast_task {
         }
     }
 
-#pragma optimize("", on)
+#if defined(__GNUC__) && !defined(__clang__)
+    #pragma GCC pop_options
+#else
+    #pragma optimize("", on)
+#endif
 
     bool task_rw_mutex::is_write_locked() {
         task* self_mask;

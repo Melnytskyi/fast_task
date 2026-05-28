@@ -10,7 +10,7 @@
 namespace fast_task {
     task_query::task_query(size_t at_execution_max) {
         FT_DEBUG_ONLY(register_object(this));
-        handle = new task_query_handle{.tq = this, .at_execution_max = at_execution_max};
+        handle = new task_query_handle{.end_of_query{}, .tasks{}, .no_race{}, .tq = this, .at_execution_max = at_execution_max};
     }
 
     void __TaskQuery_add_task_leave(task_query_handle* tqh) {

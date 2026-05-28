@@ -330,8 +330,6 @@ namespace fast_task {
     bool FT_API_LOCAL can_be_scheduled_task_to_hot();
     void FT_API_LOCAL forceCancelCancellation(const task_cancellation& restart);
 
-    void FT_API_LOCAL __install_signal_handler_mem();
-
     bool FT_API_LOCAL _set_name_thread_dbg(const std::string& name, unsigned long thread_id);
     bool FT_API_LOCAL _set_name_thread_dbg(const std::string& name);
     std::string FT_API_LOCAL _get_name_thread_dbg(unsigned long thread_id);

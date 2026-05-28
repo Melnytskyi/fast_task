@@ -45,10 +45,10 @@ namespace fast_task::util::cpu {
 
 namespace fast_task::util::cpu {
     double get_usage(usage_prev_stat& prev_stat) {
-        unsigned long long cpu_use = 0;
-        unsigned long long cpu_nic = 0;
-        unsigned long long cpu_sys = 0;
-        unsigned long long cpu_idl = 0;
+        unsigned long cpu_use = 0;
+        unsigned long cpu_nic = 0;
+        unsigned long cpu_sys = 0;
+        unsigned long cpu_idl = 0;
 
         static int proc_stat = 0;
         static char buffer[UINT16_MAX + 1];
@@ -67,7 +67,7 @@ namespace fast_task::util::cpu {
 
         const char* point = strstr(buffer, "cpu ");
         if (point)
-            sscanf(point, "cpu  %Lu %Lu %Lu %Lu", &cpu_use, &cpu_nic, &cpu_sys, &cpu_idl);
+            sscanf(point, "cpu  %lu %lu %lu %lu", &cpu_use, &cpu_nic, &cpu_sys, &cpu_idl);
         else
             return -1.0f;
         return calculate_cpu_load(prev_stat, cpu_idl, cpu_use + cpu_nic + cpu_sys + cpu_idl);
