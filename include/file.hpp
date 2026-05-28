@@ -220,6 +220,8 @@ namespace fast_task::file {
 #if ((defined(_MSVC_LANG) && _MSVC_LANG >= 202302L) || __cplusplus >= 202302L)
                 } else if (mode & std::ios_base::noreplace) {
                     return on_open_action::create_new;
+#endif
+#ifdef _MSC_VER
                 } else if (mode & (std::ios_base::trunc & std::ios_base::_Nocreate)) {
                     return on_open_action::truncate_exists;
 #endif

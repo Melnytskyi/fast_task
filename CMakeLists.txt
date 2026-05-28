@@ -187,6 +187,16 @@ else()
     add_dependencies(fast_task liburing)
     target_link_libraries(fast_task PRIVATE ${SOURCE_DIR}/src/liburing.a)
   endif()
+  find_package(c-ares CONFIG)
+  if(NOT c-ares_FOUND)
+    FetchContent_Declare(
+      c_ares
+      GIT_REPOSITORY https://github.com/c-ares/c-ares.git
+      GIT_TAG        v1.34.5
+    )
+    FetchContent_MakeAvailable(c_ares)
+  endif()
+  target_link_libraries(fast_task PRIVATE c-ares::cares)
   target_compile_options(fast_task PUBLIC -m64)
   target_compile_options(fast_task PRIVATE -g)
   target_compile_options(fast_task PRIVATE -Wall)

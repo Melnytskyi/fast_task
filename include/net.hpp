@@ -16,6 +16,8 @@ namespace fast_task::file {
 }
 
 namespace fast_task::net {
+    struct opaque_network_state;
+
     class FT_API address {
         char data[128]{0};
 
@@ -28,8 +30,6 @@ namespace fast_task::net {
         address();
         address(std::string_view ip_port);
         address(std::string_view ip, uint16_t port);
-        address(const std::string& ip_port);
-        address(const std::string& ip, uint16_t port);
         address(const address& ip);
         address(address&& ip) noexcept;
         ~address();
@@ -45,10 +45,10 @@ namespace fast_task::net {
             other
         };
 
-        //static address resolve(std::string_view host, std::string_view service, address::family preferred_family = address::family::none);
-        //static address resolve(std::string_view host, std::string_view service, uint16_t port, address::family preferred_family = address::family::none);
-        //static std::vector<address> resolve_multiple(std::string_view host, std::string_view service, address::family preferred_family = address::family::none);
-        //static std::vector<address> resolve_multiple(std::string_view host, std::string_view service, uint16_t port, address::family preferred_family = address::family::none);
+        static address resolve(std::string_view host, std::string_view service, address::family preferred_family = address::family::none);
+        static address resolve(std::string_view host, std::string_view service, uint16_t port, address::family preferred_family = address::family::none);
+        static std::vector<address> resolve_multiple(std::string_view host, std::string_view service, address::family preferred_family = address::family::none);
+        static std::vector<address> resolve_multiple(std::string_view host, std::string_view service, uint16_t port, address::family preferred_family = address::family::none);
 
         family get_family() const noexcept;
         uint16_t port() const noexcept;
@@ -65,10 +65,10 @@ namespace fast_task::net {
         bool is_loopback() const noexcept;
         static size_t data_size() noexcept;
 
-        //static bool enter_resolve(const std::shared_ptr<task>& t, opaque_network_state& state, address& res, std::string_view host, std::string_view service, address::family preferred_family = address::family::none);
-        //static bool enter_resolve(const std::shared_ptr<task>& t, opaque_network_state& state, address& res, std::string_view host, std::string_view service, uint16_t port, address::family preferred_family = address::family::none);
-        //static bool enter_resolve_multiple(const std::shared_ptr<task>& t, opaque_network_state& state, std::vector<address>& res, std::string_view host, std::string_view service, address::family preferred_family = address::family::none);
-        //static bool enter_resolve_multiple(const std::shared_ptr<task>& t, opaque_network_state& state, std::vector<address>& res, std::string_view host, std::string_view service, uint16_t port, address::family preferred_family = address::family::none);
+        static bool enter_resolve(const std::shared_ptr<task>& t, opaque_network_state& state, address& res, std::string_view host, std::string_view service, address::family preferred_family = address::family::none);
+        static bool enter_resolve(const std::shared_ptr<task>& t, opaque_network_state& state, address& res, std::string_view host, std::string_view service, uint16_t port, address::family preferred_family = address::family::none);
+        static bool enter_resolve_multiple(const std::shared_ptr<task>& t, opaque_network_state& state, std::vector<address>& res, std::string_view host, std::string_view service, address::family preferred_family = address::family::none);
+        static bool enter_resolve_multiple(const std::shared_ptr<task>& t, opaque_network_state& state, std::vector<address>& res, std::string_view host, std::string_view service, uint16_t port, address::family preferred_family = address::family::none);
     };
 
     struct FT_API tcp_configuration {

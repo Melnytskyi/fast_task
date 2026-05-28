@@ -48,9 +48,7 @@ namespace fast_task::net {
         internal_makeIP(*((universal_address*)data), ip.data(), port);
     }
 
-    address::address(const std::string& ip_port) : address(std::string_view(ip_port)) {}
 
-    address::address(const std::string& ip, uint16_t port) : address(std::string_view(ip), port) {}
 
     address::address(const address& ip) {
         memcpy(data, ip.data, sizeof(universal_address));
@@ -2322,6 +2320,242 @@ namespace fast_task::net {
         inited = true;
         return 0;
     }
+
+    #pragma region DNS
+
+    // Heap-allocated state for an async DNS resolution (GetAddrInfoExW + thread + IOCP).
+    // A worker thread calls GetAddrInfoExW (blocking), then posts to IOCP when done.
+    // opaque_network_state stores a raw pointer to resolve_win_state.
+
+    struct resolve_win_state : public util::native_worker_manager {
+        // Embedded native_worker_handle so we can post to IOCP via post_work().
+        struct iocp_handle : public util::native_worker_handle {
+            iocp_handle(resolve_win_state* mgr) : util::native_worker_handle(mgr) {}
+        } self;
+
+        address*              out_single       = nullptr;
+        std::vector<address>* out_multi        = nullptr;
+        address::family       preferred_family = address::family::none;
+        uint16_t              port_override    = 0;
+        int                   error            = 0;
+        std::shared_ptr<task> awaiting_task;
+        std::wstring          host_w;
+        std::wstring          service_w;
+        bool                  use_numeric_service = false; // service_w is a port number
+
+        explicit resolve_win_state() : self(this) {}
+
+        // Called on the IOCP dispatch thread after the worker posts a completion.
+        void handle(void* /*data*/, util::native_worker_handle* /*overlap*/, unsigned long) override {
+            auto to_resume = std::move(awaiting_task);
+            delete this;
+            if (to_resume) {
+                fast_task::lock_guard guard(get_data(to_resume).no_race);
+                transfer_task(std::move(to_resume));
+            }
+        }
+    };
+
+    struct resolve_win_ptr_state {
+        resolve_win_state* rs;
+    };
+    static_assert(sizeof(resolve_win_ptr_state) <= sizeof(opaque_network_state::data),
+                  "opaque_network_state::data too small for resolve_win_ptr_state");
+
+    static void dns_win_worker(resolve_win_state* rs) {
+        init_networking();
+
+        ADDRINFOEXW hints{};
+        hints.ai_family   = AF_UNSPEC;
+        if (rs->preferred_family == address::family::ipv4)      hints.ai_family = AF_INET;
+        else if (rs->preferred_family == address::family::ipv6) hints.ai_family = AF_INET6;
+        hints.ai_socktype = SOCK_STREAM;
+
+        PADDRINFOEXW results = nullptr;
+        INT err = GetAddrInfoExW(
+            rs->host_w.c_str(),
+            rs->service_w.empty() ? nullptr : rs->service_w.c_str(),
+            NS_DNS, NULL, &hints, &results,
+            NULL, NULL, NULL, NULL);
+
+        if (err == NO_ERROR && results) {
+            for (auto* ai = results; ai; ai = ai->ai_next) {
+                if (rs->preferred_family != address::family::none) {
+                    address::family nf = address::family::none;
+                    if (ai->ai_family == AF_INET)       nf = address::family::ipv4;
+                    else if (ai->ai_family == AF_INET6) nf = address::family::ipv6;
+                    if (nf != rs->preferred_family)
+                        continue;
+                }
+                address addr(ai->ai_addr);
+                if (rs->out_single) {
+                    *rs->out_single = addr;
+                    rs->out_single  = nullptr;
+                    break;
+                } else if (rs->out_multi) {
+                    rs->out_multi->push_back(addr);
+                }
+            }
+            FreeAddrInfoExW(results);
+        } else if (err != NO_ERROR) {
+            rs->error = err;
+        }
+
+        // Post completion to IOCP; do NOT access 'rs' after this point.
+        util::native_workers_singleton::post_work(&rs->self, 0);
+    }
+
+    static bool enter_resolve_win_impl(
+        const std::shared_ptr<task>& t,
+        opaque_network_state&        state,
+        address*                     out_single,
+        std::vector<address>*        out_multi,
+        std::string_view             host,
+        std::string_view             service,
+        uint16_t                     port_override,
+        address::family              preferred_family)
+    {
+        auto* rs = new resolve_win_state{};
+        rs->out_single       = out_single;
+        rs->out_multi        = out_multi;
+        rs->preferred_family = preferred_family;
+        rs->awaiting_task    = t;
+
+        // Convert host to wide string
+        int host_len = (int)host.size();
+        rs->host_w.resize(MultiByteToWideChar(CP_UTF8, 0, host.data(), host_len, nullptr, 0));
+        MultiByteToWideChar(CP_UTF8, 0, host.data(), host_len, rs->host_w.data(), (int)rs->host_w.size());
+
+        if (port_override != 0) {
+            wchar_t port_str[8];
+            _snwprintf_s(port_str, _countof(port_str), L"%u", (unsigned)port_override);
+            rs->service_w = port_str;
+        } else if (!service.empty()) {
+            int svc_len = (int)service.size();
+            rs->service_w.resize(MultiByteToWideChar(CP_UTF8, 0, service.data(), svc_len, nullptr, 0));
+            MultiByteToWideChar(CP_UTF8, 0, service.data(), svc_len, rs->service_w.data(), (int)rs->service_w.size());
+        }
+
+        new (&state) resolve_win_ptr_state{rs};
+
+        std::thread(dns_win_worker, rs).detach();
+        return false;  // always async
+    }
+
+    bool address::enter_resolve(const std::shared_ptr<task>& t, opaque_network_state& state,
+                                address& res, std::string_view host, std::string_view service,
+                                address::family preferred_family) {
+        return enter_resolve_win_impl(t, state, &res, nullptr, host, service, 0, preferred_family);
+    }
+
+    bool address::enter_resolve(const std::shared_ptr<task>& t, opaque_network_state& state,
+                                address& res, std::string_view host, std::string_view service,
+                                uint16_t port, address::family preferred_family) {
+        return enter_resolve_win_impl(t, state, &res, nullptr, host, service, port, preferred_family);
+    }
+
+    bool address::enter_resolve_multiple(const std::shared_ptr<task>& t, opaque_network_state& state,
+                                         std::vector<address>& res, std::string_view host,
+                                         std::string_view service, address::family preferred_family) {
+        return enter_resolve_win_impl(t, state, nullptr, &res, host, service, 0, preferred_family);
+    }
+
+    bool address::enter_resolve_multiple(const std::shared_ptr<task>& t, opaque_network_state& state,
+                                         std::vector<address>& res, std::string_view host,
+                                         std::string_view service, uint16_t port,
+                                         address::family preferred_family) {
+        return enter_resolve_win_impl(t, state, nullptr, &res, host, service, port, preferred_family);
+    }
+
+    address address::resolve(std::string_view host, std::string_view service,
+                             address::family preferred_family) {
+        address res;
+        opaque_network_state state;
+        if (loc.is_task_thread) {
+            mutex_unify mut(get_data(loc.curr_task).no_race);
+            std::lock_guard guard(mut);
+            if (!enter_resolve(loc.curr_task, state, res, host, service, preferred_family))
+                swapCtxRelock(mut);
+        } else {
+            std::mutex mtx;
+            std::condition_variable cv;
+            bool done = false;
+            auto t = task::create([&] { std::lock_guard lock(mtx); done = true; cv.notify_one(); });
+            if (!enter_resolve(t, state, res, host, service, preferred_family)) {
+                std::unique_lock lock(mtx);
+                cv.wait(lock, [&] { return done; });
+            }
+        }
+        return res;
+    }
+
+    address address::resolve(std::string_view host, std::string_view service, uint16_t port,
+                             address::family preferred_family) {
+        address res;
+        opaque_network_state state;
+        if (loc.is_task_thread) {
+            mutex_unify mut(get_data(loc.curr_task).no_race);
+            std::lock_guard guard(mut);
+            if (!enter_resolve(loc.curr_task, state, res, host, service, port, preferred_family))
+                swapCtxRelock(mut);
+        } else {
+            std::mutex mtx;
+            std::condition_variable cv;
+            bool done = false;
+            auto t = task::create([&] { std::lock_guard lock(mtx); done = true; cv.notify_one(); });
+            if (!enter_resolve(t, state, res, host, service, port, preferred_family)) {
+                std::unique_lock lock(mtx);
+                cv.wait(lock, [&] { return done; });
+            }
+        }
+        return res;
+    }
+
+    std::vector<address> address::resolve_multiple(std::string_view host, std::string_view service,
+                                                   address::family preferred_family) {
+        std::vector<address> res;
+        opaque_network_state state;
+        if (loc.is_task_thread) {
+            mutex_unify mut(get_data(loc.curr_task).no_race);
+            std::lock_guard guard(mut);
+            if (!enter_resolve_multiple(loc.curr_task, state, res, host, service, preferred_family))
+                swapCtxRelock(mut);
+        } else {
+            std::mutex mtx;
+            std::condition_variable cv;
+            bool done = false;
+            auto t = task::create([&] { std::lock_guard lock(mtx); done = true; cv.notify_one(); });
+            if (!enter_resolve_multiple(t, state, res, host, service, preferred_family)) {
+                std::unique_lock lock(mtx);
+                cv.wait(lock, [&] { return done; });
+            }
+        }
+        return res;
+    }
+
+    std::vector<address> address::resolve_multiple(std::string_view host, std::string_view service,
+                                                   uint16_t port, address::family preferred_family) {
+        std::vector<address> res;
+        opaque_network_state state;
+        if (loc.is_task_thread) {
+            mutex_unify mut(get_data(loc.curr_task).no_race);
+            std::lock_guard guard(mut);
+            if (!enter_resolve_multiple(loc.curr_task, state, res, host, service, port, preferred_family))
+                swapCtxRelock(mut);
+        } else {
+            std::mutex mtx;
+            std::condition_variable cv;
+            bool done = false;
+            auto t = task::create([&] { std::lock_guard lock(mtx); done = true; cv.notify_one(); });
+            if (!enter_resolve_multiple(t, state, res, host, service, port, preferred_family)) {
+                std::unique_lock lock(mtx);
+                cv.wait(lock, [&] { return done; });
+            }
+        }
+        return res;
+    }
+
+    #pragma endregion DNS
 
     void deinit_networking() {
         if (inited)

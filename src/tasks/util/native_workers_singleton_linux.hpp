@@ -42,6 +42,7 @@ namespace fast_task::util {
         write,
         readv,
         writev,
+        poll_add,
     };
 
     class FT_API_LOCAL native_worker_handle {
@@ -271,6 +272,9 @@ namespace fast_task::util {
                     case operations::writev:
                         io_uring_prep_writev(sqe, h->request_data.fd, h->request_data.vector.iovs, h->request_data.vector.iovcnt, h->request_data.offset);
                         break;
+                    case operations::poll_add:
+                        io_uring_prep_poll_add(sqe, h->request_data.fd, (uint32_t)(unsigned short)h->request_data.mask);
+                        break;
                     default:
                         break;
                     }
@@ -463,6 +467,13 @@ namespace fast_task::util {
             handle->request_data.vector.iovcnt = iovcnt;
             handle->request_data.flags = flags;
             sumbmit(handle, hSocket);
+        }
+
+        static void post_poll_add(native_worker_handle* handle, int fd, short events) {
+            handle->request_data.opcode = operations::poll_add;
+            handle->request_data.fd = fd;
+            handle->request_data.mask = events;
+            sumbmit(handle, fd);
         }
 
         static bool await_cancel_fd(int /*hIn*/) {

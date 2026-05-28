@@ -15,8 +15,11 @@
     #include <fcntl.h>
     #include <file.hpp>
     #include <net.hpp>
+    #include <ares.h>
 
 namespace fast_task::net {
+    bool inited = false;
+
     static_assert(sizeof(universal_address) <= sizeof(address), "address buffer is too small for universal_address!");
 
     address address::any() {
@@ -51,9 +54,7 @@ namespace fast_task::net {
         internal_makeIP(*((universal_address*)data), ip.data(), port);
     }
 
-    address::address(const std::string& ip_port) : address(std::string_view(ip_port)) {}
 
-    address::address(const std::string& ip, uint16_t port) : address(std::string_view(ip), port) {}
 
     address::address(const address& ip) {
         memcpy(data, ip.data, sizeof(universal_address));
@@ -2041,11 +2042,360 @@ namespace fast_task::net {
         return false;
     }
 
+    #pragma region DNS
+
+    // Heap-allocated state for an async DNS resolution (c-ares + io_uring poll_add).
+    // opaque_network_state stores a raw pointer to resolve_state; the state is
+    // reference-counted and deletes itself when all pending io_uring polls have fired.
+
+    struct resolve_state;
+
+    struct ares_poll_handle : public util::native_worker_handle {
+        resolve_state* state;
+        ares_socket_t  ares_fd;
+        short          events;
+
+        ares_poll_handle(resolve_state* s, ares_socket_t fd, short ev);
+    };
+
+    struct resolve_state : public util::native_worker_manager {
+        std::atomic_flag    processing{};               // spinlock: serialises ares_process_fd
+        bool                done          = false;
+        address::family     preferred_family = address::family::none;
+        int                 error         = 0;
+        std::atomic<int>    pending_polls {0};
+        std::atomic<int>    ref_count     {1};          // 1 per pending poll handle + 1 initial
+        char*               host_buf      = nullptr;   // heap copy, freed in callback
+        char*               service_buf   = nullptr;   // heap copy, freed in callback
+        ares_channel        channel       = nullptr;
+        address*            out_single    = nullptr;   // target for enter_resolve (single)
+        std::vector<address>* out_multi   = nullptr;   // target for enter_resolve_multiple
+        std::shared_ptr<task> awaiting_task;
+
+        void add_poll() {
+            ref_count.fetch_add(1, std::memory_order_relaxed);
+            pending_polls.fetch_add(1, std::memory_order_relaxed);
+        }
+
+        void release() {
+            if (ref_count.fetch_sub(1, std::memory_order_acq_rel) == 1)
+                delete this;
+        }
+
+        void submit_polls() {
+            ares_socket_t socks[ARES_GETSOCK_MAXNUM];
+            int bitmask = ares_getsock(channel, socks, ARES_GETSOCK_MAXNUM);
+            for (int i = 0; i < ARES_GETSOCK_MAXNUM; i++) {
+                bool rd = ARES_GETSOCK_READABLE(bitmask, i);
+                bool wr = ARES_GETSOCK_WRITABLE(bitmask, i);
+                if (!rd && !wr)
+                    continue;
+                short ev = 0;
+                if (rd) ev |= POLLIN;
+                if (wr) ev |= POLLOUT;
+                auto* ph = new ares_poll_handle(this, socks[i], ev);
+                add_poll();
+                util::native_workers_singleton::post_poll_add(ph, (int)socks[i], ev);
+            }
+        }
+
+        // Callback from io_uring when a polled fd becomes ready.
+        void handle(util::native_worker_handle* h, int32_t res, uint32_t) override {
+            auto* ph = static_cast<ares_poll_handle*>(h);
+            ares_socket_t fd = ph->ares_fd;
+            short         ev = ph->events;
+            delete ph;
+
+            std::shared_ptr<task> to_resume;
+
+            while (processing.test_and_set(std::memory_order_acquire))
+                ;   // brief spin; critical section is just one ares_process_fd call
+
+            if (!done && channel) {
+                ares_socket_t rfd = ARES_SOCKET_BAD, wfd = ARES_SOCKET_BAD;
+                if (res > 0) {
+                    if (ev & POLLIN)  rfd = fd;
+                    if (ev & POLLOUT) wfd = fd;
+                } else {
+                    // Error/hangup – pass fd to both sides so c-ares detects it
+                    rfd = wfd = fd;
+                }
+                ares_process_fd(channel, rfd, wfd);
+                // ares_addrinfo_cb may have been called synchronously above,
+                // setting done=true and freeing host_buf/service_buf.
+            }
+
+            if (done && channel) {
+                ares_destroy(channel);
+                channel = nullptr;
+            }
+
+            if (done)
+                to_resume = std::move(awaiting_task);
+
+            int rem = pending_polls.fetch_sub(1, std::memory_order_acq_rel) - 1;
+            bool resubmit = (!done && rem == 0);
+
+            processing.clear(std::memory_order_release);
+
+            // Resume task BEFORE release() – release() may delete 'this'.
+            if (to_resume) {
+                fast_task::lock_guard guard(get_data(to_resume).no_race);
+                transfer_task(std::move(to_resume));
+            } else if (resubmit && channel) {
+                submit_polls();
+            }
+
+            release();
+        }
+    };
+
+    inline ares_poll_handle::ares_poll_handle(resolve_state* s, ares_socket_t fd, short ev)
+        : util::native_worker_handle(s), state(s), ares_fd(fd), events(ev) {}
+
+    // Stored inside opaque_network_state::data (just a pointer to the heap state).
+    struct resolve_ptr_state {
+        resolve_state* rs;
+    };
+    static_assert(sizeof(resolve_ptr_state) <= sizeof(opaque_network_state::data),
+                  "opaque_network_state::data too small for resolve_ptr_state");
+
+    static void ares_addrinfo_cb(void* arg, int status, int /*timeouts*/, struct ares_addrinfo* result) {
+        auto* rs = static_cast<resolve_state*>(arg);
+
+        if (status == ARES_SUCCESS && result) {
+            for (auto* node = result->nodes; node; node = node->ai_next) {
+                if (rs->preferred_family != address::family::none) {
+                    address::family nf = address::family::none;
+                    if (node->ai_family == AF_INET)       nf = address::family::ipv4;
+                    else if (node->ai_family == AF_INET6) nf = address::family::ipv6;
+                    if (nf != rs->preferred_family)
+                        continue;
+                }
+                address addr = to_address(node->ai_addr);
+                if (rs->out_single) {
+                    *rs->out_single = addr;
+                    rs->out_single = nullptr;
+                    break;
+                } else if (rs->out_multi) {
+                    rs->out_multi->push_back(addr);
+                }
+            }
+            ares_freeaddrinfo(result);
+        } else if (status != ARES_SUCCESS) {
+            rs->error = status;
+        }
+
+        // Free string copies now; do NOT call ares_destroy here (called after
+        // ares_process_fd returns, inside handle()).
+        free(rs->host_buf);    rs->host_buf    = nullptr;
+        free(rs->service_buf); rs->service_buf = nullptr;
+
+        rs->done = true;
+        // Task will be resumed in handle() after ares_process_fd returns.
+    }
+
+    static bool enter_resolve_impl(
+        const std::shared_ptr<task>& t,
+        opaque_network_state& state,
+        address*              out_single,
+        std::vector<address>* out_multi,
+        std::string_view      host,
+        std::string_view      service,
+        uint16_t              port_override,
+        address::family       preferred_family)
+    {
+        auto* rs = new resolve_state{};
+        rs->out_single       = out_single;
+        rs->out_multi        = out_multi;
+        rs->preferred_family = preferred_family;
+
+        rs->host_buf = strndup(host.data(), host.size());
+        if (port_override != 0) {
+            char port_str[8];
+            snprintf(port_str, sizeof(port_str), "%u", (unsigned)port_override);
+            rs->service_buf = strdup(port_str);
+        } else {
+            rs->service_buf = strndup(service.data(), service.size());
+        }
+
+        ares_channel channel;
+        if (ares_init(&channel) != ARES_SUCCESS) {
+            free(rs->host_buf);
+            free(rs->service_buf);
+            delete rs;
+            return true;  // immediate completion (with error)
+        }
+        rs->channel = channel;
+
+        struct ares_addrinfo_hints hints{};
+        hints.ai_family   = AF_UNSPEC;
+        if (preferred_family == address::family::ipv4)      hints.ai_family = AF_INET;
+        else if (preferred_family == address::family::ipv6) hints.ai_family = AF_INET6;
+        hints.ai_socktype = SOCK_STREAM;
+
+        // ares_getaddrinfo may call ares_addrinfo_cb synchronously for numeric IPs.
+        ares_getaddrinfo(channel, rs->host_buf,
+                         rs->service_buf && rs->service_buf[0] ? rs->service_buf : nullptr,
+                         &hints, ares_addrinfo_cb, rs);
+
+        if (rs->done) {
+            // Synchronous completion (numeric IP or cached) – no io_uring needed.
+            if (rs->channel) {
+                ares_destroy(rs->channel);
+                rs->channel = nullptr;
+            }
+            delete rs;
+            return true;
+        }
+
+        // Async path: store pointer, set awaiting task, submit io_uring polls.
+        new (&state) resolve_ptr_state{rs};
+        rs->awaiting_task = t;
+        rs->submit_polls();
+
+        if (rs->done && rs->pending_polls.load(std::memory_order_relaxed) == 0) {
+            // Resolved between getaddrinfo and submit_polls with no io_uring ops.
+            // awaiting_task was never used; resume synchronously.
+            rs->awaiting_task.reset();
+            delete rs;
+            // Clear the ptr we stored above
+            new (&state) resolve_ptr_state{nullptr};
+            return true;
+        }
+
+        rs->release();  // release initial ref; io_uring poll handles hold remaining refs
+        return false;
+    }
+
+    bool address::enter_resolve(const std::shared_ptr<task>& t, opaque_network_state& state,
+                                address& res, std::string_view host, std::string_view service,
+                                address::family preferred_family) {
+        return enter_resolve_impl(t, state, &res, nullptr, host, service, 0, preferred_family);
+    }
+
+    bool address::enter_resolve(const std::shared_ptr<task>& t, opaque_network_state& state,
+                                address& res, std::string_view host, std::string_view service,
+                                uint16_t port, address::family preferred_family) {
+        return enter_resolve_impl(t, state, &res, nullptr, host, service, port, preferred_family);
+    }
+
+    bool address::enter_resolve_multiple(const std::shared_ptr<task>& t, opaque_network_state& state,
+                                         std::vector<address>& res, std::string_view host,
+                                         std::string_view service, address::family preferred_family) {
+        return enter_resolve_impl(t, state, nullptr, &res, host, service, 0, preferred_family);
+    }
+
+    bool address::enter_resolve_multiple(const std::shared_ptr<task>& t, opaque_network_state& state,
+                                         std::vector<address>& res, std::string_view host,
+                                         std::string_view service, uint16_t port,
+                                         address::family preferred_family) {
+        return enter_resolve_impl(t, state, nullptr, &res, host, service, port, preferred_family);
+    }
+
+    address address::resolve(std::string_view host, std::string_view service,
+                             address::family preferred_family) {
+        address res;
+        opaque_network_state state;
+        if (loc.is_task_thread) {
+            mutex_unify mut(fast_task::get_data(loc.curr_task).no_race);
+            std::lock_guard guard(mut);
+            if (!enter_resolve(loc.curr_task, state, res, host, service, preferred_family))
+                swapCtxRelock(mut);
+        } else {
+            std::mutex mtx;
+            std::condition_variable cv;
+            bool done = false;
+            auto t = task::create([&] { std::lock_guard lock(mtx); done = true; cv.notify_one(); });
+            if (!enter_resolve(t, state, res, host, service, preferred_family)) {
+                std::unique_lock lock(mtx);
+                cv.wait(lock, [&] { return done; });
+            }
+        }
+        return res;
+    }
+
+    address address::resolve(std::string_view host, std::string_view service, uint16_t port,
+                             address::family preferred_family) {
+        address res;
+        opaque_network_state state;
+        if (loc.is_task_thread) {
+            mutex_unify mut(fast_task::get_data(loc.curr_task).no_race);
+            std::lock_guard guard(mut);
+            if (!enter_resolve(loc.curr_task, state, res, host, service, port, preferred_family))
+                swapCtxRelock(mut);
+        } else {
+            std::mutex mtx;
+            std::condition_variable cv;
+            bool done = false;
+            auto t = task::create([&] { std::lock_guard lock(mtx); done = true; cv.notify_one(); });
+            if (!enter_resolve(t, state, res, host, service, port, preferred_family)) {
+                std::unique_lock lock(mtx);
+                cv.wait(lock, [&] { return done; });
+            }
+        }
+        return res;
+    }
+
+    std::vector<address> address::resolve_multiple(std::string_view host, std::string_view service,
+                                                   address::family preferred_family) {
+        std::vector<address> res;
+        opaque_network_state state;
+        if (loc.is_task_thread) {
+            mutex_unify mut(fast_task::get_data(loc.curr_task).no_race);
+            std::lock_guard guard(mut);
+            if (!enter_resolve_multiple(loc.curr_task, state, res, host, service, preferred_family))
+                swapCtxRelock(mut);
+        } else {
+            std::mutex mtx;
+            std::condition_variable cv;
+            bool done = false;
+            auto t = task::create([&] { std::lock_guard lock(mtx); done = true; cv.notify_one(); });
+            if (!enter_resolve_multiple(t, state, res, host, service, preferred_family)) {
+                std::unique_lock lock(mtx);
+                cv.wait(lock, [&] { return done; });
+            }
+        }
+        return res;
+    }
+
+    std::vector<address> address::resolve_multiple(std::string_view host, std::string_view service,
+                                                   uint16_t port, address::family preferred_family) {
+        std::vector<address> res;
+        opaque_network_state state;
+        if (loc.is_task_thread) {
+            mutex_unify mut(fast_task::get_data(loc.curr_task).no_race);
+            std::lock_guard guard(mut);
+            if (!enter_resolve_multiple(loc.curr_task, state, res, host, service, port, preferred_family))
+                swapCtxRelock(mut);
+        } else {
+            std::mutex mtx;
+            std::condition_variable cv;
+            bool done = false;
+            auto t = task::create([&] { std::lock_guard lock(mtx); done = true; cv.notify_one(); });
+            if (!enter_resolve_multiple(t, state, res, host, service, port, preferred_family)) {
+                std::unique_lock lock(mtx);
+                cv.wait(lock, [&] { return done; });
+            }
+        }
+        return res;
+    }
+
+    #pragma endregion DNS
+
     uint8_t init_networking() {
+        if (!inited) {
+            ares_library_init(ARES_LIB_INIT_ALL);
+            inited = true;
+        }
         return 0;
     }
 
     void deinit_networking() {
+        if (inited) {
+            ares_library_cleanup();
+            inited = false;
+        }
     }
 }
 #endif

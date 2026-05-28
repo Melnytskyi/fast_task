@@ -11,6 +11,10 @@
         {
             "name": "liburing",
             "platform": "linux"
+        },
+        {
+            "name": "c-ares",
+            "platform": "linux"
         }
     ]
 }
