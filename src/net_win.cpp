@@ -732,20 +732,19 @@ namespace fast_task::net {
         auto& n_state = *new (&state) native_state(mgr.get());
         n_state.awaiting_task = t;
 
-        // 5. Issue ConnectEx
         DWORD bytesSent = 0;
         if (!_ConnectEx(sock, (sockaddr*)ip_port.get_data(), ip_port.data_size(), nullptr, 0, &bytesSent, &n_state.overlapped)) {
             int err = ::WSAGetLastError();
             if (err != ERROR_IO_PENDING) {
                 n_state.error = err;
-                return true; // Synchronous failure
+                return true;
             }
 
             n_state.error = WSA_IO_PENDING;
             tcp_socket new_sock;
             new_sock.handle = std::move(mgr);
             res = std::move(new_sock);
-            return false; // Asynchronous pending
+            return false;
         }
 
         n_state.error = 0;
@@ -776,14 +775,14 @@ namespace fast_task::net {
             int err = ::WSAGetLastError();
             if (err != ERROR_IO_PENDING) {
                 n_state.error = err;
-                return true; // Synchronous failure
+                return true;
             }
 
             n_state.error = WSA_IO_PENDING;
             tcp_socket new_sock;
             new_sock.handle = std::move(mgr);
             res = std::move(new_sock);
-            return false; // Asynchronous pending
+            return false;
         }
 
         n_state.error = 0;
@@ -1131,6 +1130,277 @@ namespace fast_task::net {
         ns.error = err;
         return true;
     }
+
+    #pragma endregion
+
+    #pragma region TCP Listener
+
+    class tcp_listener::manager : public util::native_worker_manager {
+        SOCKET sock = INVALID_SOCKET;
+
+    public:
+        manager(SOCKET s) : sock(s) {
+            if (sock != INVALID_SOCKET) {
+                init_win_fns(sock);
+                HANDLE hSock = reinterpret_cast<HANDLE>(sock);
+                util::native_workers_singleton::register_handle(hSock, this);
+                ::SetFileCompletionNotificationModes(hSock, FILE_SKIP_COMPLETION_PORT_ON_SUCCESS | FILE_SKIP_SET_EVENT_ON_HANDLE);
+            }
+        }
+
+        ~manager() override {
+            if (sock != INVALID_SOCKET) {
+                closesocket(sock);
+                sock = INVALID_SOCKET;
+            }
+        }
+
+        manager(const manager&) = delete;
+        manager& operator=(const manager&) = delete;
+        manager(manager&&) = delete;
+        manager& operator=(manager&&) = delete;
+
+        SOCKET get_socket() const noexcept {
+            return sock;
+        }
+
+        void handle(void* /*data*/, util::native_worker_handle* overlap, unsigned long dwBytesTransferred) override {
+            auto state = static_cast<native_state*>(overlap);
+            DWORD dwFlags = 0;
+            DWORD cbTransfer = 0;
+            if (!::WSAGetOverlappedResult(sock, &state->overlapped, &cbTransfer, FALSE, &dwFlags)) {
+                state->error = ::WSAGetLastError();
+            } else
+                state->error = 0;
+
+            if (state->on_complete)
+                state->on_complete(static_cast<void*>(state));
+            if (state->awaiting_task) {
+                if (state->out_processed_bytes) {
+                    if (state->error)
+                        *state->out_processed_bytes = -1;
+                    else
+                        *state->out_processed_bytes = static_cast<int32_t>(dwBytesTransferred);
+                }
+                fast_task::lock_guard guard(get_data(state->awaiting_task).no_race);
+                transfer_task(std::move(state->awaiting_task));
+            }
+        }
+
+        bool set_configuration(const tcp_configuration& config) {
+            int cfg = !config.allow_ip4;
+            if (setsockopt(sock, IPPROTO_IPV6, IPV6_V6ONLY, (char*)&cfg, sizeof(cfg)) == SOCKET_ERROR)
+                return false;
+            cfg = !config.enable_delay;
+            if (setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, (char*)&cfg, sizeof(cfg)) == SOCKET_ERROR)
+                return false;
+            cfg = config.recv_timeout_ms;
+            if (setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (char*)&cfg, sizeof(cfg)) == SOCKET_ERROR)
+                return false;
+            cfg = config.send_timeout_ms;
+            if (setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, (char*)&cfg, sizeof(cfg)) == SOCKET_ERROR)
+                return false;
+            cfg = config.enable_keep_alive;
+            if (setsockopt(sock, SOL_SOCKET, SO_KEEPALIVE, (char*)&cfg, sizeof(cfg)) == SOCKET_ERROR)
+                return false;
+            if (config.enable_keep_alive) {
+                cfg = config.keep_alive_settings.idle_ms;
+                if (setsockopt(sock, IPPROTO_TCP, TCP_KEEPIDLE, (char*)&cfg, sizeof(cfg)) == SOCKET_ERROR)
+                    return false;
+                cfg = config.keep_alive_settings.interval_ms;
+                if (setsockopt(sock, IPPROTO_TCP, TCP_KEEPINTVL, (char*)&cfg, sizeof(cfg)) == SOCKET_ERROR)
+                    return false;
+                cfg = config.keep_alive_settings.retry_count;
+                if (setsockopt(sock, IPPROTO_TCP, TCP_KEEPCNT, (char*)&cfg, sizeof(cfg)) == SOCKET_ERROR)
+                    return false;
+    #ifdef TCP_MAXRTMS
+                cfg = config.keep_alive_settings.user_timeout_ms;
+                if (setsockopt(sock, IPPROTO_TCP, TCP_MAXRTMS, (char*)&cfg, sizeof(cfg)) == SOCKET_ERROR)
+                    return false;
+    #else
+                cfg = config.keep_alive_settings.user_timeout_ms / 1000;
+                if (setsockopt(sock, IPPROTO_TCP, TCP_MAXRT, (char*)&cfg, sizeof(cfg)) == SOCKET_ERROR)
+                    return false;
+    #endif
+            }
+            DWORD argp = 1;
+            if (ioctlsocket(sock, FIONBIO, &argp) == SOCKET_ERROR)
+                return false;
+            return true;
+        }
+    };
+
+    static constexpr DWORD accept_addr_buf_len = sizeof(SOCKADDR_IN6) + 16;
+
+    struct accept_state : public native_state {
+        SOCKET accept_socket = INVALID_SOCKET;
+        SOCKET listen_socket = INVALID_SOCKET;
+        std::optional<tcp_socket>* out_socket = nullptr;
+        char addr_buf[accept_addr_buf_len * 2];
+
+        accept_state(util::native_worker_manager* mgr, SOCKET ls) : native_state(mgr), listen_socket(ls) {}
+    };
+
+    static_assert(sizeof(accept_state) <= sizeof(opaque_network_state::data), "accept_state too large for opaque_network_state");
+
+    tcp_listener::tcp_listener() = default;
+    tcp_listener::tcp_listener(tcp_listener&&) = default;
+    tcp_listener& tcp_listener::operator=(tcp_listener&&) = default;
+    tcp_listener::~tcp_listener() = default;
+
+    std::optional<tcp_listener> tcp_listener::bind(const address& ip_port, const tcp_configuration& config) {
+        SOCKET listenSocket = ::WSASocketW(AF_INET6, SOCK_STREAM, IPPROTO_TCP, NULL, 0, WSA_FLAG_OVERLAPPED);
+        if (listenSocket == INVALID_SOCKET)
+            return std::nullopt;
+        auto mgr = std::make_unique<manager>(listenSocket);
+        if (!mgr->set_configuration(config))
+            return std::nullopt;
+        if (::bind(listenSocket, (sockaddr*)ip_port.get_data(), (int)ip_port.data_size()) == SOCKET_ERROR)
+            return std::nullopt;
+        if (::listen(listenSocket, SOMAXCONN) == SOCKET_ERROR)
+            return std::nullopt;
+        tcp_listener new_listener;
+        new_listener.handle = std::move(mgr);
+        return new_listener;
+    }
+
+    std::optional<tcp_socket> tcp_listener::accept() {
+        std::optional<tcp_socket> res;
+        opaque_network_state state;
+
+        if (loc.is_task_thread) {
+            mutex_unify mut(get_data(loc.curr_task).no_race);
+            std::lock_guard guard(mut);
+            if (!enter_accept(loc.curr_task, state, res))
+                swapCtxRelock(mut);
+        } else {
+            std::mutex mtx;
+            std::condition_variable cv;
+            bool done = false;
+            auto t = task::create([&] {
+                std::lock_guard lock(mtx);
+                done = true;
+                cv.notify_one();
+            });
+            if (!enter_accept(t, state, res)) {
+                std::unique_lock lock(mtx);
+                cv.wait(lock, [&] { return done; });
+            }
+        }
+        return res;
+    }
+
+    void tcp_listener::close() {
+        opaque_network_state state;
+
+        if (loc.is_task_thread) {
+            mutex_unify mut(get_data(loc.curr_task).no_race);
+            std::lock_guard guard(mut);
+            if (!enter_close(loc.curr_task, state))
+                swapCtxRelock(mut);
+        } else {
+            std::mutex mtx;
+            std::condition_variable cv;
+            bool done = false;
+            auto t = task::create([&] {
+                std::lock_guard lock(mtx);
+                done = true;
+                cv.notify_one();
+            });
+            if (!enter_close(t, state)) {
+                std::unique_lock lock(mtx);
+                cv.wait(lock, [&] { return done; });
+            }
+        }
+    }
+
+    bool tcp_listener::is_open() const noexcept {
+        return handle && handle->get_socket() != INVALID_SOCKET;
+    }
+
+    address tcp_listener::local_address() const noexcept {
+        if (!handle || handle->get_socket() == INVALID_SOCKET)
+            return address();
+        sockaddr_storage addr;
+        socklen_t addr_len = sizeof(addr);
+        if (getsockname(handle->get_socket(), (sockaddr*)&addr, &addr_len) == SOCKET_ERROR)
+            return address();
+        return to_address(&addr);
+    }
+
+    address tcp_listener::remote_address() const noexcept {
+        return address();
+    }
+
+    bool tcp_listener::enter_close(const std::shared_ptr<task>& t, opaque_network_state& state) {
+        if (!handle || handle->get_socket() == INVALID_SOCKET)
+            return true;
+        auto& ns = *new (&state) native_state(handle.get());
+        ns.awaiting_task = t;
+
+        BOOL res = _DisconnectEx(handle->get_socket(), &ns.overlapped, 0, 0);
+
+        if (res == TRUE)
+            return true;
+
+        int err = ::WSAGetLastError();
+        if (err == WSA_IO_PENDING)
+            return false;
+
+        ns.error = err;
+        return true;
+    }
+
+    bool tcp_listener::enter_accept(const std::shared_ptr<task>& t, opaque_network_state& state, std::optional<tcp_socket>& res) {
+        if (!handle || handle->get_socket() == INVALID_SOCKET) {
+            res = std::nullopt;
+            return true;
+        }
+        SOCKET accept_sock = ::WSASocketW(AF_INET6, SOCK_STREAM, IPPROTO_TCP, NULL, 0, WSA_FLAG_OVERLAPPED);
+        if (accept_sock == INVALID_SOCKET) {
+            res = std::nullopt;
+            return true;
+        }
+        auto& ns = *new (&state) accept_state(handle.get(), handle->get_socket());
+        ns.awaiting_task = t;
+        ns.accept_socket = accept_sock;
+        ns.out_socket = &res;
+        ns.on_complete = [](void* base) {
+            auto s = static_cast<accept_state*>(base);
+            if (s->error == 0 && s->out_socket) {
+                ::setsockopt(s->accept_socket, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT, (char*)&s->listen_socket, sizeof(s->listen_socket));
+                tcp_socket new_sock;
+                new_sock.handle = std::make_unique<tcp_socket::manager>(s->accept_socket);
+                *s->out_socket = std::move(new_sock);
+                s->accept_socket = INVALID_SOCKET;
+            } else {
+                if (s->accept_socket != INVALID_SOCKET) {
+                    closesocket(s->accept_socket);
+                    s->accept_socket = INVALID_SOCKET;
+                }
+                if (s->out_socket)
+                    *s->out_socket = std::nullopt;
+            }
+        };
+
+        DWORD bytes_received = 0;
+        if (!_AcceptEx(handle->get_socket(), accept_sock, ns.addr_buf, 0, accept_addr_buf_len, accept_addr_buf_len, &bytes_received, &ns.overlapped)) {
+            int err = ::WSAGetLastError();
+            if (err != ERROR_IO_PENDING) {
+                closesocket(accept_sock);
+                ns.accept_socket = INVALID_SOCKET;
+                res = std::nullopt;
+                ns.error = err;
+                return true;
+            }
+            return false;
+        }
+        ns.error = 0;
+        ns.on_complete(static_cast<void*>(&ns));
+        return true;
+    }
+
+    #pragma endregion
 
     class udp_handle : public util::native_worker_handle, public util::native_worker_manager {
         task_mutex mt;

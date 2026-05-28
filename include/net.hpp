@@ -108,6 +108,7 @@ namespace fast_task::net {
     class FT_API tcp_socket {
         class manager;
         std::unique_ptr<manager> handle;
+        friend class tcp_listener;
 
     public:
         tcp_socket();
@@ -165,13 +166,16 @@ namespace fast_task::net {
         tcp_listener& operator=(tcp_listener&&);
         ~tcp_listener();
 
-        static tcp_listener bind(const address& ip_port, const tcp_configuration& config = {});
+        static std::optional<tcp_listener> bind(const address& ip_port, const tcp_configuration& config = {});
 
         std::optional<tcp_socket> accept();
-        bool enter_accept(const std::shared_ptr<task>& t, opaque_network_state& state, std::optional<tcp_socket>& res);
 
         void close();
         bool is_open() const noexcept;
+        address local_address() const noexcept;
+        address remote_address() const noexcept;
+
+        bool enter_accept(const std::shared_ptr<task>& t, opaque_network_state& state, std::optional<tcp_socket>& res);
         bool enter_close(const std::shared_ptr<task>& t, opaque_network_state& state);
     };
 

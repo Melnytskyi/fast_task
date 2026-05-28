@@ -938,6 +938,215 @@ namespace fast_task::net {
         return false;
     }
 
+    class tcp_listener::manager : public util::native_worker_manager {
+        int sock = -1;
+
+    public:
+        manager(int s) : sock(s) {}
+
+        ~manager() override {
+            if (sock != -1) {
+                ::close(sock);
+                sock = -1;
+            }
+        }
+
+        manager(const manager&) = delete;
+        manager& operator=(const manager&) = delete;
+        manager(manager&&) = delete;
+        manager& operator=(manager&&) = delete;
+
+        int get_socket() const noexcept {
+            return sock;
+        }
+
+        void handle(util::native_worker_handle* overlap, int32_t res, uint32_t) override {
+            auto state = static_cast<native_state*>(overlap);
+            state->error = res < 0 ? -res : 0;
+            if (state->out_processed_bytes)
+                *state->out_processed_bytes = res > -1 ? res : -1;
+            if (state->on_complete)
+                state->on_complete(static_cast<void*>(state));
+            if (state->awaiting_task) {
+                fast_task::lock_guard guard(get_data(state->awaiting_task).no_race);
+                transfer_task(std::move(state->awaiting_task));
+            }
+        }
+
+        bool set_configuration(const tcp_configuration& config) {
+            int cfg = !config.allow_ip4;
+            if (setsockopt(sock, IPPROTO_IPV6, IPV6_V6ONLY, &cfg, sizeof(cfg)) == -1)
+                return false;
+
+            cfg = !config.enable_delay;
+            if (setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, &cfg, sizeof(cfg)) == -1)
+                return false;
+
+            cfg = config.recv_timeout_ms;
+            if (setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &cfg, sizeof(cfg)) == -1)
+                return false;
+
+            cfg = config.send_timeout_ms;
+            if (setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &cfg, sizeof(cfg)) == -1)
+                return false;
+
+            cfg = config.enable_keep_alive;
+            if (setsockopt(sock, SOL_SOCKET, SO_KEEPALIVE, &cfg, sizeof(cfg)) == -1)
+                return false;
+            if (config.enable_keep_alive) {
+                int cfg = config.keep_alive_settings.idle_ms;
+                if (setsockopt(sock, IPPROTO_TCP, TCP_KEEPIDLE, &cfg, sizeof(cfg)) == -1)
+                    return false;
+                cfg = config.keep_alive_settings.interval_ms;
+                if (setsockopt(sock, IPPROTO_TCP, TCP_KEEPINTVL, &cfg, sizeof(cfg)) == -1)
+                    return false;
+                cfg = config.keep_alive_settings.retry_count;
+                if (setsockopt(sock, IPPROTO_TCP, TCP_KEEPCNT, &cfg, sizeof(cfg)) == -1)
+                    return false;
+                cfg = config.keep_alive_settings.user_timeout_ms;
+                if (setsockopt(sock, IPPROTO_TCP, TCP_USER_TIMEOUT, &cfg, sizeof(cfg)) == -1)
+                    return false;
+            }
+            return true;
+        }
+    };
+
+    struct accept_state : public native_state {
+        std::optional<tcp_socket>* out_socket = nullptr;
+        int32_t new_fd = -1;
+
+        accept_state(util::native_worker_manager* mgr) : native_state(mgr) {
+            out_processed_bytes = &new_fd;
+        }
+    };
+
+    static_assert(sizeof(accept_state) <= sizeof(opaque_network_state::data), "accept_state too large for opaque_network_state");
+
+    tcp_listener::tcp_listener() = default;
+    tcp_listener::tcp_listener(tcp_listener&&) = default;
+    tcp_listener& tcp_listener::operator=(tcp_listener&&) = default;
+    tcp_listener::~tcp_listener() = default;
+
+    std::optional<tcp_listener> tcp_listener::bind(const address& ip_port, const tcp_configuration& config) {
+        int sock = ::socket(AF_INET6, SOCK_STREAM, IPPROTO_TCP);
+        if (sock == INVALID_SOCKET)
+            return std::nullopt;
+        auto mgr = std::make_unique<manager>(sock);
+        if (!mgr->set_configuration(config))
+            return std::nullopt;
+        int argp = 1;
+        if (ioctl(sock, FIONBIO, &argp) == -1)
+            return std::nullopt;
+        if (::bind(sock, (sockaddr*)ip_port.get_data(), ip_port.data_size()) == -1)
+            return std::nullopt;
+        if (::listen(sock, SOMAXCONN) == -1)
+            return std::nullopt;
+
+        tcp_listener new_listener;
+        new_listener.handle = std::move(mgr);
+        return new_listener;
+    }
+
+    std::optional<tcp_socket> tcp_listener::accept() {
+        std::optional<tcp_socket> res;
+        opaque_network_state state;
+
+        if (loc.is_task_thread) {
+            mutex_unify mut(get_data(loc.curr_task).no_race);
+            std::lock_guard guard(mut);
+            if (!enter_accept(loc.curr_task, state, res))
+                swapCtxRelock(mut);
+        } else {
+            std::mutex mtx;
+            std::condition_variable cv;
+            bool done = false;
+            auto t = task::create([&] {
+                std::lock_guard lock(mtx);
+                done = true;
+                cv.notify_one();
+            });
+            if (!enter_accept(t, state, res)) {
+                std::unique_lock lock(mtx);
+                cv.wait(lock, [&] { return done; });
+            }
+        }
+        return res;
+    }
+
+    void tcp_listener::close() {
+        opaque_network_state state;
+
+        if (loc.is_task_thread) {
+            mutex_unify mut(get_data(loc.curr_task).no_race);
+            std::lock_guard guard(mut);
+            if (!enter_close(loc.curr_task, state))
+                swapCtxRelock(mut);
+        } else {
+            std::mutex mtx;
+            std::condition_variable cv;
+            bool done = false;
+            auto t = task::create([&] {
+                std::lock_guard lock(mtx);
+                done = true;
+                cv.notify_one();
+            });
+            if (!enter_close(t, state)) {
+                std::unique_lock lock(mtx);
+                cv.wait(lock, [&] { return done; });
+            }
+        }
+    }
+
+    bool tcp_listener::is_open() const noexcept {
+        return handle && handle->get_socket() != INVALID_SOCKET;
+    }
+
+    address tcp_listener::local_address() const noexcept {
+        if (!handle || handle->get_socket() == INVALID_SOCKET)
+            return address();
+        sockaddr_storage addr;
+        socklen_t addr_len = sizeof(addr);
+        if (getsockname(handle->get_socket(), (sockaddr*)&addr, &addr_len) == -1)
+            return address();
+        return to_address(&addr);
+    }
+
+    address tcp_listener::remote_address() const noexcept {
+        return address();
+    }
+
+    bool tcp_listener::enter_close(const std::shared_ptr<task>& t, opaque_network_state& state) {
+        if (!handle || handle->get_socket() == INVALID_SOCKET)
+            return true;
+        auto& ns = *new (&state) native_state(handle.get());
+        ns.awaiting_task = t;
+        util::native_workers_singleton::post_close(&ns, handle->get_socket());
+        return false;
+    }
+
+    bool tcp_listener::enter_accept(const std::shared_ptr<task>& t, opaque_network_state& state, std::optional<tcp_socket>& res) {
+        if (!handle || handle->get_socket() == INVALID_SOCKET) {
+            res = std::nullopt;
+            return true;
+        }
+        auto& ns = *new (&state) accept_state(handle.get());
+        ns.awaiting_task = t;
+        ns.out_socket = &res;
+        ns.on_complete = [](void* base) {
+            auto s = static_cast<accept_state*>(base);
+            if (s->error == 0 && s->new_fd >= 0 && s->out_socket) {
+                tcp_socket new_sock;
+                new_sock.handle = std::make_unique<tcp_socket::manager>(s->new_fd);
+                *s->out_socket = std::move(new_sock);
+            } else if (s->out_socket) {
+                *s->out_socket = std::nullopt;
+            }
+        };
+        util::native_workers_singleton::post_accept(&ns, handle->get_socket(), nullptr, nullptr, SOCK_CLOEXEC);
+        return false;
+    }
+
+
     class udp_handle : public util::native_worker_handle, public util::native_worker_manager {
         task_mutex mt;
         task_condition_variable cv;
