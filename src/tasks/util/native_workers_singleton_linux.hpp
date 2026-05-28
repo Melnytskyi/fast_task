@@ -32,7 +32,6 @@ namespace fast_task::util {
         fast_connect,
         recv,
         send,
-        sendv,
         close,
         accept,
         recvmsg,
@@ -41,6 +40,8 @@ namespace fast_task::util {
         sendv_file,
         read,
         write,
+        readv,
+        writev,
     };
 
     class FT_API_LOCAL native_worker_handle {
@@ -75,6 +76,12 @@ namespace fast_task::util {
                     int pipe_wfd;
                     uint32_t len;
                 } splice_fds;
+
+                struct {
+                    struct iovec* iovs;
+                    uint32_t iovcnt;
+                } vector;
+
 
                 msghdr* pMsg;
                 uint64_t range;
@@ -211,17 +218,6 @@ namespace fast_task::util {
                     case operations::send:
                         io_uring_prep_send(sqe, h->request_data.fd, h->request_data.b.buf, h->request_data.b.len, h->request_data.flags);
                         break;
-                    case operations::sendv: {
-                        const std::span<const uint8_t>* data = (const std::span<const uint8_t>*)h->request_data.b.buf;
-                        for (size_t i = 0; i < h->request_data.b.len; ++i) {
-                            if (i != 0)
-                                sqe = io_uring_get_sqe(&shard.ring);
-                            io_uring_prep_send(sqe, h->request_data.fd, data[i].data(), data[i].size(), h->request_data.flags);
-                            sqe->flags |= IOSQE_IO_LINK;
-                        }
-                        sqe->flags &= ~IOSQE_IO_LINK;
-                        break;
-                    }
                     case operations::close:
                         io_uring_prep_close(sqe, h->request_data.fd);
                         break;
@@ -268,6 +264,12 @@ namespace fast_task::util {
                         break;
                     case operations::write:
                         io_uring_prep_write(sqe, h->request_data.fd, h->request_data.b.buf, h->request_data.b.len, h->request_data.offset);
+                        break;
+                    case operations::readv:
+                        io_uring_prep_readv(sqe, h->request_data.fd, h->request_data.vector.iovs, h->request_data.vector.iovcnt, h->request_data.offset);
+                        break;
+                    case operations::writev:
+                        io_uring_prep_writev(sqe, h->request_data.fd, h->request_data.vector.iovs, h->request_data.vector.iovcnt, h->request_data.offset);
                         break;
                     default:
                         break;
@@ -370,15 +372,6 @@ namespace fast_task::util {
             sumbmit(handle, hSocket);
         }
 
-        static void post_sendv(native_worker_handle* handle, int hSocket, std::span<const std::span<const uint8_t>> data, int32_t flags) {
-            handle->request_data.opcode = operations::sendv;
-            handle->request_data.fd = hSocket;
-            handle->request_data.b.buf = data.data();
-            handle->request_data.b.len = data.size();
-            handle->request_data.flags = flags;
-            sumbmit(handle, hSocket);
-        }
-
         static void post_close(native_worker_handle* handle, int hFile) {
             handle->request_data.opcode = operations::close;
             handle->request_data.fd = hFile;
@@ -452,6 +445,24 @@ namespace fast_task::util {
             handle->request_data.b.len = nBuffer;
             handle->request_data.offset = offset;
             sumbmit(handle, hFile);
+        }
+
+        static void post_readv(native_worker_handle* handle, int hSocket, struct iovec* iovs, uint32_t iovcnt, int32_t flags) {
+            handle->request_data.opcode = operations::readv;
+            handle->request_data.fd = hSocket;
+            handle->request_data.vector.iovs = iovs;
+            handle->request_data.vector.iovcnt = iovcnt;
+            handle->request_data.flags = flags;
+            sumbmit(handle, hSocket);
+        }
+
+        static void post_writev(native_worker_handle* handle, int hSocket, struct iovec* iovs, uint32_t iovcnt, int32_t flags) {
+            handle->request_data.opcode = operations::writev;
+            handle->request_data.fd = hSocket;
+            handle->request_data.vector.iovs = iovs;
+            handle->request_data.vector.iovcnt = iovcnt;
+            handle->request_data.flags = flags;
+            sumbmit(handle, hSocket);
         }
 
         static bool await_cancel_fd(int /*hIn*/) {

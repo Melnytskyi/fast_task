@@ -117,10 +117,11 @@ namespace fast_task::net {
         ~tcp_socket();
 
         static std::optional<tcp_socket> connect(const address& ip_port, const tcp_configuration& config = {});
-        static std::optional<tcp_socket> connect(const address& ip_port, char* data, int32_t& size, const tcp_configuration& config = {});
+        static std::optional<tcp_socket> connect(const address& ip_port, uint8_t* data, int32_t& size, const tcp_configuration& config = {});
 
-        int32_t recv(std::span<char> data);
+        int32_t recv(std::span<uint8_t> data);
         int32_t send(std::span<const uint8_t> data);
+        int32_t recvv(std::span<std::span<uint8_t>> data);
         int32_t sendv(std::span<const std::span<const uint8_t>> data);
         int32_t send_file(const char* file_path, size_t file_path_len, uint32_t data_len, uint64_t offset, uint32_t chunks_size);
         int32_t send_file(class fast_task::file::file_handle& file_path, uint32_t data_len, uint64_t offset, uint32_t chunks_size);
@@ -140,9 +141,10 @@ namespace fast_task::net {
         address remote_address() const noexcept;
 
         static bool enter_connect(const std::shared_ptr<task>& t, opaque_network_state& state, std::optional<tcp_socket>& res, const address& ip_port, const tcp_configuration& config = {});
-        static bool enter_connect(const std::shared_ptr<task>& t, opaque_network_state& state, std::optional<tcp_socket>& res, const address& ip_port, char* data, int32_t& size, const tcp_configuration& config = {});
+        static bool enter_connect(const std::shared_ptr<task>& t, opaque_network_state& state, std::optional<tcp_socket>& res, const address& ip_port, uint8_t* data, int32_t& size, const tcp_configuration& config = {});
 
-        bool enter_recv(const std::shared_ptr<task>& t, opaque_network_state& state, int32_t& bytes_read, std::span<char> data);
+        bool enter_recv(const std::shared_ptr<task>& t, opaque_network_state& state, int32_t& bytes_read, std::span<uint8_t> data);
+        bool enter_recvv(const std::shared_ptr<task>& t, opaque_network_state& state, int32_t& bytes_read, std::span<std::span<uint8_t>> data);
         bool enter_send(const std::shared_ptr<task>& t, opaque_network_state& state, int32_t& bytes_sent, std::span<const uint8_t> data);
         bool enter_sendv(const std::shared_ptr<task>& t, opaque_network_state& state, int32_t& bytes_sent, std::span<const std::span<const uint8_t>> data);
         bool enter_send_file(const std::shared_ptr<task>& t, opaque_network_state& state, int32_t& bytes_sent, const char* file_path, size_t file_path_len, uint32_t data_len, uint64_t offset, uint32_t chunks_size);
@@ -187,13 +189,18 @@ namespace fast_task::net {
         ~udp_socket();
 
         uint32_t recv(std::span<uint8_t> data, address& sender);
-        uint32_t send(std::span<const uint8_t> data, address& to);
+        uint32_t send(std::span<const uint8_t> data, const address& to);
+
+        int32_t sendv(std::span<const std::span<const uint8_t>> data, const address& to);
+        int32_t recvv(std::span<const std::span<uint8_t>> buffers, address& sender);
 
         address local_address();
         address remote_address();
 
         bool enter_recv(const std::shared_ptr<task>& t, opaque_network_state& state, uint32_t& bytes_read, std::span<uint8_t> data, address& sender);
-        bool enter_send(const std::shared_ptr<task>& t, opaque_network_state& state, uint32_t& bytes_sent, std::span<const uint8_t> data, address& to);
+        bool enter_send(const std::shared_ptr<task>& t, opaque_network_state& state, uint32_t& bytes_sent, std::span<const uint8_t> data, const address& to);
+        bool enter_recvv(const std::shared_ptr<task>& t, opaque_network_state& state, uint32_t& bytes_read, std::span<std::span<uint8_t>> buffers, address& sender);
+        bool enter_sendv(const std::shared_ptr<task>& t, opaque_network_state& state, uint32_t& bytes_sent, std::span<const std::span<const uint8_t>> data, const address& to);
     };
 
     uint8_t FT_API init_networking();

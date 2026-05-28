@@ -325,7 +325,7 @@ namespace fast_task::net {
         return res;
     }
 
-    std::optional<tcp_socket> tcp_socket::connect(const address& ip_port, char* data, int32_t& size, const tcp_configuration& config) {
+    std::optional<tcp_socket> tcp_socket::connect(const address& ip_port, uint8_t* data, int32_t& size, const tcp_configuration& config) {
         std::optional<tcp_socket> res;
         opaque_network_state state;
 
@@ -353,7 +353,7 @@ namespace fast_task::net {
         return res;
     }
 
-    int32_t tcp_socket::recv(std::span<char> data) {
+    int32_t tcp_socket::recv(std::span<uint8_t> data) {
         opaque_network_state state;
         int32_t bytes_read = 0;
 
@@ -374,6 +374,34 @@ namespace fast_task::net {
             });
 
             if (!tcp_socket::enter_recv(t, state, bytes_read, data)) {
+                std::unique_lock lock(mtx);
+                cv.wait(lock, [&] { return done; });
+            }
+        }
+        return bytes_read;
+    }
+
+    int32_t tcp_socket::recvv(std::span<std::span<uint8_t>> data) {
+        opaque_network_state state;
+        int32_t bytes_read = 0;
+
+        if (loc.is_task_thread) {
+            mutex_unify mut(get_data(loc.curr_task).no_race);
+            std::lock_guard guard(mut);
+            if (!tcp_socket::enter_recvv(loc.curr_task, state, bytes_read, data))
+                swapCtxRelock(mut);
+        } else {
+            std::mutex mtx;
+            std::condition_variable cv;
+            bool done = false;
+
+            auto t = task::create([&] {
+                std::lock_guard lock(mtx);
+                done = true;
+                cv.notify_one();
+            });
+
+            if (!tcp_socket::enter_recvv(t, state, bytes_read, data)) {
                 std::unique_lock lock(mtx);
                 cv.wait(lock, [&] { return done; });
             }
@@ -690,7 +718,7 @@ namespace fast_task::net {
         return false;
     }
 
-    bool tcp_socket::enter_connect(const std::shared_ptr<task>& t, opaque_network_state& state, std::optional<tcp_socket>& res, const address& ip_port, char* data, int32_t& size, const tcp_configuration& config) {
+    bool tcp_socket::enter_connect(const std::shared_ptr<task>& t, opaque_network_state& state, std::optional<tcp_socket>& res, const address& ip_port, uint8_t* data, int32_t& size, const tcp_configuration& config) {
         SOCKET clientSocket = socket(AF_INET6, SOCK_STREAM, IPPROTO_TCP);
         if (clientSocket == INVALID_SOCKET) {
             res = std::nullopt;
@@ -720,7 +748,7 @@ namespace fast_task::net {
         return false;
     }
 
-    bool tcp_socket::enter_recv(const std::shared_ptr<task>& t, opaque_network_state& state, int32_t& bytes_read, std::span<char> data) {
+    bool tcp_socket::enter_recv(const std::shared_ptr<task>& t, opaque_network_state& state, int32_t& bytes_read, std::span<uint8_t> data) {
         if (!handle || handle->get_socket() == INVALID_SOCKET) {
             bytes_read = -1;
             return true;
@@ -730,6 +758,54 @@ namespace fast_task::net {
         n_state.awaiting_task = t;
         n_state.out_processed_bytes = &bytes_read;
         util::native_workers_singleton::post_recv(&n_state, handle->get_socket(), data.data(), data.size(), 0);
+        return false;
+    }
+
+    bool tcp_socket::enter_recvv(const std::shared_ptr<task>& t, opaque_network_state& state, int32_t& bytes_read, std::span<std::span<uint8_t>> data) {
+        static constexpr size_t max_inline_buffers = (sizeof(opaque_network_state::data) - sizeof(native_state) - sizeof(struct iovec*) - sizeof(bool)) / sizeof(struct iovec);
+
+        struct recvv_state : public native_state {
+            struct iovec inline_bufs[max_inline_buffers];
+            struct iovec* bufs = nullptr;
+            bool uses_heap = false;
+
+            recvv_state(util::native_worker_manager* mgr) : native_state(mgr) {
+                on_complete = [](void* base) {
+                    auto s = static_cast<recvv_state*>(base);
+                    if (s->uses_heap) {
+                        delete[] s->bufs;
+                        s->uses_heap = false;
+                    }
+                };
+            }
+        };
+
+        if (!handle || handle->get_socket() == INVALID_SOCKET) {
+            bytes_read = -1;
+            return true;
+        }
+
+        auto& n_state = *new (&state) recvv_state(handle.get());
+
+        if (data.size() <= max_inline_buffers)
+            n_state.bufs = n_state.inline_bufs;
+        else {
+            n_state.bufs = new struct iovec[data.size()];
+            n_state.uses_heap = true;
+        }
+
+        size_t buf_count = 0;
+        for (const auto& span : data) {
+            if (!span.empty()) {
+                n_state.bufs[buf_count].iov_base = (void*)span.data();
+                n_state.bufs[buf_count].iov_len = span.size();
+                buf_count++;
+            }
+        }
+
+        n_state.awaiting_task = t;
+        n_state.out_processed_bytes = &bytes_read;
+        util::native_workers_singleton::post_readv(&n_state, handle->get_socket(), n_state.bufs, buf_count, 0);
         return false;
     }
 
@@ -747,10 +823,50 @@ namespace fast_task::net {
     }
 
     bool tcp_socket::enter_sendv(const std::shared_ptr<task>& t, opaque_network_state& state, int32_t& bytes_sent, std::span<const std::span<const uint8_t>> data) {
-        auto& ns = *new (&state) native_state(handle.get());
-        ns.awaiting_task = t;
-        ns.out_processed_bytes = &bytes_sent;
-        util::native_workers_singleton::post_sendv(&ns, handle->get_socket(), data, 0);
+        static constexpr size_t max_inline_buffers = (sizeof(opaque_network_state::data) - sizeof(native_state) - sizeof(struct iovec*) - sizeof(bool)) / sizeof(struct iovec);
+
+        struct sendv_state : public native_state {
+            struct iovec inline_bufs[max_inline_buffers];
+            struct iovec* bufs = nullptr;
+            bool uses_heap = false;
+
+            sendv_state(util::native_worker_manager* mgr) : native_state(mgr) {
+                on_complete = [](void* base) {
+                    auto s = static_cast<sendv_state*>(base);
+                    if (s->uses_heap) {
+                        delete[] s->bufs;
+                        s->uses_heap = false;
+                    }
+                };
+            }
+        };
+
+        if (!handle || handle->get_socket() == INVALID_SOCKET) {
+            bytes_sent = -1;
+            return true;
+        }
+
+        auto& n_state = *new (&state) sendv_state(handle.get());
+
+        if (data.size() <= max_inline_buffers)
+            n_state.bufs = n_state.inline_bufs;
+        else {
+            n_state.bufs = new struct iovec[data.size()];
+            n_state.uses_heap = true;
+        }
+
+        size_t buf_count = 0;
+        for (const auto& span : data) {
+            if (!span.empty()) {
+                n_state.bufs[buf_count].iov_base = (void*)span.data();
+                n_state.bufs[buf_count].iov_len = span.size();
+                buf_count++;
+            }
+        }
+
+        n_state.awaiting_task = t;
+        n_state.out_processed_bytes = &bytes_sent;
+        util::native_workers_singleton::post_writev(&n_state, handle->get_socket(), n_state.bufs, buf_count, 0);
         return false;
     }
 
@@ -780,6 +896,10 @@ namespace fast_task::net {
     };
 
     bool tcp_socket::enter_send_file(const std::shared_ptr<task>& t, opaque_network_state& state, int32_t& bytes_sent, const char* file_path, size_t, uint32_t data_len, uint64_t offset, uint32_t) {
+        if (!handle || handle->get_socket() == INVALID_SOCKET) {
+            bytes_sent = -1;
+            return true;
+        }
         auto& ns = *new (&state) transmit_file_state(handle.get());
         ns.awaiting_task = t;
         ns.out_processed_bytes = &bytes_sent;
@@ -808,6 +928,10 @@ namespace fast_task::net {
     }
 
     bool tcp_socket::enter_send_file(const std::shared_ptr<task>& t, opaque_network_state& state, int32_t& bytes_sent, class fast_task::file::file_handle& file_path, uint32_t data_len, uint64_t offset, uint32_t) {
+        if (!handle || handle->get_socket() == INVALID_SOCKET) {
+            bytes_sent = -1;
+            return true;
+        }
         auto& ns = *new (&state) transmit_file_state(handle.get());
         ns.awaiting_task = t;
         ns.out_processed_bytes = &bytes_sent;
@@ -838,6 +962,11 @@ namespace fast_task::net {
     };
 
     bool tcp_socket::enter_sendv_file(const std::shared_ptr<task>& t, opaque_network_state& state, int32_t& bytes_sent, const std::span<const uint8_t> prefix, const std::span<const uint8_t> postfix, const char* file_path, size_t, uint32_t data_len, uint64_t offset, uint32_t) {
+        if (!handle || handle->get_socket() == INVALID_SOCKET) {
+            bytes_sent = -1;
+            return true;
+        }
+
         auto& ns = *new (&state) transmit_filev_state(handle.get());
         ns.awaiting_task = t;
         ns.out_processed_bytes = &bytes_sent;
@@ -870,6 +999,11 @@ namespace fast_task::net {
     }
 
     bool tcp_socket::enter_sendv_file(const std::shared_ptr<task>& t, opaque_network_state& state, int32_t& bytes_sent, const std::span<const uint8_t> prefix, const std::span<const uint8_t> postfix, class fast_task::file::file_handle& file_path, uint32_t data_len, uint64_t offset, uint32_t) {
+        if (!handle || handle->get_socket() == INVALID_SOCKET) {
+            bytes_sent = -1;
+            return true;
+        }
+
         auto& ns = *new (&state) transmit_filev_state(handle.get());
         ns.awaiting_task = t;
         ns.out_processed_bytes = &bytes_sent;
@@ -895,6 +1029,9 @@ namespace fast_task::net {
     }
 
     bool tcp_socket::enter_shutdown(const std::shared_ptr<task>&, opaque_network_state& state, shutdown_mode mode) {
+        if (!handle || handle->get_socket() == INVALID_SOCKET)
+            return true;
+
         int how = SHUT_RDWR;
         switch (mode) {
         case shutdown_mode::read:
@@ -920,6 +1057,9 @@ namespace fast_task::net {
     }
 
     bool tcp_socket::enter_reset(const std::shared_ptr<task>& t, opaque_network_state& state) {
+        if (!handle || handle->get_socket() == INVALID_SOCKET)
+            return true;
+
         linger lingerStruct;
         lingerStruct.l_onoff = 1;
         lingerStruct.l_linger = 0;
@@ -932,6 +1072,9 @@ namespace fast_task::net {
     }
 
     bool tcp_socket::enter_close(const std::shared_ptr<task>& t, opaque_network_state& state) {
+        if (!handle || handle->get_socket() == INVALID_SOCKET)
+            return true;
+
         auto& ns = *new (&state) native_state(handle.get());
         ns.awaiting_task = t;
         util::native_workers_singleton::post_close(&ns, handle->get_socket());
@@ -1207,6 +1350,24 @@ namespace fast_task::net {
             send_msg.msg_iovlen = 1;
         }
 
+        void setup_recvv(struct iovec* iovs, size_t count) {
+            memset(&recv_msg, 0, sizeof(recv_msg));
+            memset(&recv_sender_addr, 0, sizeof(recv_sender_addr));
+            recv_msg.msg_name = &recv_sender_addr;
+            recv_msg.msg_namelen = sizeof(recv_sender_addr);
+            recv_msg.msg_iov = iovs;
+            recv_msg.msg_iovlen = count;
+        }
+
+        void setup_sendv(struct iovec* iovs, size_t count, const address& to) {
+            memset(&send_msg, 0, sizeof(send_msg));
+            memcpy(&send_dest_addr, to.get_data(), sizeof(universal_address));
+            send_msg.msg_name = &send_dest_addr;
+            send_msg.msg_namelen = sizeof(universal_address);
+            send_msg.msg_iov = iovs;
+            send_msg.msg_iovlen = count;
+        }
+
         msghdr* get_recv_msg() {
             return &recv_msg;
         }
@@ -1262,6 +1423,50 @@ namespace fast_task::net {
 
     static_assert(sizeof(udp_send_state) <= sizeof(opaque_network_state::data), "udp_send_state too large for opaque_network_state");
 
+    struct udp_recvv_state : public native_state {
+        udp_handle* hdl;
+        address* out_sender;
+        uint32_t* out_bytes;
+        int32_t bytes_io = 0;
+        struct iovec* bufs = nullptr;
+
+        udp_recvv_state(udp_handle* h, address* sender, uint32_t* bytes)
+            : native_state(h), hdl(h), out_sender(sender), out_bytes(bytes) {
+            out_processed_bytes = &bytes_io;
+            on_complete = [](void* base) {
+                auto s = static_cast<udp_recvv_state*>(base);
+                if (s->out_bytes)
+                    *s->out_bytes = s->bytes_io >= 0 ? static_cast<uint32_t>(s->bytes_io) : 0;
+                if (s->out_sender && s->error == 0)
+                    *s->out_sender = s->hdl->get_recv_sender();
+                delete[] s->bufs;
+                s->bufs = nullptr;
+            };
+        }
+    };
+
+    static_assert(sizeof(udp_recvv_state) <= sizeof(opaque_network_state::data), "udp_recvv_state too large for opaque_network_state");
+
+    struct udp_sendv_state : public native_state {
+        uint32_t* out_bytes;
+        int32_t bytes_io = 0;
+        struct iovec* bufs = nullptr;
+
+        udp_sendv_state(udp_handle* h, uint32_t* bytes)
+            : native_state(h), out_bytes(bytes) {
+            out_processed_bytes = &bytes_io;
+            on_complete = [](void* base) {
+                auto s = static_cast<udp_sendv_state*>(base);
+                if (s->out_bytes)
+                    *s->out_bytes = s->bytes_io >= 0 ? static_cast<uint32_t>(s->bytes_io) : 0;
+                delete[] s->bufs;
+                s->bufs = nullptr;
+            };
+        }
+    };
+
+    static_assert(sizeof(udp_sendv_state) <= sizeof(opaque_network_state::data), "udp_sendv_state too large for opaque_network_state");
+
     udp_socket::udp_socket(const address& ip_port, uint32_t) {
         int sock = ::socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP);
         if (sock == -1) {
@@ -1306,7 +1511,7 @@ namespace fast_task::net {
         return bytes_read;
     }
 
-    uint32_t udp_socket::send(std::span<const uint8_t> data, address& to) {
+    uint32_t udp_socket::send(std::span<const uint8_t> data, const address& to) {
         uint32_t bytes_sent = 0;
         opaque_network_state state;
 
@@ -1330,6 +1535,59 @@ namespace fast_task::net {
             }
         }
         return bytes_sent;
+    }
+
+    int32_t udp_socket::recvv(std::span<const std::span<uint8_t>> buffers, address& sender) {
+        uint32_t bytes_read = 0;
+        opaque_network_state state;
+        std::span<std::span<uint8_t>> mbufs{const_cast<std::span<uint8_t>*>(buffers.data()), buffers.size()};
+
+        if (loc.is_task_thread) {
+            mutex_unify mut(get_data(loc.curr_task).no_race);
+            std::lock_guard guard(mut);
+            if (!enter_recvv(loc.curr_task, state, bytes_read, mbufs, sender))
+                swapCtxRelock(mut);
+        } else {
+            std::mutex mtx;
+            std::condition_variable cv;
+            bool done = false;
+            auto t = task::create([&] {
+                std::lock_guard lock(mtx);
+                done = true;
+                cv.notify_one();
+            });
+            if (!enter_recvv(t, state, bytes_read, mbufs, sender)) {
+                std::unique_lock lock(mtx);
+                cv.wait(lock, [&] { return done; });
+            }
+        }
+        return (int32_t)bytes_read;
+    }
+
+    int32_t udp_socket::sendv(std::span<const std::span<const uint8_t>> data, const address& to) {
+        uint32_t bytes_sent = 0;
+        opaque_network_state state;
+
+        if (loc.is_task_thread) {
+            mutex_unify mut(get_data(loc.curr_task).no_race);
+            std::lock_guard guard(mut);
+            if (!enter_sendv(loc.curr_task, state, bytes_sent, data, to))
+                swapCtxRelock(mut);
+        } else {
+            std::mutex mtx;
+            std::condition_variable cv;
+            bool done = false;
+            auto t = task::create([&] {
+                std::lock_guard lock(mtx);
+                done = true;
+                cv.notify_one();
+            });
+            if (!enter_sendv(t, state, bytes_sent, data, to)) {
+                std::unique_lock lock(mtx);
+                cv.wait(lock, [&] { return done; });
+            }
+        }
+        return (int32_t)bytes_sent;
     }
 
     address udp_socket::local_address() {
@@ -1363,7 +1621,7 @@ namespace fast_task::net {
         return false;
     }
 
-    bool udp_socket::enter_send(const std::shared_ptr<task>& t, opaque_network_state& state, uint32_t& bytes_sent, std::span<const uint8_t> data, address& to) {
+    bool udp_socket::enter_send(const std::shared_ptr<task>& t, opaque_network_state& state, uint32_t& bytes_sent, std::span<const uint8_t> data, const address& to) {
         if (!handle || handle->get_socket() == INVALID_SOCKET) {
             bytes_sent = 0;
             return true;
@@ -1376,6 +1634,48 @@ namespace fast_task::net {
             if (s->out_bytes)
                 *s->out_bytes = s->bytes_io >= 0 ? static_cast<uint32_t>(s->bytes_io) : 0;
         };
+        util::native_workers_singleton::post_sendmsg(&ns, handle->get_socket(), handle->get_send_msg(), 0);
+        return false;
+    }
+
+    bool udp_socket::enter_recvv(const std::shared_ptr<task>& t, opaque_network_state& state, uint32_t& bytes_read, std::span<std::span<uint8_t>> buffers, address& sender) {
+        if (!handle || handle->get_socket() == INVALID_SOCKET) {
+            bytes_read = 0;
+            return true;
+        }
+        auto& ns = *new (&state) udp_recvv_state(handle, &sender, &bytes_read);
+        ns.bufs = new struct iovec[buffers.size()];
+        size_t count = 0;
+        for (const auto& span : buffers) {
+            if (!span.empty()) {
+                ns.bufs[count].iov_base = span.data();
+                ns.bufs[count].iov_len = span.size();
+                count++;
+            }
+        }
+        handle->setup_recvv(ns.bufs, count);
+        ns.awaiting_task = t;
+        util::native_workers_singleton::post_recvmsg(&ns, handle->get_socket(), handle->get_recv_msg(), 0);
+        return false;
+    }
+
+    bool udp_socket::enter_sendv(const std::shared_ptr<task>& t, opaque_network_state& state, uint32_t& bytes_sent, std::span<const std::span<const uint8_t>> data, const address& to) {
+        if (!handle || handle->get_socket() == INVALID_SOCKET) {
+            bytes_sent = 0;
+            return true;
+        }
+        auto& ns = *new (&state) udp_sendv_state(handle, &bytes_sent);
+        ns.bufs = new struct iovec[data.size()];
+        size_t count = 0;
+        for (const auto& span : data) {
+            if (!span.empty()) {
+                ns.bufs[count].iov_base = const_cast<uint8_t*>(span.data());
+                ns.bufs[count].iov_len = span.size();
+                count++;
+            }
+        }
+        handle->setup_sendv(ns.bufs, count, to);
+        ns.awaiting_task = t;
         util::native_workers_singleton::post_sendmsg(&ns, handle->get_socket(), handle->get_send_msg(), 0);
         return false;
     }
