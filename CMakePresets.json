@@ -49,8 +49,6 @@
             "generator": "Visual Studio 18",
             "binaryDir": "${sourceDir}/out/build/${presetName}",
             "cacheVariables": {
-                "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/vcpkg/scripts/buildsystems/vcpkg.cmake",
-                "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/${presetName}",
                 "VCPKG_TARGET_TRIPLET": "x64-windows-static"
             }
         },
@@ -61,8 +59,6 @@
             
             "binaryDir": "${sourceDir}/out/build/${presetName}",
             "cacheVariables": {
-                "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/vcpkg/scripts/buildsystems/vcpkg.cmake",
-                "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/${presetName}",
                 "VCPKG_TARGET_TRIPLET": "x64-linux"
             }
         },
@@ -70,7 +66,6 @@
             "name": "Test",
             "hidden": true,
             "cacheVariables": {
-                "ENABLE_TEST_COVERAGE": "ON",
                 "CMAKE_BUILD_TYPE": "Debug"
             }
         },
@@ -78,7 +73,6 @@
             "name": "Debug",
             "hidden": true,
             "cacheVariables": {
-                "ENABLE_TEST_COVERAGE": "OFF",
                 "CMAKE_BUILD_TYPE": "Debug"
             }
         },
@@ -86,7 +80,6 @@
             "name": "Release",
             "hidden": true,
             "cacheVariables": {
-                "ENABLE_TEST_COVERAGE": "OFF",
                 "CMAKE_BUILD_TYPE": "Release"
             }
         },

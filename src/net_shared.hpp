@@ -25,6 +25,8 @@
     #include <sys/mman.h>
     #include <sys/socket.h>
     #include <sys/types.h>
+
+    #include <string.h>
 #endif
 
 #include <condition_variable>

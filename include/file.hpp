@@ -118,8 +118,19 @@ namespace fast_task::file {
         bool enter_cancel(const std::shared_ptr<task>& t);
     };
 
-    extern template io_operation<std::vector<uint8_t>>;
-    extern template io_operation<void>;
+    template <> bool io_operation<std::vector<uint8_t>>::is_done() const noexcept;
+    template <> std::optional<io_errors> io_operation<std::vector<uint8_t>>::get_error();
+    template <> std::optional<std::vector<uint8_t>> io_operation<std::vector<uint8_t>>::try_get();
+    template <> std::vector<uint8_t> io_operation<std::vector<uint8_t>>::get();
+    template <> bool io_operation<std::vector<uint8_t>>::enter_wait(const std::shared_ptr<task>& t);
+    template <> bool io_operation<std::vector<uint8_t>>::enter_wait_until(const std::shared_ptr<task>& t, std::chrono::high_resolution_clock::time_point tp);
+    template <> bool io_operation<void>::is_done() const noexcept;
+    template <> std::optional<io_errors> io_operation<void>::get_error();
+    template <> bool io_operation<void>::try_get();
+    template <> void io_operation<void>::get();
+    template <> bool io_operation<void>::enter_wait(const std::shared_ptr<task>& t);
+    template <> bool io_operation<void>::enter_wait_until(const std::shared_ptr<task>& t, std::chrono::high_resolution_clock::time_point tp);
+    template <> bool io_operation<void>::enter_cancel(const std::shared_ptr<task>& t);
 
     class FT_API file_handle {
         class file_manager* handle;

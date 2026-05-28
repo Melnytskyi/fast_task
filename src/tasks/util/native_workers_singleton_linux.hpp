@@ -16,11 +16,31 @@
 #include <threading.hpp>
 #include <vector>
 
+#include <fcntl.h>
+#include <poll.h>
+#include <sys/eventfd.h>
+#include <unistd.h>
 namespace fast_task::util {
     class FT_API_LOCAL native_worker_manager {
     public:
         virtual void handle(class native_worker_handle* overlapped, int32_t res, uint32_t flags) = 0;
         virtual ~native_worker_manager() noexcept(false) = default;
+    };
+    enum class operations : uint8_t {
+        nop,
+        connect,
+        fast_connect,
+        recv,
+        send,
+        sendv,
+        close,
+        accept,
+        recvmsg,
+        sendmsg,
+        sendfile,
+        sendv_file,
+        read,
+        write,
     };
 
     class FT_API_LOCAL native_worker_handle {
@@ -28,7 +48,7 @@ namespace fast_task::util {
         native_worker_manager* manager;
 
         struct {
-            uint8_t opcode = 0;
+            operations opcode = operations::nop;
             int fd = 0;
             uint64_t offset = 0;
 
@@ -39,15 +59,22 @@ namespace fast_task::util {
                 } v;
 
                 struct {
-                    void* buf = nullptr;
-                    uint32_t len = 0;
-                    int32_t buf_index = 0;
+                    const void* buf;
+                    uint32_t len;
+                    int32_t buf_index;
                 } b;
 
                 struct {
                     const char* pPath;
                     mode_t mode;
                 } f_o;
+
+                struct {
+                    int file_fd;
+                    int pipe_rfd;
+                    int pipe_wfd;
+                    uint32_t len;
+                } splice_fds;
 
                 msghdr* pMsg;
                 uint64_t range;
@@ -58,16 +85,23 @@ namespace fast_task::util {
 
             union {
                 struct {
-                    sockaddr* addr = nullptr;
-                    socklen_t* len = nullptr;
+                    sockaddr* addr;
+                    socklen_t* len;
                 } addr_recv;
 
                 struct {
-                    sockaddr* addr;
-                    socklen_t* len;
+                    const sockaddr* addr;
+                    socklen_t len;
                 } addr_target;
 
-                statx* pStatxbuf;
+                struct {
+                    const void* prefix;
+                    uint32_t prefix_len;
+                    const void* postfix;
+                    uint32_t postfix_len;
+                } send_file_v;
+
+                struct statx* pStatxbuf;
                 uint64_t user_data;
             };
 
@@ -76,8 +110,13 @@ namespace fast_task::util {
 
     public:
         native_worker_handle(native_worker_manager* manager)
-            : manager(manager){};
-        
+            : manager(manager) {
+            request_data.b.buf = nullptr;
+            request_data.b.buf_index = 0;
+            request_data.b.len = 0;
+            request_data.addr_recv.addr = nullptr;
+            request_data.addr_recv.len = nullptr;
+        };
 
         native_worker_handle() = delete;
         native_worker_handle(const native_worker_handle&) = delete;
@@ -85,6 +124,7 @@ namespace fast_task::util {
         native_worker_handle& operator=(const native_worker_handle&) = delete;
         native_worker_handle& operator=(native_worker_handle&&) = delete;
     };
+
 
     class FT_API_LOCAL native_workers_singleton {
         struct io_shard {
@@ -94,15 +134,16 @@ namespace fast_task::util {
             fast_task::thread dispatcher_thread;
             alignas(64) std::atomic<bool> is_sleeping{false};
 
+            io_shard() : wakeup_eventfd(-1) {}
+
             ~io_shard() {
-                sizeof(io_shard);
                 if (wakeup_eventfd > 0)
                     close(wakeup_eventfd);
                 io_uring_queue_exit(&ring);
             }
         };
 
-        std::vector<io_shard> io_pool;
+        std::vector<std::unique_ptr<io_shard>> io_pool;
         std::bitset<IORING_OP_LAST> probe_ops;
 
         native_workers_singleton() {
@@ -113,9 +154,11 @@ namespace fast_task::util {
             }
             io_uring_free_probe(probe);
             auto size = std::max<unsigned int>(fast_task::thread::hardware_concurrency(), 1);
+            io_pool.reserve(size);
 
             for (unsigned int i = 0; i < size; i++) {
-                auto& shard = io_pool.emplace_back();
+                io_pool.push_back(std::make_unique<io_shard>());
+                auto& shard = *io_pool.back();
                 shard.wakeup_eventfd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
 
                 struct io_uring_params params;
@@ -126,14 +169,12 @@ namespace fast_task::util {
                 }
 
                 shard.dispatcher_thread = fast_task::thread(dispatch, std::ref(shard));
-                shard.dispatcher_thread.detach();
             }
         }
 
         static void arm_wakeup(io_shard& shard) {
             io_uring_sqe* sqe = io_uring_get_sqe(&shard.ring);
             io_uring_prep_poll_add(sqe, shard.wakeup_eventfd, POLLIN);
-
             io_uring_sqe_set_data(sqe, reinterpret_cast<void*>(1));
         }
 
@@ -151,81 +192,137 @@ namespace fast_task::util {
                     auto* h = handles[i];
 
                     switch (h->request_data.opcode) {
-                    case IORING_OP_READV:
-                        io_uring_prep_readv(sqe, h->request_data.fd, h->request_data.v.iov, h->request_data.v.iovcnt, h->request_data.offset);
-                        break;
-                    case IORING_OP_READV2:
-                        io_uring_prep_readv2(sqe, h->request_data.fd, h->request_data.v.iov, h->request_data.v.iovcnt, h->request_data.offset, h->request_data.flags);
-                        break;
-                    case IORING_OP_WRITEV:
-                        io_uring_prep_writev(sqe, h->request_data.fd, h->request_data.v.iov, h->request_data.v.iovcnt, h->request_data.offset);
-                        break;
-                    case IORING_OP_WRITEV2:
-                        io_uring_prep_writev2(sqe, h->request_data.fd, h->request_data.v.iov, h->request_data.v.iovcnt, h->request_data.offset, h->request_data.flags);
-                        break;
-                    case IORING_OP_READ:
-                        io_uring_prep_read(sqe, h->request_data.fd, h->request_data.b.buf, h->request_data.b.len, h->request_data.offset);
-                        break;
-                    case IORING_OP_WRITE:
-                        io_uring_prep_write(sqe, h->request_data.fd, h->request_data.b.buf, h->request_data.b.len, h->request_data.offset);
-                        break;
-                    case IORING_OP_READ_FIXED:
-                        io_uring_prep_read_fixed(sqe, h->request_data.fd, h->request_data.b.buf, h->request_data.b.len, h->request_data.offset, h->request_data.b.buf_index);
-                        break;
-                    case IORING_OP_WRITE_FIXED:
-                        io_uring_prep_write_fixed(sqe, h->request_data.fd, h->request_data.b.buf, h->request_data.b.len, h->request_data.offset, h->request_data.b.buf_index);
-                        break;
-                    case IORING_OP_FSYNC:
-                        io_uring_prep_fsync(sqe, h->request_data.fd, h->request_data.flags);
-                        break;
-                    case IORING_OP_SYNC_FILE_RANGE:
-                        io_uring_prep_sync_file_range(sqe, h->request_data.fd, h->request_data.offset, h->request_data.range, h->request_data.flags);
-                        break;
-                    case IORING_OP_RECVMSG:
-                        io_uring_prep_recvmsg(sqe, h->request_data.fd, h->request_data.pMsg, h->request_data.flags);
-                        break;
-                    case IORING_OP_SENDMSG:
-                        io_uring_prep_sendmsg(sqe, h->request_data.fd, h->request_data.pMsg, h->request_data.flags);
-                        break;
-                    case IORING_OP_RECV:
-                        io_uring_prep_recv(sqe, h->request_data.fd, h->request_data.b.buf, h->request_data.b.len, h->request_data.flags);
-                        break;
-                    case IORING_OP_RECVFROM:
-                        io_uring_prep_recvfrom(sqe, h->request_data.fd, h->request_data.b.buf, h->request_data.b.len, h->request_data.flags, h->request_data.addr_recv.addr, h->request_data.addr_recv.len);
-                        break;
-                    case IORING_OP_SEND:
-                        io_uring_prep_send(sqe, h->request_data.fd, h->request_data.b.buf, h->request_data.b.len, h->request_data.flags);
-                        break;
-                    case IORING_OP_SENDTO:
-                        io_uring_prep_sendto(sqe, h->request_data.fd, h->request_data.b.buf, h->request_data.b.len, h->request_data.flags, h->request_data.addr_target.addr, h->request_data.addr_target.len);
-                        break;
-                    case IORING_OP_NOP:
+                    case operations::nop:
                         io_uring_prep_nop(sqe);
                         break;
-                    case IORING_OP_ACCEPT:
-                        io_uring_prep_accept(sqe, h->request_data.fd, h->request_data.addr_recv.addr, h->request_data.addr_recv.len, h->request_data.flags);
-                        break;
-                    case IORING_OP_CONNECT:
+                    case operations::connect:
                         io_uring_prep_connect(sqe, h->request_data.fd, h->request_data.addr_target.addr, h->request_data.addr_target.len);
                         break;
-                    case IORING_OP_SHUTDOWN:
-                        io_uring_prep_shutdown(sqe, h->request_data.fd, h->request_data.flags);
+                    case operations::fast_connect:
+                        io_uring_prep_connect(sqe, h->request_data.fd, h->request_data.addr_target.addr, h->request_data.addr_target.len);
+                        io_uring_sqe_set_data(sqe, nullptr);
+                        sqe->flags |= IOSQE_IO_LINK;
+                        sqe = io_uring_get_sqe(&shard.ring);
+                        io_uring_prep_recv(sqe, h->request_data.fd, const_cast<void*>(h->request_data.b.buf), h->request_data.b.len, 0);
                         break;
-                    case IORING_OP_CLOSE:
+                    case operations::recv:
+                        io_uring_prep_recv(sqe, h->request_data.fd, const_cast<void*>(h->request_data.b.buf), h->request_data.b.len, h->request_data.flags);
+                        break;
+                    case operations::send:
+                        io_uring_prep_send(sqe, h->request_data.fd, h->request_data.b.buf, h->request_data.b.len, h->request_data.flags);
+                        break;
+                    case operations::sendv: {
+                        const std::span<const uint8_t>* data = (const std::span<const uint8_t>*)h->request_data.b.buf;
+                        for (size_t i = 0; i < h->request_data.b.len; ++i) {
+                            if (i != 0)
+                                sqe = io_uring_get_sqe(&shard.ring);
+                            io_uring_prep_send(sqe, h->request_data.fd, data[i].data(), data[i].size(), h->request_data.flags);
+                            sqe->flags |= IOSQE_IO_LINK;
+                        }
+                        sqe->flags &= ~IOSQE_IO_LINK;
+                        break;
+                    }
+                    case operations::close:
                         io_uring_prep_close(sqe, h->request_data.fd);
                         break;
-                    case IORING_OP_TIMEOUT:
-                        io_uring_prep_timeout(sqe, h->request_data.timeout, h->request_data.flags);
+                    case operations::accept:
+                        io_uring_prep_accept(sqe, h->request_data.fd, h->request_data.addr_recv.addr, h->request_data.addr_recv.len, h->request_data.flags);
                         break;
-                    case IORING_OP_OPENAT:
-                        io_uring_prep_openat(sqe, h->request_data.f_o.fd, h->request_data.f_o.pPath, h->request_data.flags, h->request_data.f_o.mode);
+                    case operations::recvmsg:
+                        io_uring_prep_recvmsg(sqe, h->request_data.fd, h->request_data.pMsg, h->request_data.flags);
                         break;
-                    case IORING_OP_STATX:
-                        io_uring_prep_statx(sqe, h->request_data.f_o.fd, h->request_data.f_o.pPath, h->request_data.flags, h->request_data.mask, h->request_data.pStatxbuf);
+                    case operations::sendmsg:
+                        io_uring_prep_sendmsg(sqe, h->request_data.fd, h->request_data.pMsg, h->request_data.flags);
                         break;
-                    case IORING_ASYNC_CANCEL:
-                        io_uring_prep_cancel(sqe, (void*)(intptr_t)h->request_data.fd, h->request_data.flags);
+                    case operations::sendfile: {
+                        io_uring_prep_splice(sqe, h->request_data.splice_fds.file_fd, (int64_t)h->request_data.offset, h->request_data.splice_fds.pipe_wfd, -1, h->request_data.splice_fds.len, SPLICE_F_MOVE);
+                        io_uring_sqe_set_data(sqe, nullptr);
+                        sqe->flags |= IOSQE_IO_LINK;
+                        sqe = io_uring_get_sqe(&shard.ring);
+                        io_uring_prep_splice(sqe, h->request_data.splice_fds.pipe_rfd, -1, h->request_data.fd, -1, h->request_data.splice_fds.len, SPLICE_F_MOVE);
                         break;
+                    }
+                    case operations::sendv_file: {
+                        if (h->request_data.send_file_v.prefix_len > 0) {
+                            io_uring_prep_send(sqe, h->request_data.fd, h->request_data.send_file_v.prefix, h->request_data.send_file_v.prefix_len, 0);
+                            io_uring_sqe_set_data(sqe, nullptr);
+                            sqe->flags |= IOSQE_IO_LINK;
+                            sqe = io_uring_get_sqe(&shard.ring);
+                        }
+                        io_uring_prep_splice(sqe, h->request_data.splice_fds.file_fd, (int64_t)h->request_data.offset, h->request_data.splice_fds.pipe_wfd, -1, h->request_data.splice_fds.len, SPLICE_F_MOVE);
+                        io_uring_sqe_set_data(sqe, nullptr);
+                        sqe->flags |= IOSQE_IO_LINK;
+                        sqe = io_uring_get_sqe(&shard.ring);
+                        io_uring_prep_splice(sqe, h->request_data.splice_fds.pipe_rfd, -1, h->request_data.fd, -1, h->request_data.splice_fds.len, SPLICE_F_MOVE);
+                        if (h->request_data.send_file_v.postfix_len > 0) {
+                            io_uring_sqe_set_data(sqe, nullptr);
+                            sqe->flags |= IOSQE_IO_LINK;
+                            sqe = io_uring_get_sqe(&shard.ring);
+                            io_uring_prep_send(sqe, h->request_data.fd, h->request_data.send_file_v.postfix, h->request_data.send_file_v.postfix_len, 0);
+                        }
+                        break;
+                    }
+
+                    case operations::read:
+                        io_uring_prep_read(sqe, h->request_data.fd, const_cast<void*>(h->request_data.b.buf), h->request_data.b.len, h->request_data.offset);
+                        break;
+                    case operations::write:
+                        io_uring_prep_write(sqe, h->request_data.fd, h->request_data.b.buf, h->request_data.b.len, h->request_data.offset);
+                        break;
+                    //case IORING_OP_READV:
+                    //    io_uring_prep_readv(sqe, h->request_data.fd, h->request_data.v.iov, h->request_data.v.iovcnt, h->request_data.offset);
+                    //    break;
+                    //case IORING_OP_WRITEV:
+                    //    io_uring_prep_writev(sqe, h->request_data.fd, h->request_data.v.iov, h->request_data.v.iovcnt, h->request_data.offset);
+                    //    break;
+                    //case IORING_OP_READ_FIXED:
+                    //    io_uring_prep_read_fixed(sqe, h->request_data.fd, h->request_data.b.buf, h->request_data.b.len, h->request_data.offset, h->request_data.b.buf_index);
+                    //    break;
+                    //case IORING_OP_WRITE_FIXED:
+                    //    io_uring_prep_write_fixed(sqe, h->request_data.fd, h->request_data.b.buf, h->request_data.b.len, h->request_data.offset, h->request_data.b.buf_index);
+                    //    break;
+                    //case IORING_OP_FSYNC:
+                    //    io_uring_prep_fsync(sqe, h->request_data.fd, h->request_data.flags);
+                    //    break;
+                    //case IORING_OP_SYNC_FILE_RANGE:
+                    //    io_uring_prep_sync_file_range(sqe, h->request_data.fd, h->request_data.offset, h->request_data.range, h->request_data.flags);
+                    //    break;
+                    //case IORING_OP_RECVMSG:
+                    //    io_uring_prep_recvmsg(sqe, h->request_data.fd, h->request_data.pMsg, h->request_data.flags);
+                    //    break;
+                    //case IORING_OP_SENDMSG:
+                    //    io_uring_prep_sendmsg(sqe, h->request_data.fd, h->request_data.pMsg, h->request_data.flags);
+                    //    break;
+                    //case IORING_OP_RECVFROM:
+                    //    io_uring_prep_recvfrom(sqe, h->request_data.fd, h->request_data.b.buf, h->request_data.b.len, h->request_data.flags, h->request_data.addr_recv.addr, h->request_data.addr_recv.len);
+                    //    break;
+                    //case IORING_OP_SENDTO:
+                    //    io_uring_prep_sendto(sqe, h->request_data.fd, h->request_data.b.buf, h->request_data.b.len, h->request_data.flags, h->request_data.addr_target.addr, h->request_data.addr_target.len);
+                    //    break;
+                    //case IORING_OP_NOP:
+                    //    io_uring_prep_nop(sqe);
+                    //    break;
+                    //case IORING_OP_ACCEPT:
+                    //    io_uring_prep_accept(sqe, h->request_data.fd, h->request_data.addr_recv.addr, h->request_data.addr_recv.len, h->request_data.flags);
+                    //    break;
+                    //case IORING_OP_SHUTDOWN:
+                    //    io_uring_prep_shutdown(sqe, h->request_data.fd, h->request_data.flags);
+                    //    break;
+                    //case IORING_OP_CLOSE:
+                    //    io_uring_prep_close(sqe, h->request_data.fd);
+                    //    break;
+                    //case IORING_OP_TIMEOUT:
+                    //    io_uring_prep_timeout(sqe, h->request_data.timeout, h->request_data.flags);
+                    //    break;
+                    //case IORING_OP_OPENAT:
+                    //    io_uring_prep_openat(sqe, h->request_data.f_o.fd, h->request_data.f_o.pPath, h->request_data.flags, h->request_data.f_o.mode);
+                    //    break;
+                    //case IORING_OP_STATX:
+                    //    io_uring_prep_statx(sqe, h->request_data.f_o.fd, h->request_data.f_o.pPath, h->request_data.flags, h->request_data.mask, h->request_data.pStatxbuf);
+                    //    break;
+                    //case IORING_ASYNC_CANCEL:
+                    //    io_uring_prep_cancel(sqe, (void*)(intptr_t)h->request_data.fd, h->request_data.flags);
+                    //    break;
                     default:
                         break;
                     }
@@ -269,48 +366,47 @@ namespace fast_task::util {
             return instance;
         }
 
-        class await_cancel : public native_worker_handle, native_worker_manager {
-            bool success = false;
-            task_mutex mutex;
-            task_condition_variable awaiter;
+        //class await_cancel : public native_worker_handle, native_worker_manager {
+        //    bool success = false;
+        //    task_mutex mutex;
+        //    task_condition_variable awaiter;
+        //
+        //public:
+        //    await_cancel()
+        //        : native_worker_handle(this) {}
+        //
+        //    ~await_cancel() noexcept(false) override = default;
+        //
+        //    void handle(native_worker_handle* _, int32_t res, uint32_t flags) override {
+        //        fast_task::lock_guard<task_mutex> lock(mutex);
+        //        success = res >= 0;
+        //        awaiter.notify_all();
+        //    }
+        //
+        //    bool await_fd(int handle) {
+        //        fast_task::mutex_unify unify(mutex);
+        //        fast_task::unique_lock lock(unify);
+        //        post_cancel_fd(this, handle);
+        //        awaiter.wait(lock);
+        //        return success;
+        //    }
+        //
+        //    bool await_fd_all(int handle) {
+        //        fast_task::mutex_unify unify(mutex);
+        //        fast_task::unique_lock lock(unify);
+        //        post_cancel_fd_all(this, handle);
+        //        awaiter.wait(lock);
+        //        return success;
+        //    }
+        //};
 
-        public:
-            await_cancel()
-                : native_worker_handle(this) {}
-
-            ~await_cancel() noexcept(false) override = default;
-
-            void handle(native_worker_handle* _, int32_t res, uint32_t flags) override {
-                fast_task::lock_guard<task_mutex> lock(mutex);
-                success = res >= 0;
-                awaiter.notify_all();
-            }
-
-            bool await_fd(int handle) {
-                fast_task::mutex_unify unify(mutex);
-                fast_task::unique_lock lock(unify);
-                post_cancel_fd(this, handle);
-                awaiter.wait(lock);
-                return success;
-            }
-
-            bool await_fd_all(int handle) {
-                fast_task::mutex_unify unify(mutex);
-                fast_task::unique_lock lock(unify);
-                post_cancel_fd_all(this, handle);
-                awaiter.wait(lock);
-                return success;
-            }
-        };
+        io_shard& get_shard(int fd) noexcept {
+            return *io_pool[static_cast<size_t>(fd >= 0 ? fd : 0) % io_pool.size()];
+        }
 
         static void sumbmit(native_worker_handle* handle, int hFile) {
             auto& instance = get_instance();
-            if (!instance.probe_ops.test(handle->request_data.opcode))
-                throw std::runtime_error("The opcode is not supported");
-
-            size_t shard_index = handle % instance.io_pool.size();
-            auto& shard = instance.io_pool[shard_index];
-            auto& shard = get_shard(hFile);
+            auto& shard = instance.get_shard(hFile);
             shard.queue.enqueue(handle);
             if (shard.is_sleeping.load(std::memory_order_relaxed)) {
                 uint64_t val = 1;
@@ -320,165 +416,65 @@ namespace fast_task::util {
 
     public:
         ~native_workers_singleton() {
-            io_uring_queue_exit(&m_ring);
+            for (auto& pool : io_pool)
+                pool->dispatcher_thread.join();
         }
 
-        static void post_readv(native_worker_handle* handle, int hFile, const iovec* pVec, uint32_t nVec, uint64_t offset) {
-            handle->request_data.opcode = IORING_OP_READV;
-            handle->request_data.fd = hFile;
-            handle->request_data.v.iov = pVec;
-            handle->request_data.v.iovcnt = nVec;
-            handle->request_data.offset = offset;
-            sumbmit(handle, hFile);
-        }
-
-        static void post_readv2(native_worker_handle* handle, int hFile, const iovec* pVec, uint32_t nVec, uint64_t offset, int32_t flags) {
-            handle->request_data.opcode = IORING_OP_READV2;
-            handle->request_data.fd = hFile;
-            handle->request_data.v.iov = pVec;
-            handle->request_data.v.iovcnt = nVec;
-            handle->request_data.offset = offset;
-            handle->request_data.flags = flags;
-            sumbmit(handle, hFile);
-        }
-
-        static void post_writev(native_worker_handle* handle, int hFile, const iovec* pVec, uint32_t nVec, uint64_t offset) {
-            handle->request_data.opcode = IORING_OP_WRITEV;
-            handle->request_data.fd = hFile;
-            handle->request_data.v.iov = pVec;
-            handle->request_data.v.iovcnt = nVec;
-            handle->request_data.offset = offset;
-            handle->request_data.flags = flags;
-            sumbmit(handle, hFile);
-        }
-
-        static void post_writev2(native_worker_handle* handle, int hFile, const iovec* pVec, uint32_t nVec, uint64_t offset, int32_t flags) {
-            handle->request_data.opcode = IORING_OP_WRITEV2;
-            handle->request_data.fd = hFile;
-            handle->request_data.v.iov = pVec;
-            handle->request_data.v.len = nVec;
-            handle->request_data.offset = offset;
-            handle->request_data.flags = flags;
-            sumbmit(handle, hFile);
-        }
-
-        static void post_read(native_worker_handle* handle, int hFile, void* pBuffer, uint32_t nBuffer, uint64_t offset) {
-            handle->request_data.opcode = IORING_OP_READ;
-            handle->request_data.fd = hFile;
-            handle->request_data.b.pBuffer = pBuffer;
-            handle->request_data.b.len = nBuffer;
-            handle->request_data.offset = offset;
-            sumbmit(handle, hFile);
-        }
-
-        static void post_write(native_worker_handle* handle, int hFile, const void* pBuffer, uint32_t nBuffer, uint64_t offset) {
-            handle->request_data.opcode = IORING_OP_WRITE;
-            handle->request_data.fd = hFile;
-            handle->request_data.b.pBuffer = pBuffer;
-            handle->request_data.b.len = nBuffer;
-            handle->request_data.offset = offset;
-            sumbmit(handle, hFile);
-        }
-
-        static void post_read_fixed(native_worker_handle* handle, int hFile, void* pBuffer, uint32_t nBuffer, uint64_t offset, int32_t buf_index) {
-            handle->request_data.opcode = IORING_OP_READ_FIXED;
-            handle->request_data.fd = hFile;
-            handle->request_data.b.pBuffer = pBuffer;
-            handle->request_data.b.len = nBuffer;
-            handle->request_data.b.buf_index = buf_index;
-            handle->request_data.offset = offset;
-            sumbmit(handle, hFile);
-        }
-
-        static void post_write_fixed(native_worker_handle* handle, int hFile, const void* pBuffer, uint32_t nBuffer, uint64_t offset, int32_t buf_index) {
-            handle->request_data.opcode = IORING_OP_WRITE_FIXED;
-            handle->request_data.fd = hFile;
-            handle->request_data.b.pBuffer = pBuffer;
-            handle->request_data.b.len = nBuffer;
-            handle->request_data.b.buf_index = buf_index;
-            handle->request_data.offset = offset;
-            sumbmit(handle, hFile);
-        }
-
-        static void post_fsync(native_worker_handle* handle, int hFile, int32_t flags) {
-            handle->request_data.opcode = IORING_OP_FSYNC;
-            handle->request_data.fd = hFile;
-            handle->request_data.flags = flags;
-            sumbmit(handle, hFile);
-        }
-
-        static void post_fsync_range(native_worker_handle* handle, int hFile, uint64_t offset, uint64_t nbytes, int32_t flags) {
-            handle->request_data.opcode = IORING_OP_SYNC_FILE_RANGE;
-            handle->request_data.fd = hFile;
-            handle->request_data.offset = offset;
-            handle->request_data.range = nbytes;
-            handle->request_data.flags = flags;
-            sumbmit(handle, hFile);
-        }
-
-        static void post_recvmsg(native_worker_handle* handle, int hSocket, msghdr* pMsg, int32_t flags) {
-            handle->request_data.opcode = IORING_OP_RECVMSG;
+        static void post_connect(native_worker_handle* handle, int hSocket, const sockaddr* pAddr, socklen_t addrLen) {
+            handle->request_data.opcode = operations::connect;
             handle->request_data.fd = hSocket;
-            handle->request_data.pMsg = pMsg;
-            handle->request_data.flags = flags;
+            handle->request_data.addr_target.addr = pAddr;
+            handle->request_data.addr_target.len = addrLen;
             sumbmit(handle, hSocket);
         }
 
-        static void post_sendmsg(native_worker_handle* handle, int hSocket, const msghdr* pMsg, int32_t flags) {
-            handle->request_data.opcode = IORING_OP_SENDMSG;
+        static void post_fast_connect(native_worker_handle* handle, int hSocket, const sockaddr* pAddr, socklen_t addrLen, void* buffer, uint32_t buffer_len) {
+            handle->request_data.opcode = operations::fast_connect;
             handle->request_data.fd = hSocket;
-            handle->request_data.pMsg = pMsg;
-            handle->request_data.flags = flags;
+            handle->request_data.addr_target.addr = pAddr;
+            handle->request_data.addr_target.len = addrLen;
+            handle->request_data.b.buf = buffer;
+            handle->request_data.b.len = buffer_len;
             sumbmit(handle, hSocket);
         }
 
         static void post_recv(native_worker_handle* handle, int hSocket, void* pBuffer, uint32_t nBuffer, int32_t flags) {
-            handle->request_data.opcode = IORING_OP_RECV;
+            handle->request_data.opcode = operations::recv;
             handle->request_data.fd = hSocket;
-            handle->request_data.b.pBuffer = pBuffer;
+            handle->request_data.b.buf = pBuffer;
             handle->request_data.b.len = nBuffer;
             handle->request_data.flags = flags;
-            sumbmit(handle, hSocket);
-        }
-
-        static void post_recvfrom(native_worker_handle* handle, int hSocket, const void* pBuffer, uint32_t nBuffer, int32_t flags, sockaddr* addr, socklen_t* addr_len) {
-            handle->request_data.opcode = IORING_OP_RECVFROM;
-            handle->request_data.fd = hSocket;
-            handle->request_data.b.pBuffer = pBuffer;
-            handle->request_data.b.len = nBuffer;
-            handle->request_data.addr_recv.addr = addr;
-            handle->request_data.addr_recv.len = addr_len;
-            handle->request_data.flags = flags;
+            handle->request_data.addr_recv.addr = nullptr;
+            handle->request_data.addr_recv.len = 0;
             sumbmit(handle, hSocket);
         }
 
         static void post_send(native_worker_handle* handle, int hSocket, const void* pBuffer, uint32_t nBuffer, int32_t flags) {
-            handle->request_data.opcode = IORING_OP_SEND;
+            handle->request_data.opcode = operations::send;
             handle->request_data.fd = hSocket;
-            handle->request_data.b.pBuffer = pBuffer;
+            handle->request_data.b.buf = pBuffer;
             handle->request_data.b.len = nBuffer;
             handle->request_data.flags = flags;
             sumbmit(handle, hSocket);
         }
 
-        static void post_sendto(native_worker_handle* handle, int hSocket, const void* pBuffer, uint32_t nBuffer, int32_t flags, sockaddr* addr, socklen_t addr_len) {
-            handle->request_data.opcode = IORING_OP_SENDTO;
+        static void post_sendv(native_worker_handle* handle, int hSocket, std::span<const std::span<const uint8_t>> data, int32_t flags) {
+            handle->request_data.opcode = operations::sendv;
             handle->request_data.fd = hSocket;
-            handle->request_data.b.pBuffer = pBuffer;
-            handle->request_data.b.len = nBuffer;
-            handle->request_data.addr_target.addr = addr;
-            handle->request_data.addr_target.len = addr_len;
+            handle->request_data.b.buf = data.data();
+            handle->request_data.b.len = data.size();
             handle->request_data.flags = flags;
             sumbmit(handle, hSocket);
         }
 
-        static void post_yield(native_worker_handle* handle) {
-            handle->request_data.opcode = IORING_OP_NOP;
-            sumbmit(handle, 0);
+        static void post_close(native_worker_handle* handle, int hFile) {
+            handle->request_data.opcode = operations::close;
+            handle->request_data.fd = hFile;
+            sumbmit(handle, hFile);
         }
 
         static void post_accept(native_worker_handle* handle, int hSocket, sockaddr* pAddr, socklen_t* pAddrLen, int32_t flags) {
-            handle->request_data.opcode = IORING_OP_ACCEPT;
+            handle->request_data.opcode = operations::accept;
             handle->request_data.fd = hSocket;
             handle->request_data.addr_recv.addr = pAddr;
             handle->request_data.addr_recv.len = pAddrLen;
@@ -486,51 +482,212 @@ namespace fast_task::util {
             sumbmit(handle, hSocket);
         }
 
-        static void post_connect(native_worker_handle* handle, int hSocket, const sockaddr* pAddr, socklen_t addrLen) {
-            handle->request_data.opcode = IORING_OP_CONNECT;
+        static void post_recvmsg(native_worker_handle* handle, int hSocket, msghdr* pMsg, int32_t flags) {
+            handle->request_data.opcode = operations::recvmsg;
             handle->request_data.fd = hSocket;
-            handle->request_data.addr_target.addr = pAddr;
-            handle->request_data.addr_target.len = addrLen;
-            sumbmit(handle, hSocket);
-        }
-
-        static void post_shutdown(native_worker_handle* handle, int hSocket, int how) {
-            handle->request_data.opcode = IORING_OP_SHUTDOWN;
-            handle->request_data.fd = hSocket;
-            handle->request_data.how = how;
-            sumbmit(handle, hSocket);
-        }
-
-        static void post_close(native_worker_handle* handle, int hSocket) {
-            handle->request_data.opcode = IORING_OP_CLOSE;
-            handle->request_data.fd = hSocket;
-            sumbmit(handle, hSocket);
-        }
-
-        static void post_timeout(native_worker_handle* handle, __kernel_timespec* pTimeSpec) {
-            handle->request_data.opcode = IORING_OP_TIMEOUT;
-            handle->request_data.timeout = pTimeSpec;
-            sumbmit(handle, 0);
-        }
-
-        static void post_openat(native_worker_handle* handle, int hDir, const char* pPath, int flags, mode_t mode) {
-            handle->request_data.opcode = IORING_OP_OPENAT;
-            handle->request_data.fd = hDir;
-            handle->request_data.f_o.pPath = pPath;
-            handle->request_data.f_o.mode = mode;
+            handle->request_data.pMsg = pMsg;
             handle->request_data.flags = flags;
-            sumbmit(handle, hDir);
+            sumbmit(handle, hSocket);
         }
 
-        static void post_statx(native_worker_handle* handle, int hDir, const char* pPath, int flags, unsigned int mask, struct statx* pStatxbuf) {
-            handle->request_data.opcode = IORING_OP_STATX;
-            handle->request_data.fd = hDir;
-            handle->request_data.f_o.pPath = pPath;
-            handle->request_data.mask = mode;
-            handle->request_data.pStatxbuf = pStatxbuf;
+        static void post_sendmsg(native_worker_handle* handle, int hSocket, const msghdr* pMsg, int32_t flags) {
+            handle->request_data.opcode = operations::sendmsg;
+            handle->request_data.fd = hSocket;
+            handle->request_data.pMsg = const_cast<msghdr*>(pMsg);
             handle->request_data.flags = flags;
-            sumbmit(handle, hDir);
+            sumbmit(handle, hSocket);
         }
+
+        static void post_sendfile(native_worker_handle* handle, int hSocket, int file_fd, int pipe_rfd, int pipe_wfd, uint32_t data_len, uint64_t offset) {
+            handle->request_data.opcode = operations::sendfile;
+            handle->request_data.fd = hSocket;
+            handle->request_data.offset = offset;
+            handle->request_data.splice_fds.file_fd = file_fd;
+            handle->request_data.splice_fds.pipe_rfd = pipe_rfd;
+            handle->request_data.splice_fds.pipe_wfd = pipe_wfd;
+            handle->request_data.splice_fds.len = data_len;
+            sumbmit(handle, hSocket);
+        }
+
+        static void post_sendv_file(native_worker_handle* handle, int hSocket, int file_fd, int pipe_rfd, int pipe_wfd, uint32_t data_len, uint64_t offset, const void* prefix, uint32_t prefix_len, const void* postfix, uint32_t postfix_len) {
+            handle->request_data.opcode = operations::sendv_file;
+            handle->request_data.fd = hSocket;
+            handle->request_data.offset = offset;
+            handle->request_data.splice_fds.file_fd = file_fd;
+            handle->request_data.splice_fds.pipe_rfd = pipe_rfd;
+            handle->request_data.splice_fds.pipe_wfd = pipe_wfd;
+            handle->request_data.splice_fds.len = data_len;
+            handle->request_data.send_file_v.prefix = prefix;
+            handle->request_data.send_file_v.prefix_len = prefix_len;
+            handle->request_data.send_file_v.postfix = postfix;
+            handle->request_data.send_file_v.postfix_len = postfix_len;
+            sumbmit(handle, hSocket);
+        }
+
+        //static void post_readv(native_worker_handle* handle, int hFile, const iovec* pVec, uint32_t nVec, uint64_t offset) {
+        //    handle->request_data.opcode = IORING_OP_READV;
+        //    handle->request_data.fd = hFile;
+        //    handle->request_data.v.iov = pVec;
+        //    handle->request_data.v.iovcnt = nVec;
+        //    handle->request_data.offset = offset;
+        //    sumbmit(handle, hFile);
+        //}
+        //
+        //static void post_writev(native_worker_handle* handle, int hFile, const iovec* pVec, uint32_t nVec, uint64_t offset) {
+        //    handle->request_data.opcode = IORING_OP_WRITEV;
+        //    handle->request_data.fd = hFile;
+        //    handle->request_data.v.iov = pVec;
+        //    handle->request_data.v.iovcnt = nVec;
+        //    handle->request_data.offset = offset;
+        //    handle->request_data.flags = flags;
+        //    sumbmit(handle, hFile);
+        //}
+        //
+        static void post_read(native_worker_handle* handle, int hFile, void* pBuffer, uint32_t nBuffer, uint64_t offset) {
+            handle->request_data.opcode = operations::read;
+            handle->request_data.fd = hFile;
+            handle->request_data.b.buf = pBuffer;
+            handle->request_data.b.len = nBuffer;
+            handle->request_data.offset = offset;
+            sumbmit(handle, hFile);
+        }
+
+        static void post_write(native_worker_handle* handle, int hFile, const void* pBuffer, uint32_t nBuffer, uint64_t offset) {
+            handle->request_data.opcode = operations::write;
+            handle->request_data.fd = hFile;
+            handle->request_data.b.buf = pBuffer;
+            handle->request_data.b.len = nBuffer;
+            handle->request_data.offset = offset;
+            sumbmit(handle, hFile);
+        }
+
+        //
+        //static void post_read_fixed(native_worker_handle* handle, int hFile, void* pBuffer, uint32_t nBuffer, uint64_t offset, int32_t buf_index) {
+        //    handle->request_data.opcode = IORING_OP_READ_FIXED;
+        //    handle->request_data.fd = hFile;
+        //    handle->request_data.b.buf = pBuffer;
+        //    handle->request_data.b.len = nBuffer;
+        //    handle->request_data.b.buf_index = buf_index;
+        //    handle->request_data.offset = offset;
+        //    sumbmit(handle, hFile);
+        //}
+        //
+        //static void post_write_fixed(native_worker_handle* handle, int hFile, const void* pBuffer, uint32_t nBuffer, uint64_t offset, int32_t buf_index) {
+        //    handle->request_data.opcode = IORING_OP_WRITE_FIXED;
+        //    handle->request_data.fd = hFile;
+        //    handle->request_data.b.buf = pBuffer;
+        //    handle->request_data.b.len = nBuffer;
+        //    handle->request_data.b.buf_index = buf_index;
+        //    handle->request_data.offset = offset;
+        //    sumbmit(handle, hFile);
+        //}
+        //
+        //static void post_fsync(native_worker_handle* handle, int hFile, int32_t flags) {
+        //    handle->request_data.opcode = IORING_OP_FSYNC;
+        //    handle->request_data.fd = hFile;
+        //    handle->request_data.flags = flags;
+        //    sumbmit(handle, hFile);
+        //}
+        //
+        //static void post_fsync_range(native_worker_handle* handle, int hFile, uint64_t offset, uint64_t nbytes, int32_t flags) {
+        //    handle->request_data.opcode = IORING_OP_SYNC_FILE_RANGE;
+        //    handle->request_data.fd = hFile;
+        //    handle->request_data.offset = offset;
+        //    handle->request_data.range = nbytes;
+        //    handle->request_data.flags = flags;
+        //    sumbmit(handle, hFile);
+        //}
+        //
+        //static void post_recvmsg(native_worker_handle* handle, int hSocket, msghdr* pMsg, int32_t flags) {
+        //    handle->request_data.opcode = IORING_OP_RECVMSG;
+        //    handle->request_data.fd = hSocket;
+        //    handle->request_data.pMsg = pMsg;
+        //    handle->request_data.flags = flags;
+        //    sumbmit(handle, hSocket);
+        //}
+        //
+        //static void post_sendmsg(native_worker_handle* handle, int hSocket, const msghdr* pMsg, int32_t flags) {
+        //    handle->request_data.opcode = IORING_OP_SENDMSG;
+        //    handle->request_data.fd = hSocket;
+        //    handle->request_data.pMsg = pMsg;
+        //    handle->request_data.flags = flags;
+        //    sumbmit(handle, hSocket);
+        //}
+        //
+        //
+        //static void post_recvfrom(native_worker_handle* handle, int hSocket, const void* pBuffer, uint32_t nBuffer, int32_t flags, sockaddr* addr, socklen_t* addr_len) {
+        //    handle->request_data.opcode = IORING_OP_RECV;
+        //    handle->request_data.fd = hSocket;
+        //    handle->request_data.b.buf = pBuffer;
+        //    handle->request_data.b.len = nBuffer;
+        //    handle->request_data.addr_recv.addr = addr;
+        //    handle->request_data.addr_recv.len = addr_len;
+        //    handle->request_data.flags = flags;
+        //    sumbmit(handle, hSocket);
+        //}
+        //
+        //static void post_sendto(native_worker_handle* handle, int hSocket, const void* pBuffer, uint32_t nBuffer, int32_t flags, sockaddr* addr, socklen_t addr_len) {
+        //    handle->request_data.opcode = IORING_OP_SENDTO;
+        //    handle->request_data.fd = hSocket;
+        //    handle->request_data.b.buf = pBuffer;
+        //    handle->request_data.b.len = nBuffer;
+        //    handle->request_data.addr_target.addr = addr;
+        //    handle->request_data.addr_target.len = addr_len;
+        //    handle->request_data.flags = flags;
+        //    sumbmit(handle, hSocket);
+        //}
+        //
+        //static void post_yield(native_worker_handle* handle) {
+        //    handle->request_data.opcode = IORING_OP_NOP;
+        //    sumbmit(handle, 0);
+        //}
+        //
+        //static void post_accept(native_worker_handle* handle, int hSocket, sockaddr* pAddr, socklen_t* pAddrLen, int32_t flags) {
+        //    handle->request_data.opcode = IORING_OP_ACCEPT;
+        //    handle->request_data.fd = hSocket;
+        //    handle->request_data.addr_recv.addr = pAddr;
+        //    handle->request_data.addr_recv.len = pAddrLen;
+        //    handle->request_data.flags = flags;
+        //    sumbmit(handle, hSocket);
+        //}
+        //
+        //static void post_shutdown(native_worker_handle* handle, int hSocket, int how) {
+        //    handle->request_data.opcode = IORING_OP_SHUTDOWN;
+        //    handle->request_data.fd = hSocket;
+        //    handle->request_data.how = how;
+        //    sumbmit(handle, hSocket);
+        //}
+        //
+        //static void post_close(native_worker_handle* handle, int hSocket) {
+        //    handle->request_data.opcode = IORING_OP_CLOSE;
+        //    handle->request_data.fd = hSocket;
+        //    sumbmit(handle, hSocket);
+        //}
+        //
+        //static void post_timeout(native_worker_handle* handle, __kernel_timespec* pTimeSpec) {
+        //    handle->request_data.opcode = IORING_OP_TIMEOUT;
+        //    handle->request_data.timeout = pTimeSpec;
+        //    sumbmit(handle, 0);
+        //}
+        //
+        //static void post_openat(native_worker_handle* handle, int hDir, const char* pPath, int flags, mode_t mode) {
+        //    handle->request_data.opcode = IORING_OP_OPENAT;
+        //    handle->request_data.fd = hDir;
+        //    handle->request_data.f_o.pPath = pPath;
+        //    handle->request_data.f_o.mode = mode;
+        //    handle->request_data.flags = flags;
+        //    sumbmit(handle, hDir);
+        //}
+        //
+        //static void post_statx(native_worker_handle* handle, int hDir, const char* pPath, int flags, unsigned int mask, struct statx* pStatxbuf) {
+        //    handle->request_data.opcode = IORING_OP_STATX;
+        //    handle->request_data.fd = hDir;
+        //    handle->request_data.f_o.pPath = pPath;
+        //    handle->request_data.mask = mask;
+        //    handle->request_data.pStatxbuf = pStatxbuf;
+        //    handle->request_data.flags = flags;
+        //    sumbmit(handle, hDir);
+        //}
 
         //static void post_splice(native_worker_handle* handle, int hIn, loff_t pOffIn, int hOut, loff_t pOffOut, size_t nBytes, unsigned int flags) {
         //    auto& instance = get_instance();
@@ -612,42 +769,38 @@ namespace fast_task::util {
         //    sumbmit(instance);
         //}
 
-        static void post_cancel(native_worker_handle* handle) {
-            handle->request_data.opcode = IORING_ASYNC_CANCEL;
-            handle->request_data.fd = hIn;
-            handle->request_data.flags = 0;
-            sumbmit(handle, hIn);
+        //static void post_cancel(native_worker_handle* handle) {
+        //    handle->request_data.opcode = IORING_OP_ASYNC_CANCEL;
+        //    handle->request_data.flags = 0;
+        //    sumbmit(handle, 0);
+        //}
+        //
+        //static void post_cancel_all(native_worker_handle* handle) {
+        //    handle->request_data.opcode = IORING_OP_ASYNC_CANCEL;
+        //    handle->request_data.flags = IORING_ASYNC_CANCEL_ALL;
+        //    sumbmit(handle, 0);
+        //}
+        //
+        //static void post_cancel_fd(native_worker_handle* handle, int hIn) {
+        //    handle->request_data.opcode = IORING_OP_ASYNC_CANCEL;
+        //    handle->request_data.fd = hIn;
+        //    handle->request_data.flags = IORING_ASYNC_CANCEL_FD;
+        //    sumbmit(handle, hIn);
+        //}
+        //
+        //static void post_cancel_fd_all(native_worker_handle* handle, int hIn) {
+        //    handle->request_data.opcode = IORING_OP_ASYNC_CANCEL;
+        //    handle->request_data.fd = hIn;
+        //    handle->request_data.flags = IORING_ASYNC_CANCEL_ALL | IORING_ASYNC_CANCEL_FD;
+        //    sumbmit(handle, hIn);
+        //}
+
+        static bool await_cancel_fd(int /*hIn*/) {
+            return false; // TODO: implement io_uring async cancel
         }
 
-        static void post_cancel_all(native_worker_handle* handle) {
-            handle->request_data.opcode = IORING_ASYNC_CANCEL;
-            handle->request_data.fd = hIn;
-            handle->request_data.flags = IORING_ASYNC_CANCEL_ALL;
-            sumbmit(handle, hIn);
-        }
-
-        static void post_cancel_fd(native_worker_handle* handle, int hIn) {
-            handle->request_data.opcode = IORING_ASYNC_CANCEL;
-            handle->request_data.fd = hIn;
-            handle->request_data.flags = IORING_ASYNC_CANCEL_FD;
-            sumbmit(handle, hIn);
-        }
-
-        static void post_cancel_fd_all(native_worker_handle* handle, int hIn) {
-            handle->request_data.opcode = IORING_ASYNC_CANCEL;
-            handle->request_data.fd = hIn;
-            handle->request_data.flags = IORING_ASYNC_CANCEL_ALL | IORING_ASYNC_CANCEL_FD;
-            sumbmit(handle, hIn);
-        }
-
-        static bool await_cancel_fd(int hIn) {
-            await_cancel cancel;
-            return cancel.await_fd(hIn);
-        }
-
-        static bool await_cancel_fd_all(int hIn) {
-            await_cancel cancel;
-            return cancel.await_fd_all(hIn);
+        static bool await_cancel_fd_all(int /*hIn*/) {
+            return false; // TODO: implement io_uring async cancel
         }
     };
 }

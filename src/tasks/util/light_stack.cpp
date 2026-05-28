@@ -6,9 +6,9 @@
 
 #include <algorithm>
 #include <atomic>
-#include <boost/lockfree/queue.hpp>
 #include <cassert>
 #include <concurrentqueue/moodycamel/concurrentqueue.h>
+#include <string.h>
 #include <vector>
 
 #include <tasks/_internal.hpp>

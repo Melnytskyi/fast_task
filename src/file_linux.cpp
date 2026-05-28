@@ -27,7 +27,7 @@
     #include <variant>
     #include <vector>
 
-namespace fast_task::files {
+namespace fast_task::file {
     class File_;
 
     struct completion_struct {
@@ -844,10 +844,12 @@ namespace fast_task::files {
 }
 
 namespace fast_task::file {
+    template <>
     bool io_operation<std::vector<uint8_t>>::is_done() const noexcept {
         return slot_ && slot_->is_ended();
     }
 
+    template <>
     std::optional<io_errors> io_operation<std::vector<uint8_t>>::get_error() {
         if (!slot_ || !slot_->is_ended())
             return std::nullopt;
@@ -860,6 +862,7 @@ namespace fast_task::file {
         return res;
     }
 
+    template <>
     std::optional<std::vector<uint8_t>> io_operation<std::vector<uint8_t>>::try_get() {
         if (!slot_ || !slot_->is_ended())
             return std::nullopt;
@@ -873,6 +876,7 @@ namespace fast_task::file {
         return res;
     }
 
+    template <>
     std::vector<uint8_t> io_operation<std::vector<uint8_t>>::get() {
         if (!slot_ || !slot_->is_ended())
             throw std::runtime_error("The operations is not complete");
@@ -888,6 +892,7 @@ namespace fast_task::file {
         return res.value_or(std::vector<uint8_t>{});
     }
 
+    template <>
     bool io_operation<std::vector<uint8_t>>::enter_wait(const std::shared_ptr<task>& t) {
         if (slot_)
             return slot_->enter_wait(t);
@@ -895,6 +900,7 @@ namespace fast_task::file {
             return true;
     }
 
+    template <>
     bool io_operation<std::vector<uint8_t>>::enter_wait_until(const std::shared_ptr<task>& t, std::chrono::high_resolution_clock::time_point tp) {
         if (slot_)
             return slot_->enter_wait_until(t, tp);
@@ -902,10 +908,12 @@ namespace fast_task::file {
             return true;
     }
 
+    template <>
     bool io_operation<void>::is_done() const noexcept {
         return !slot_ || slot_->is_ended();
     }
 
+    template <>
     std::optional<io_errors> io_operation<void>::get_error() {
         if (!slot_)
             return io_errors::unknown_error;
@@ -920,10 +928,12 @@ namespace fast_task::file {
         return res;
     }
 
+    template <>
     bool io_operation<void>::try_get() {
         return slot_ && slot_->is_ended();
     }
 
+    template <>
     void io_operation<void>::get() {
         if (!slot_ || !slot_->is_ended())
             throw std::runtime_error("The operations is not complete");
@@ -935,14 +945,17 @@ namespace fast_task::file {
         });
     }
 
+    template <>
     bool io_operation<void>::enter_wait(const std::shared_ptr<task>& t) {
         return slot_->enter_wait(t);
     }
 
+    template <>
     bool io_operation<void>::enter_wait_until(const std::shared_ptr<task>& t, std::chrono::high_resolution_clock::time_point tp) {
         return slot_->enter_wait_until(t, tp);
     }
 
+    template <>
     bool io_operation<void>::enter_cancel(const std::shared_ptr<task>& t) {
         return slot_->enter_cancel(t);
     }

@@ -199,8 +199,8 @@ namespace fast_task::net {
 
 namespace std {
     template <>
-    struct FT_API hash<fast_task::networking::address> {
-        size_t operator()(const fast_task::networking::address& addr) const {
+    struct FT_API hash<fast_task::net::address> {
+        size_t operator()(const fast_task::net::address& addr) const {
             std::string_view data{(char*)addr.get_data(), addr.data_size()};
             return std::hash<std::string_view>()(data);
         }

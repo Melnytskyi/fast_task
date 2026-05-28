@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.20)
+cmake_minimum_required(VERSION 3.20..4.3.3)
 
 option(FAST_TASK_STATIC "Enable static build for fast task library" ON)
 option(FAST_TASK_BUILD_TESTS "Build the test suite" OFF)
@@ -116,7 +116,7 @@ target_compile_definitions(fast_task PRIVATE FT_TASK_TRANSFERS_LIMIT=${FAST_TASK
 
 target_compile_definitions(fast_task PRIVATE FT_GUARD_PAGE_COUNT=${FAST_TASK_GUARD_PAGE_COUNT})
 
-find_package(Boost COMPONENTS context lockfree)
+find_package(Boost CONFIG COMPONENTS lockfree context)
 if(NOT Boost_FOUND)
   FetchContent_Declare(
     Boost
@@ -147,7 +147,7 @@ set_target_properties(fast_task
   CXX_STANDARD 20
   CXX_EXTENSIONS OFF
 )
-target_link_libraries(fast_task PRIVATE Boost::context Boost::lockfree concurrentqueue::concurrentqueue)
+target_link_libraries(fast_task PRIVATE Boost::context concurrentqueue::concurrentqueue)
 
 if(MSVC)
   set_property(TARGET fast_task PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")

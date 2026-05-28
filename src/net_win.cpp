@@ -287,18 +287,17 @@ namespace fast_task::net {
             } else
                 state->error = 0;
 
+            if (state->on_complete)
+                state->on_complete(static_cast<void*>(state));
             if (state->awaiting_task) {
                 if (state->out_processed_bytes)
                     if (state->error)
                         *state->out_processed_bytes = -1;
                     else
                         *state->out_processed_bytes = dwBytesTransferred;
-                if (state->on_complete)
-                    state->on_complete(static_cast<void*>(state));
-                {
-                    std::lock_guard guard(get_data(state->awaiting_task).no_race);
-                    transfer_task(std::move(state->awaiting_task));
-                }
+
+                fast_task::lock_guard guard(get_data(state->awaiting_task).no_race);
+                transfer_task(std::move(state->awaiting_task));
             }
         }
 
@@ -915,19 +914,6 @@ namespace fast_task::net {
                 if (s->close_file_on_complete && s->file_handle != INVALID_HANDLE_VALUE) {
                     ::CloseHandle(s->file_handle);
                 }
-            };
-        }
-    };
-
-    struct transmit_file_state : public native_state {
-        HANDLE file_handle = INVALID_HANDLE_VALUE;
-        bool close_file_on_complete = false;
-
-        transmit_file_state(util::native_worker_manager* mgr) : native_state(mgr) {
-            on_complete = [](void* base) {
-                auto s = static_cast<transmit_file_state*>(base);
-                if (s->close_file_on_complete && s->file_handle != INVALID_HANDLE_VALUE)
-                    ::CloseHandle(s->file_handle);
             };
         }
     };
