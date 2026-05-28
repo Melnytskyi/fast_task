@@ -17,6 +17,7 @@
     #include <net.hpp>
 
 namespace fast_task::net {
+    static_assert(sizeof(universal_address) <= sizeof(address), "address buffer is too small for universal_address!");
 
     address address::any() {
         address res;
@@ -31,25 +32,20 @@ namespace fast_task::net {
     }
 
     address::address(void* ip) {
-        if (ip) {
-            data = new universal_address();
+        if (ip)
             memcpy(data, ip, sizeof(universal_address));
-        }
     }
 
     address::address() {
-        data = nullptr;
     }
 
     address::address(std::string_view ip_port) {
-        data = new universal_address();
         if (ip_port.empty())
             ip_port = "[::]:0";
         internal_makeIP_port(*((universal_address*)data), ip_port.data());
     }
 
     address::address(std::string_view ip, uint16_t port) {
-        data = new universal_address();
         if (ip.empty())
             ip = "[::]";
         internal_makeIP(*((universal_address*)data), ip.data(), port);
@@ -60,37 +56,37 @@ namespace fast_task::net {
     address::address(const std::string& ip, uint16_t port) : address(std::string_view(ip), port) {}
 
     address::address(const address& ip) {
-        data = new universal_address(*((universal_address*)ip.data));
+        memcpy(data, ip.data, sizeof(universal_address));
     }
 
-    address::address(address&& ip) {
-        data = ip.data;
-        ip.data = nullptr;
+    address::address(address&& ip) noexcept {
+        memcpy(data, ip.data, sizeof(universal_address));
+        memset(ip.data, 0, sizeof(universal_address));
     }
 
     address::~address() {
-        if (data != nullptr)
-            delete (universal_address*)data;
     }
 
     address& address::operator=(const address& ip) {
-        if (data != nullptr)
-            delete (universal_address*)data;
-        data = new universal_address(*((universal_address*)ip.data));
+        memcpy(data, ip.data, sizeof(universal_address));
         return *this;
     }
 
-    address& address::operator=(address&& ip) {
-        if (data != nullptr)
-            delete (universal_address*)data;
-        data = ip.data;
-        ip.data = nullptr;
+    address& address::operator=(address&& ip) noexcept {
+        if (&ip == this)
+            return *this;
+        memcpy(data, ip.data, sizeof(universal_address));
+        memset(ip.data, 0, sizeof(universal_address));
         return *this;
     }
 
-    address::family address::get_family() const {
-        if (data == nullptr)
-            return family::none;
+    address::family address::get_family() const noexcept {
+        for (size_t i = 0; i < sizeof(universal_address); i++) {
+            if (data[i] != 0)
+                goto non_zero_found;
+        }
+        return family::none;
+    non_zero_found:
         universal_address* addr = (universal_address*)data;
         if (addr->ss_family == AF_INET)
             return family::ipv4;
@@ -100,9 +96,7 @@ namespace fast_task::net {
             return family::other;
     }
 
-    uint16_t address::port() const {
-        if (data == nullptr)
-            return 0;
+    uint16_t address::port() const noexcept {
         universal_address* addr = (universal_address*)data;
         if (addr->ss_family == AF_INET) {
             return ntohs(((sockaddr_in*)addr)->sin_port);
@@ -113,8 +107,6 @@ namespace fast_task::net {
     }
 
     std::string address::to_string() const {
-        if (data == nullptr)
-            return "";
         universal_address* addr = (universal_address*)data;
         static constexpr size_t addr_len = (INET6_ADDRSTRLEN > INET_ADDRSTRLEN ? INET6_ADDRSTRLEN : INET_ADDRSTRLEN) + 1;
         std::string res;
@@ -138,19 +130,15 @@ namespace fast_task::net {
         return res;
     }
 
-    bool address::operator==(const address& other) const {
-        if (data == nullptr || other.data == nullptr)
-            return false;
+    bool address::operator==(const address& other) const noexcept {
         return memcmp(data, other.data, sizeof(universal_address)) == 0;
     }
 
-    bool address::operator!=(const address& other) const {
+    bool address::operator!=(const address& other) const noexcept {
         return !(*this == other);
     }
 
-    bool address::is_loopback() const {
-        if (data == nullptr)
-            return false;
+    bool address::is_loopback() const noexcept {
         universal_address* addr = (universal_address*)data;
         switch (addr->ss_family) {
         case AF_INET:
@@ -169,7 +157,7 @@ namespace fast_task::net {
         return false;
     }
 
-    size_t address::data_size() {
+    size_t address::data_size() noexcept {
         return sizeof(universal_address);
     }
 
@@ -214,6 +202,11 @@ namespace fast_task::net {
         default:
             return tcp_error::undefined_error;
         }
+    }
+
+    std::error_code opaque_network_state::get_error_code() const noexcept {
+        auto& state = *reinterpret_cast<const native_state*>(this);
+        return std::error_code(state.error, std::system_category());
     }
 
     static_assert(sizeof(native_state) <= sizeof(opaque_network_state::data), "opaque_network_state buffer is too small for native_state!");
@@ -1427,6 +1420,34 @@ namespace fast_task::net {
             send_msg.msg_iovlen = count;
         }
 
+        void setup_recv_peer(uint8_t* data, uint32_t size) {
+            recv_iov.iov_base = data;
+            recv_iov.iov_len = size;
+            memset(&recv_msg, 0, sizeof(recv_msg));
+            recv_msg.msg_iov = &recv_iov;
+            recv_msg.msg_iovlen = 1;
+        }
+
+        void setup_send_peer(const uint8_t* data, uint32_t size) {
+            send_iov.iov_base = const_cast<uint8_t*>(data);
+            send_iov.iov_len = size;
+            memset(&send_msg, 0, sizeof(send_msg));
+            send_msg.msg_iov = &send_iov;
+            send_msg.msg_iovlen = 1;
+        }
+
+        void setup_recvv_peer(struct iovec* iovs, size_t count) {
+            memset(&recv_msg, 0, sizeof(recv_msg));
+            recv_msg.msg_iov = iovs;
+            recv_msg.msg_iovlen = count;
+        }
+
+        void setup_sendv_peer(struct iovec* iovs, size_t count) {
+            memset(&send_msg, 0, sizeof(send_msg));
+            send_msg.msg_iov = iovs;
+            send_msg.msg_iovlen = count;
+        }
+
         msghdr* get_recv_msg() {
             return &recv_msg;
         }
@@ -1443,6 +1464,14 @@ namespace fast_task::net {
             universal_address addr;
             socklen_t socklen = sizeof(universal_address);
             if (getsockname(sock, (sockaddr*)&addr, &socklen) == -1)
+                return {};
+            return to_address(addr);
+        }
+
+        address remote_address() {
+            universal_address addr;
+            socklen_t socklen = sizeof(universal_address);
+            if (getpeername(sock, (sockaddr*)&addr, &socklen) == -1)
                 return {};
             return to_address(addr);
         }
@@ -1518,27 +1547,22 @@ namespace fast_task::net {
 
     static_assert(sizeof(udp_sendv_state) <= sizeof(opaque_network_state::data), "udp_sendv_state too large for opaque_network_state");
 
-    udp_socket::udp_socket(const address& ip_port, udp_configuration config) {
-        int sock = ::socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP);
-        if (sock == -1) {
-            handle = nullptr;
-            return;
-        }
-        handle = new udp_handle(sock);
-        if (!handle->set_configuration(config)) {
-            delete handle;
-            handle = nullptr;
-            return;
-        }
-        if (::bind(sock, (const sockaddr*)ip_port.get_data(), (socklen_t)ip_port.data_size()) == -1) {
-            delete handle;
-            handle = nullptr;
-            return;
-        }
-    }
+    udp_socket::udp_socket() = default;
+    udp_socket::udp_socket(udp_socket&&) = default;
+    udp_socket& udp_socket::operator=(udp_socket&&) = default;
+    udp_socket::~udp_socket() = default;
 
-    udp_socket::~udp_socket() {
-        delete handle;
+    std::optional<udp_socket> udp_socket::bind(const address& ip_port, const udp_configuration& config) {
+        int sock = ::socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP);
+        if (sock == -1)
+            return std::nullopt;
+        udp_socket s;
+        s.handle = std::make_unique<udp_handle>(sock);
+        if (!s.handle->set_configuration(config))
+            return std::nullopt;
+        if (::bind(sock, (const sockaddr*)ip_port.get_data(), (socklen_t)ip_port.data_size()) == -1)
+            return std::nullopt;
+        return s;
     }
 
     uint32_t udp_socket::recv(std::span<uint8_t> data, address& sender) {
@@ -1652,13 +1676,72 @@ namespace fast_task::net {
         return handle->local_address();
     }
 
+    bool udp_socket::join_multicast_group(const address& multicast_group) {
+        if (!handle)
+            return false;
+        auto family = multicast_group.get_family();
+        if (family == address::family::ipv4) {
+            struct ip_mreq mreq{};
+            const auto* sin = (const sockaddr_in*)multicast_group.get_data();
+            mreq.imr_multiaddr = sin->sin_addr;
+            mreq.imr_interface.s_addr = INADDR_ANY;
+            return setsockopt(handle->get_socket(), IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq)) == 0;
+        } else if (family == address::family::ipv6) {
+            struct ipv6_mreq mreq{};
+            const auto* sin6 = (const sockaddr_in6*)multicast_group.get_data();
+            mreq.ipv6mr_multiaddr = sin6->sin6_addr;
+            mreq.ipv6mr_interface = 0;
+            return setsockopt(handle->get_socket(), IPPROTO_IPV6, IPV6_JOIN_GROUP, &mreq, sizeof(mreq)) == 0;
+        }
+        return false;
+    }
+
+    bool udp_socket::leave_multicast_group(const address& multicast_group) {
+        if (!handle)
+            return false;
+        auto family = multicast_group.get_family();
+        if (family == address::family::ipv4) {
+            struct ip_mreq mreq{};
+            const auto* sin = (const sockaddr_in*)multicast_group.get_data();
+            mreq.imr_multiaddr = sin->sin_addr;
+            mreq.imr_interface.s_addr = INADDR_ANY;
+            return setsockopt(handle->get_socket(), IPPROTO_IP, IP_DROP_MEMBERSHIP, &mreq, sizeof(mreq)) == 0;
+        } else if (family == address::family::ipv6) {
+            struct ipv6_mreq mreq{};
+            const auto* sin6 = (const sockaddr_in6*)multicast_group.get_data();
+            mreq.ipv6mr_multiaddr = sin6->sin6_addr;
+            mreq.ipv6mr_interface = 0;
+            return setsockopt(handle->get_socket(), IPPROTO_IPV6, IPV6_LEAVE_GROUP, &mreq, sizeof(mreq)) == 0;
+        }
+        return false;
+    }
+
+    void udp_socket::close() {
+        opaque_network_state state;
+        if (loc.is_task_thread) {
+            mutex_unify mut(get_data(loc.curr_task).no_race);
+            std::lock_guard guard(mut);
+            if (!enter_close(loc.curr_task, state))
+                swapCtxRelock(mut);
+        } else {
+            std::mutex mtx;
+            std::condition_variable cv;
+            bool done = false;
+            auto t = task::create([&] { std::lock_guard lock(mtx); done = true; cv.notify_one(); });
+            if (!enter_close(t, state)) {
+                std::unique_lock lock(mtx);
+                cv.wait(lock, [&] { return done; });
+            }
+        }
+    }
+
     bool udp_socket::enter_recv(const std::shared_ptr<task>& t, opaque_network_state& state, uint32_t& bytes_read, std::span<uint8_t> data, address& sender) {
         if (!handle || handle->get_socket() == INVALID_SOCKET) {
             bytes_read = 0;
             return true;
         }
         handle->setup_recv(data.data(), static_cast<uint32_t>(data.size()));
-        auto& ns = *new (&state) udp_recv_state(handle, &sender, &bytes_read);
+        auto& ns = *new (&state) udp_recv_state(handle.get(), &sender, &bytes_read);
         ns.awaiting_task = t;
         ns.on_complete = [](void* base) {
             auto s = static_cast<udp_recv_state*>(base);
@@ -1677,7 +1760,7 @@ namespace fast_task::net {
             return true;
         }
         handle->setup_send(data.data(), static_cast<uint32_t>(data.size()), to);
-        auto& ns = *new (&state) udp_send_state(handle, &bytes_sent);
+        auto& ns = *new (&state) udp_send_state(handle.get(), &bytes_sent);
         ns.awaiting_task = t;
         ns.on_complete = [](void* base) {
             auto s = static_cast<udp_send_state*>(base);
@@ -1693,7 +1776,7 @@ namespace fast_task::net {
             bytes_read = 0;
             return true;
         }
-        auto& ns = *new (&state) udp_recvv_state(handle, &sender, &bytes_read);
+        auto& ns = *new (&state) udp_recvv_state(handle.get(), &sender, &bytes_read);
         ns.bufs = new struct iovec[buffers.size()];
         size_t count = 0;
         for (const auto& span : buffers) {
@@ -1714,7 +1797,7 @@ namespace fast_task::net {
             bytes_sent = 0;
             return true;
         }
-        auto& ns = *new (&state) udp_sendv_state(handle, &bytes_sent);
+        auto& ns = *new (&state) udp_sendv_state(handle.get(), &bytes_sent);
         ns.bufs = new struct iovec[data.size()];
         size_t count = 0;
         for (const auto& span : data) {
@@ -1727,6 +1810,234 @@ namespace fast_task::net {
         handle->setup_sendv(ns.bufs, count, to);
         ns.awaiting_task = t;
         util::native_workers_singleton::post_sendmsg(&ns, handle->get_socket(), handle->get_send_msg(), 0);
+        return false;
+    }
+
+    bool udp_socket::enter_close(const std::shared_ptr<task>& t, opaque_network_state& state) {
+        if (!handle || handle->get_socket() == INVALID_SOCKET)
+            return true;
+        auto& ns = *new (&state) native_state(handle.get());
+        ns.awaiting_task = t;
+        util::native_workers_singleton::post_close(&ns, handle->get_socket());
+        return false;
+    }
+
+    udp_peer::udp_peer() = default;
+    udp_peer::udp_peer(udp_peer&&) = default;
+    udp_peer& udp_peer::operator=(udp_peer&&) = default;
+    udp_peer::~udp_peer() = default;
+
+    std::optional<udp_peer> udp_peer::connect(const address& ip_port, const udp_configuration& config) {
+        int sock = ::socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP);
+        if (sock == -1)
+            return std::nullopt;
+        udp_peer p;
+        p.handle = std::make_unique<udp_handle>(sock);
+        if (!p.handle->set_configuration(config))
+            return std::nullopt;
+        if (::connect(sock, (const sockaddr*)ip_port.get_data(), (socklen_t)ip_port.data_size()) == -1)
+            return std::nullopt;
+        return p;
+    }
+
+    uint32_t udp_peer::recv(std::span<uint8_t> data) {
+        uint32_t bytes_read = 0;
+        opaque_network_state state;
+        if (loc.is_task_thread) {
+            mutex_unify mut(get_data(loc.curr_task).no_race);
+            std::lock_guard guard(mut);
+            if (!enter_recv(loc.curr_task, state, bytes_read, data))
+                swapCtxRelock(mut);
+        } else {
+            std::mutex mtx;
+            std::condition_variable cv;
+            bool done = false;
+            auto t = task::create([&] { std::lock_guard lock(mtx); done = true; cv.notify_one(); });
+            if (!enter_recv(t, state, bytes_read, data)) {
+                std::unique_lock lock(mtx);
+                cv.wait(lock, [&] { return done; });
+            }
+        }
+        return bytes_read;
+    }
+
+    uint32_t udp_peer::send(std::span<const uint8_t> data) {
+        uint32_t bytes_sent = 0;
+        opaque_network_state state;
+        if (loc.is_task_thread) {
+            mutex_unify mut(get_data(loc.curr_task).no_race);
+            std::lock_guard guard(mut);
+            if (!enter_send(loc.curr_task, state, bytes_sent, data))
+                swapCtxRelock(mut);
+        } else {
+            std::mutex mtx;
+            std::condition_variable cv;
+            bool done = false;
+            auto t = task::create([&] { std::lock_guard lock(mtx); done = true; cv.notify_one(); });
+            if (!enter_send(t, state, bytes_sent, data)) {
+                std::unique_lock lock(mtx);
+                cv.wait(lock, [&] { return done; });
+            }
+        }
+        return bytes_sent;
+    }
+
+    int32_t udp_peer::recvv(std::span<const std::span<uint8_t>> buffers) {
+        uint32_t bytes_read = 0;
+        opaque_network_state state;
+        std::span<std::span<uint8_t>> mbufs{const_cast<std::span<uint8_t>*>(buffers.data()), buffers.size()};
+        if (loc.is_task_thread) {
+            mutex_unify mut(get_data(loc.curr_task).no_race);
+            std::lock_guard guard(mut);
+            if (!enter_recvv(loc.curr_task, state, bytes_read, mbufs))
+                swapCtxRelock(mut);
+        } else {
+            std::mutex mtx;
+            std::condition_variable cv;
+            bool done = false;
+            auto t = task::create([&] { std::lock_guard lock(mtx); done = true; cv.notify_one(); });
+            if (!enter_recvv(t, state, bytes_read, mbufs)) {
+                std::unique_lock lock(mtx);
+                cv.wait(lock, [&] { return done; });
+            }
+        }
+        return (int32_t)bytes_read;
+    }
+
+    int32_t udp_peer::sendv(std::span<const std::span<const uint8_t>> data) {
+        uint32_t bytes_sent = 0;
+        opaque_network_state state;
+        if (loc.is_task_thread) {
+            mutex_unify mut(get_data(loc.curr_task).no_race);
+            std::lock_guard guard(mut);
+            if (!enter_sendv(loc.curr_task, state, bytes_sent, data))
+                swapCtxRelock(mut);
+        } else {
+            std::mutex mtx;
+            std::condition_variable cv;
+            bool done = false;
+            auto t = task::create([&] { std::lock_guard lock(mtx); done = true; cv.notify_one(); });
+            if (!enter_sendv(t, state, bytes_sent, data)) {
+                std::unique_lock lock(mtx);
+                cv.wait(lock, [&] { return done; });
+            }
+        }
+        return (int32_t)bytes_sent;
+    }
+
+    address udp_peer::local_address() {
+        if (!handle)
+            return {};
+        return handle->local_address();
+    }
+
+    address udp_peer::remote_address() {
+        if (!handle)
+            return {};
+        return handle->remote_address();
+    }
+
+    void udp_peer::close() {
+        opaque_network_state state;
+        if (loc.is_task_thread) {
+            mutex_unify mut(get_data(loc.curr_task).no_race);
+            std::lock_guard guard(mut);
+            if (!enter_close(loc.curr_task, state))
+                swapCtxRelock(mut);
+        } else {
+            std::mutex mtx;
+            std::condition_variable cv;
+            bool done = false;
+            auto t = task::create([&] { std::lock_guard lock(mtx); done = true; cv.notify_one(); });
+            if (!enter_close(t, state)) {
+                std::unique_lock lock(mtx);
+                cv.wait(lock, [&] { return done; });
+            }
+        }
+    }
+
+    bool udp_peer::enter_recv(const std::shared_ptr<task>& t, opaque_network_state& state, uint32_t& bytes_read, std::span<uint8_t> data) {
+        if (!handle || handle->get_socket() == INVALID_SOCKET) {
+            bytes_read = 0;
+            return true;
+        }
+        handle->setup_recv_peer(data.data(), static_cast<uint32_t>(data.size()));
+        auto& ns = *new (&state) udp_send_state(handle.get(), &bytes_read);
+        ns.awaiting_task = t;
+        ns.on_complete = [](void* base) {
+            auto s = static_cast<udp_send_state*>(base);
+            if (s->out_bytes)
+                *s->out_bytes = s->bytes_io >= 0 ? static_cast<uint32_t>(s->bytes_io) : 0;
+        };
+        util::native_workers_singleton::post_recvmsg(&ns, handle->get_socket(), handle->get_recv_msg(), 0);
+        return false;
+    }
+
+    bool udp_peer::enter_send(const std::shared_ptr<task>& t, opaque_network_state& state, uint32_t& bytes_sent, std::span<const uint8_t> data) {
+        if (!handle || handle->get_socket() == INVALID_SOCKET) {
+            bytes_sent = 0;
+            return true;
+        }
+        handle->setup_send_peer(data.data(), static_cast<uint32_t>(data.size()));
+        auto& ns = *new (&state) udp_send_state(handle.get(), &bytes_sent);
+        ns.awaiting_task = t;
+        ns.on_complete = [](void* base) {
+            auto s = static_cast<udp_send_state*>(base);
+            if (s->out_bytes)
+                *s->out_bytes = s->bytes_io >= 0 ? static_cast<uint32_t>(s->bytes_io) : 0;
+        };
+        util::native_workers_singleton::post_sendmsg(&ns, handle->get_socket(), handle->get_send_msg(), 0);
+        return false;
+    }
+
+    bool udp_peer::enter_recvv(const std::shared_ptr<task>& t, opaque_network_state& state, uint32_t& bytes_read, std::span<std::span<uint8_t>> buffers) {
+        if (!handle || handle->get_socket() == INVALID_SOCKET) {
+            bytes_read = 0;
+            return true;
+        }
+        auto& ns = *new (&state) udp_sendv_state(handle.get(), &bytes_read);
+        ns.bufs = new struct iovec[buffers.size()];
+        size_t count = 0;
+        for (const auto& span : buffers) {
+            if (!span.empty()) {
+                ns.bufs[count].iov_base = span.data();
+                ns.bufs[count].iov_len = span.size();
+                count++;
+            }
+        }
+        handle->setup_recvv_peer(ns.bufs, count);
+        ns.awaiting_task = t;
+        util::native_workers_singleton::post_recvmsg(&ns, handle->get_socket(), handle->get_recv_msg(), 0);
+        return false;
+    }
+
+    bool udp_peer::enter_sendv(const std::shared_ptr<task>& t, opaque_network_state& state, uint32_t& bytes_sent, std::span<const std::span<const uint8_t>> data) {
+        if (!handle || handle->get_socket() == INVALID_SOCKET) {
+            bytes_sent = 0;
+            return true;
+        }
+        auto& ns = *new (&state) udp_sendv_state(handle.get(), &bytes_sent);
+        ns.bufs = new struct iovec[data.size()];
+        size_t count = 0;
+        for (const auto& span : data) {
+            if (!span.empty()) {
+                ns.bufs[count].iov_base = const_cast<uint8_t*>(span.data());
+                ns.bufs[count].iov_len = span.size();
+                count++;
+            }
+        }
+        handle->setup_sendv_peer(ns.bufs, count);
+        ns.awaiting_task = t;
+        util::native_workers_singleton::post_sendmsg(&ns, handle->get_socket(), handle->get_send_msg(), 0);
+        return false;
+    }
+
+    bool udp_peer::enter_close(const std::shared_ptr<task>& t, opaque_network_state& state) {
+        if (!handle || handle->get_socket() == INVALID_SOCKET)
+            return true;
+        auto& ns = *new (&state) native_state(handle.get());
+        ns.awaiting_task = t;
+        util::native_workers_singleton::post_close(&ns, handle->get_socket());
         return false;
     }
 

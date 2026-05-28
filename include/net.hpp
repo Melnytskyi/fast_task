@@ -17,7 +17,7 @@ namespace fast_task::file {
 
 namespace fast_task::net {
     class FT_API address {
-        void* data = nullptr;
+        char data[128]{0};
 
         friend address to_address(void* addr);
         address(void* ip);
@@ -31,11 +31,11 @@ namespace fast_task::net {
         address(const std::string& ip_port);
         address(const std::string& ip, uint16_t port);
         address(const address& ip);
-        address(address&& ip);
+        address(address&& ip) noexcept;
         ~address();
 
         address& operator=(const address& ip);
-        address& operator=(address&& ip);
+        address& operator=(address&& ip) noexcept;
 
 
         enum class family : uint8_t {
@@ -44,21 +44,31 @@ namespace fast_task::net {
             ipv6,
             other
         };
-        family get_family() const;
-        uint16_t port() const;
+
+        //static address resolve(std::string_view host, std::string_view service, address::family preferred_family = address::family::none);
+        //static address resolve(std::string_view host, std::string_view service, uint16_t port, address::family preferred_family = address::family::none);
+        //static std::vector<address> resolve_multiple(std::string_view host, std::string_view service, address::family preferred_family = address::family::none);
+        //static std::vector<address> resolve_multiple(std::string_view host, std::string_view service, uint16_t port, address::family preferred_family = address::family::none);
+
+        family get_family() const noexcept;
+        uint16_t port() const noexcept;
 
         std::string to_string() const;
 
-        bool operator==(const address& other) const;
-        bool operator!=(const address& other) const;
+        bool operator==(const address& other) const noexcept;
+        bool operator!=(const address& other) const noexcept;
 
-        void* get_data() const {
-            return data;
+        void* get_data() const noexcept {
+            return (void*)data;
         }
 
-        bool is_loopback() const;
+        bool is_loopback() const noexcept;
+        static size_t data_size() noexcept;
 
-        static size_t data_size();
+        //static bool enter_resolve(const std::shared_ptr<task>& t, opaque_network_state& state, address& res, std::string_view host, std::string_view service, address::family preferred_family = address::family::none);
+        //static bool enter_resolve(const std::shared_ptr<task>& t, opaque_network_state& state, address& res, std::string_view host, std::string_view service, uint16_t port, address::family preferred_family = address::family::none);
+        //static bool enter_resolve_multiple(const std::shared_ptr<task>& t, opaque_network_state& state, std::vector<address>& res, std::string_view host, std::string_view service, address::family preferred_family = address::family::none);
+        //static bool enter_resolve_multiple(const std::shared_ptr<task>& t, opaque_network_state& state, std::vector<address>& res, std::string_view host, std::string_view service, uint16_t port, address::family preferred_family = address::family::none);
     };
 
     struct FT_API tcp_configuration {
@@ -103,6 +113,7 @@ namespace fast_task::net {
         std::byte data[192];
 
         tcp_error get_error() const noexcept;
+        std::error_code get_error_code() const noexcept;
     };
 
     class FT_API tcp_socket {
@@ -200,11 +211,18 @@ namespace fast_task::net {
     };
 
     class FT_API udp_socket {
-        class udp_handle* handle;
+        std::unique_ptr<class udp_handle> handle;
 
     public:
-        udp_socket(const address& ip_port, udp_configuration config = {});
+        udp_socket();
+        udp_socket(udp_socket&&);
+        udp_socket& operator=(udp_socket&&);
         ~udp_socket();
+
+        static std::optional<udp_socket> bind(const address& ip_port, const udp_configuration& config = {});
+
+        bool join_multicast_group(const address& multicast_group);
+        bool leave_multicast_group(const address& multicast_group);
 
         uint32_t recv(std::span<uint8_t> data, address& sender);
         uint32_t send(std::span<const uint8_t> data, const address& to);
@@ -213,11 +231,43 @@ namespace fast_task::net {
         int32_t recvv(std::span<const std::span<uint8_t>> buffers, address& sender);
 
         address local_address();
+        void close();
 
         bool enter_recv(const std::shared_ptr<task>& t, opaque_network_state& state, uint32_t& bytes_read, std::span<uint8_t> data, address& sender);
         bool enter_send(const std::shared_ptr<task>& t, opaque_network_state& state, uint32_t& bytes_sent, std::span<const uint8_t> data, const address& to);
         bool enter_recvv(const std::shared_ptr<task>& t, opaque_network_state& state, uint32_t& bytes_read, std::span<std::span<uint8_t>> buffers, address& sender);
         bool enter_sendv(const std::shared_ptr<task>& t, opaque_network_state& state, uint32_t& bytes_sent, std::span<const std::span<const uint8_t>> data, const address& to);
+        bool enter_close(const std::shared_ptr<task>& t, opaque_network_state& state);
+    };
+
+    //Slightly faster than regular udp socket for connected UDP communication,
+    // but doesn't support send/recv to arbitrary addresses, only to the address specified at connect
+    class FT_API udp_peer {
+        std::unique_ptr<class udp_handle> handle;
+
+    public:
+        udp_peer();
+        udp_peer(udp_peer&&);
+        udp_peer& operator=(udp_peer&&);
+        ~udp_peer();
+
+        static std::optional<udp_peer> connect(const address& ip_port, const udp_configuration& config = {});
+
+        uint32_t recv(std::span<uint8_t> data);
+        uint32_t send(std::span<const uint8_t> data);
+
+        int32_t sendv(std::span<const std::span<const uint8_t>> data);
+        int32_t recvv(std::span<const std::span<uint8_t>> buffers);
+
+        address local_address();
+        address remote_address();
+        void close();
+
+        bool enter_recv(const std::shared_ptr<task>& t, opaque_network_state& state, uint32_t& bytes_read, std::span<uint8_t> data);
+        bool enter_send(const std::shared_ptr<task>& t, opaque_network_state& state, uint32_t& bytes_sent, std::span<const uint8_t> data);
+        bool enter_recvv(const std::shared_ptr<task>& t, opaque_network_state& state, uint32_t& bytes_read, std::span<std::span<uint8_t>> buffers);
+        bool enter_sendv(const std::shared_ptr<task>& t, opaque_network_state& state, uint32_t& bytes_sent, std::span<const std::span<const uint8_t>> data);
+        bool enter_close(const std::shared_ptr<task>& t, opaque_network_state& state);
     };
 
     uint8_t FT_API init_networking();
