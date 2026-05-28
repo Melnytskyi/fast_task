@@ -1402,88 +1402,100 @@ namespace fast_task::net {
 
     #pragma endregion
 
-    class udp_handle : public util::native_worker_handle, public util::native_worker_manager {
-        task_mutex mt;
-        task_condition_variable cv;
-        SOCKET socket;
-        sockaddr_in6 server_address;
-        bool is_complete = true;
+    class udp_handle : public util::native_worker_manager {
+        SOCKET sock = INVALID_SOCKET;
+        WSABUF recv_wsa_buf{};
+        sockaddr_storage recv_sender_addr{};
+        INT recv_sender_len = sizeof(sockaddr_storage);
+        WSABUF send_wsa_buf{};
+        sockaddr_storage send_dest_addr{};
 
     public:
-        DWORD fullifed_bytes;
-        DWORD last_error;
-
-        udp_handle(sockaddr_in6& address, uint32_t timeout_ms)
-            : util::native_worker_handle(this), server_address{0}, fullifed_bytes(0), last_error(0) {
-            socket = WSASocketW(AF_INET6, SOCK_DGRAM, IPPROTO_UDP, NULL, 0, WSA_FLAG_OVERLAPPED);
-
-            if (socket == INVALID_SOCKET)
-                return;
-            if (bind(socket, (sockaddr*)&address, sizeof(sockaddr_in6)) == SOCKET_ERROR) {
-                closesocket(socket);
-                socket = INVALID_SOCKET;
-                return;
-            }
-            server_address = address;
+        udp_handle(SOCKET s) : sock(s) {
+            if (s != INVALID_SOCKET)
+                util::native_workers_singleton::register_handle(reinterpret_cast<HANDLE>(s), this);
         }
 
-        void handle(void* data, util::native_worker_handle* overlap, unsigned long fullifed_bytes_) override {
-            fullifed_bytes = fullifed_bytes_;
-            last_error = (DWORD)overlap->overlapped.Internal;
-            unique_lock lock(mt);
-            is_complete = true;
-            cv.notify_all();
+        ~udp_handle() override {
+            if (sock != INVALID_SOCKET) {
+                closesocket(sock);
+                sock = INVALID_SOCKET;
+            }
         }
 
-        void recv(uint8_t* data, uint32_t size, sockaddr_storage& sender, int& sender_len) {
-            if (socket == INVALID_SOCKET)
-                throw std::runtime_error("Socket is not connected");
-            WSABUF buf;
-            buf.buf = (char*)data;
-            buf.len = size;
-            DWORD flags = 0;
-            mutex_unify u(mt);
-            unique_lock lock(u);
-            while (!is_complete)
-                cv.wait(lock);
-            is_complete = false;
-            if (WSARecvFrom(socket, &buf, 1, nullptr, &flags, (sockaddr*)&sender, &sender_len, (OVERLAPPED*)this, nullptr)) {
-                if (WSAGetLastError() != WSA_IO_PENDING) {
-                    last_error = WSAGetLastError();
-                    fullifed_bytes = 0;
-                    return;
-                }
-            }
-            while (!is_complete)
-                cv.wait(lock);
-            is_complete = false;
+        udp_handle(const udp_handle&) = delete;
+        udp_handle& operator=(const udp_handle&) = delete;
+
+        SOCKET get_socket() const noexcept {
+            return sock;
         }
 
-        void send(uint8_t* data, uint32_t size, sockaddr_storage& to) {
-            WSABUF buf;
-            buf.buf = (char*)data;
-            buf.len = size;
-            mutex_unify u(mt);
-            unique_lock lock(u);
-            while (!is_complete)
-                cv.wait(lock);
-            is_complete = false;
-            if (WSASendTo(socket, &buf, 1, nullptr, 0, (sockaddr*)&to, sizeof(to), (OVERLAPPED*)this, nullptr)) {
-                if (WSAGetLastError() != WSA_IO_PENDING) {
-                    last_error = WSAGetLastError();
-                    fullifed_bytes = 0;
-                    return;
-                }
+        void handle(void* /*data*/, util::native_worker_handle* overlap, unsigned long dwBytesTransferred) override {
+            auto state = static_cast<native_state*>(overlap);
+            DWORD dwFlags = 0, cbTransfer = 0;
+            if (!::WSAGetOverlappedResult(sock, &state->overlapped, &cbTransfer, FALSE, &dwFlags))
+                state->error = ::WSAGetLastError();
+            else
+                state->error = 0;
+            if (state->out_processed_bytes) {
+                if (state->error)
+                    *state->out_processed_bytes = -1;
+                else
+                    *state->out_processed_bytes = (int32_t)dwBytesTransferred;
             }
-            while (!is_complete)
-                cv.wait(lock);
-            is_complete = false;
+            if (state->on_complete)
+                state->on_complete(static_cast<void*>(state));
+            if (state->awaiting_task) {
+                fast_task::lock_guard guard(get_data(state->awaiting_task).no_race);
+                transfer_task(std::move(state->awaiting_task));
+            }
+        }
+
+        void setup_recv(uint8_t* data, uint32_t size) {
+            recv_wsa_buf.buf = reinterpret_cast<char*>(data);
+            recv_wsa_buf.len = size;
+            recv_sender_len = sizeof(recv_sender_addr);
+            memset(&recv_sender_addr, 0, sizeof(recv_sender_addr));
+        }
+
+        void setup_send(const uint8_t* data, uint32_t size, const address& to) {
+            send_wsa_buf.buf = const_cast<char*>(reinterpret_cast<const char*>(data));
+            send_wsa_buf.len = size;
+            memcpy(&send_dest_addr, to.get_data(), address::data_size());
+        }
+
+        WSABUF& get_recv_buf() {
+            return recv_wsa_buf;
+        }
+
+        WSABUF& get_send_buf() {
+            return send_wsa_buf;
+        }
+
+        sockaddr* get_recv_sender_addr() {
+            return reinterpret_cast<sockaddr*>(&recv_sender_addr);
+        }
+
+        INT* get_recv_sender_len() {
+            return &recv_sender_len;
+        }
+
+        sockaddr* get_send_dest_addr() {
+            return reinterpret_cast<sockaddr*>(&send_dest_addr);
+        }
+
+        int get_send_dest_len() {
+            return (int)address::data_size();
+        }
+
+        address get_recv_sender() {
+            return to_address((void*)&recv_sender_addr);
         }
 
         address local_address() {
             universal_address addr;
             int socklen = sizeof(universal_address);
-            if (getsockname(socket, (sockaddr*)&addr, &socklen) == -1)
+            if (::getsockname(sock, (sockaddr*)&addr, &socklen) == SOCKET_ERROR)
                 return {};
             return to_address(addr);
         }
@@ -1491,11 +1503,168 @@ namespace fast_task::net {
         address remote_address() {
             universal_address addr;
             int socklen = sizeof(universal_address);
-            if (getpeername(socket, (sockaddr*)&addr, &socklen) == -1)
+            if (::getpeername(sock, (sockaddr*)&addr, &socklen) == SOCKET_ERROR)
                 return {};
             return to_address(addr);
         }
     };
+
+    struct udp_recv_state : public native_state {
+        udp_handle* hdl;
+        address* out_sender;
+        uint32_t* out_bytes;
+        int32_t bytes_io = 0;
+
+        udp_recv_state(udp_handle* h, address* sender, uint32_t* bytes)
+            : native_state(h), hdl(h), out_sender(sender), out_bytes(bytes) {
+            out_processed_bytes = &bytes_io;
+        }
+    };
+
+    static_assert(sizeof(udp_recv_state) <= sizeof(opaque_network_state::data), "udp_recv_state too large for opaque_network_state");
+
+    struct udp_send_state : public native_state {
+        uint32_t* out_bytes;
+        int32_t bytes_io = 0;
+
+        udp_send_state(udp_handle* h, uint32_t* bytes)
+            : native_state(h), out_bytes(bytes) {
+            out_processed_bytes = &bytes_io;
+        }
+    };
+
+    static_assert(sizeof(udp_send_state) <= sizeof(opaque_network_state::data), "udp_send_state too large for opaque_network_state");
+
+    udp_socket::udp_socket(const address& ip_port, uint32_t) {
+        SOCKET sock = WSASocketW(AF_INET6, SOCK_DGRAM, IPPROTO_UDP, NULL, 0, WSA_FLAG_OVERLAPPED);
+        if (sock == INVALID_SOCKET) {
+            handle = nullptr;
+            return;
+        }
+        if (::bind(sock, (const sockaddr*)ip_port.get_data(), (int)ip_port.data_size()) == SOCKET_ERROR) {
+            closesocket(sock);
+            handle = nullptr;
+            return;
+        }
+        handle = new udp_handle(sock);
+    }
+
+    udp_socket::~udp_socket() {
+        delete handle;
+    }
+
+    uint32_t udp_socket::recv(std::span<uint8_t> data, address& sender) {
+        uint32_t bytes_read = 0;
+        opaque_network_state state;
+
+        if (loc.is_task_thread) {
+            mutex_unify mut(get_data(loc.curr_task).no_race);
+            std::lock_guard guard(mut);
+            if (!enter_recv(loc.curr_task, state, bytes_read, data, sender))
+                swapCtxRelock(mut);
+        } else {
+            std::mutex mtx;
+            std::condition_variable cv;
+            bool done = false;
+            auto t = task::create([&] {
+                std::lock_guard lock(mtx);
+                done = true;
+                cv.notify_one();
+            });
+            if (!enter_recv(t, state, bytes_read, data, sender)) {
+                std::unique_lock lock(mtx);
+                cv.wait(lock, [&] { return done; });
+            }
+        }
+        return bytes_read;
+    }
+
+    uint32_t udp_socket::send(std::span<const uint8_t> data, address& to) {
+        uint32_t bytes_sent = 0;
+        opaque_network_state state;
+
+        if (loc.is_task_thread) {
+            mutex_unify mut(get_data(loc.curr_task).no_race);
+            std::lock_guard guard(mut);
+            if (!enter_send(loc.curr_task, state, bytes_sent, data, to))
+                swapCtxRelock(mut);
+        } else {
+            std::mutex mtx;
+            std::condition_variable cv;
+            bool done = false;
+            auto t = task::create([&] {
+                std::lock_guard lock(mtx);
+                done = true;
+                cv.notify_one();
+            });
+            if (!enter_send(t, state, bytes_sent, data, to)) {
+                std::unique_lock lock(mtx);
+                cv.wait(lock, [&] { return done; });
+            }
+        }
+        return bytes_sent;
+    }
+
+    address udp_socket::local_address() {
+        if (!handle)
+            return {};
+        return handle->local_address();
+    }
+
+    address udp_socket::remote_address() {
+        if (!handle)
+            return {};
+        return handle->remote_address();
+    }
+
+    bool udp_socket::enter_recv(const std::shared_ptr<task>& t, opaque_network_state& state, uint32_t& bytes_read, std::span<uint8_t> data, address& sender) {
+        if (!handle || handle->get_socket() == INVALID_SOCKET) {
+            bytes_read = 0;
+            return true;
+        }
+        handle->setup_recv(data.data(), static_cast<uint32_t>(data.size()));
+        auto& ns = *new (&state) udp_recv_state(handle, &sender, &bytes_read);
+        ns.awaiting_task = t;
+        ns.on_complete = [](void* base) {
+            auto s = static_cast<udp_recv_state*>(base);
+            if (s->out_bytes)
+                *s->out_bytes = s->bytes_io >= 0 ? static_cast<uint32_t>(s->bytes_io) : 0;
+            if (s->out_sender && s->error == 0)
+                *s->out_sender = s->hdl->get_recv_sender();
+        };
+        DWORD flags = 0;
+        if (WSARecvFrom(handle->get_socket(), &handle->get_recv_buf(), 1, nullptr, &flags, handle->get_recv_sender_addr(), handle->get_recv_sender_len(), &ns.overlapped, nullptr) == SOCKET_ERROR) {
+            if (WSAGetLastError() != WSA_IO_PENDING) {
+                ns.awaiting_task.reset();
+                bytes_read = 0;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    bool udp_socket::enter_send(const std::shared_ptr<task>& t, opaque_network_state& state, uint32_t& bytes_sent, std::span<const uint8_t> data, address& to) {
+        if (!handle || handle->get_socket() == INVALID_SOCKET) {
+            bytes_sent = 0;
+            return true;
+        }
+        handle->setup_send(data.data(), static_cast<uint32_t>(data.size()), to);
+        auto& ns = *new (&state) udp_send_state(handle, &bytes_sent);
+        ns.awaiting_task = t;
+        ns.on_complete = [](void* base) {
+            auto s = static_cast<udp_send_state*>(base);
+            if (s->out_bytes)
+                *s->out_bytes = s->bytes_io >= 0 ? static_cast<uint32_t>(s->bytes_io) : 0;
+        };
+        if (WSASendTo(handle->get_socket(), &handle->get_send_buf(), 1, nullptr, 0, handle->get_send_dest_addr(), handle->get_send_dest_len(), &ns.overlapped, nullptr) == SOCKET_ERROR) {
+            if (WSAGetLastError() != WSA_IO_PENDING) {
+                ns.awaiting_task.reset();
+                bytes_sent = 0;
+                return true;
+            }
+        }
+        return false;
+    }
 
     uint8_t init_networking() {
         if (!inited)

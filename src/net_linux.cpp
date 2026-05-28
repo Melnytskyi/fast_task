@@ -1146,85 +1146,83 @@ namespace fast_task::net {
         return false;
     }
 
-
-    class udp_handle : public util::native_worker_handle, public util::native_worker_manager {
-        task_mutex mt;
-        task_condition_variable cv;
-        int socket;
-        sockaddr_in6 server_address;
-        bool is_complete = false;
-        struct iovec recv_iov{}, send_iov{};
-        struct msghdr recv_msg{}, send_msg{};
+    class udp_handle : public util::native_worker_manager {
+        int sock = -1;
+        struct iovec recv_iov{};
+        struct msghdr recv_msg{};
+        sockaddr_storage recv_sender_addr{};
+        struct iovec send_iov{};
+        struct msghdr send_msg{};
+        sockaddr_storage send_dest_addr{};
 
     public:
-        uint32_t fullifed_bytes;
-        uint32_t last_error;
+        udp_handle(int s) : sock(s) {}
 
-        udp_handle(sockaddr_in6& address, uint32_t)
-            : util::native_worker_handle(this), fullifed_bytes(0), last_error(0) {
-            socket = ::socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP);
-            if (socket == -1)
-                return;
-            if (bind(socket, (sockaddr*)&address, sizeof(sockaddr_in6)) == -1) {
-                ::close(socket);
-                socket = -1;
-                return;
+        ~udp_handle() override {
+            if (sock != -1) {
+                ::close(sock);
+                sock = -1;
             }
-            server_address = address;
         }
 
-        void handle(util::native_worker_handle*, int32_t res, [[maybe_unused]] uint32_t flags) override {
-            this->fullifed_bytes = res > -1 ? res : 0;
-            this->last_error = res < 0 ? static_cast<uint32_t>(-res) : 0;
+        udp_handle(const udp_handle&) = delete;
+        udp_handle& operator=(const udp_handle&) = delete;
 
-            unique_lock lock(mt);
-            is_complete = true;
-            cv.notify_all();
+        int get_socket() const noexcept {
+            return sock;
         }
 
-        void recv(uint8_t* data, uint32_t size, sockaddr_storage& sender, int& sender_len) {
-            if (socket == -1)
-                throw std::runtime_error("Socket is not connected");
-            mutex_unify u(mt);
-            unique_lock lock(u);
-            is_complete = false;
-            memset(&recv_msg, 0, sizeof(recv_msg));
+        void handle(util::native_worker_handle* overlap, int32_t res, uint32_t) override {
+            auto state = static_cast<native_state*>(overlap);
+            state->error = res < 0 ? -res : 0;
+            if (state->out_processed_bytes)
+                *state->out_processed_bytes = res > -1 ? (int32_t)res : -1;
+            if (state->on_complete)
+                state->on_complete(static_cast<void*>(state));
+            if (state->awaiting_task) {
+                fast_task::lock_guard guard(get_data(state->awaiting_task).no_race);
+                transfer_task(std::move(state->awaiting_task));
+            }
+        }
+
+        void setup_recv(uint8_t* data, uint32_t size) {
             recv_iov.iov_base = data;
             recv_iov.iov_len = size;
-            recv_msg.msg_name = &sender;
-            recv_msg.msg_namelen = sizeof(sender);
+            memset(&recv_msg, 0, sizeof(recv_msg));
+            memset(&recv_sender_addr, 0, sizeof(recv_sender_addr));
+            recv_msg.msg_name = &recv_sender_addr;
+            recv_msg.msg_namelen = sizeof(recv_sender_addr);
             recv_msg.msg_iov = &recv_iov;
             recv_msg.msg_iovlen = 1;
-            util::native_workers_singleton::post_recvmsg(this, socket, &recv_msg, 0);
-            while (!is_complete)
-                cv.wait(lock);
-            is_complete = false;
-            sender_len = static_cast<int>(recv_msg.msg_namelen);
         }
 
-        void send(uint8_t* data, uint32_t size, sockaddr_storage& to) {
-            if (socket == -1)
-                throw std::runtime_error("Socket is not connected");
-            mutex_unify u(mt);
-            unique_lock lock(u);
-            is_complete = false;
-            memset(&send_msg, 0, sizeof(send_msg));
-            send_iov.iov_base = data;
+        void setup_send(const uint8_t* data, uint32_t size, const address& to) {
+            send_iov.iov_base = const_cast<uint8_t*>(data);
             send_iov.iov_len = size;
-            send_msg.msg_name = &to;
-            send_msg.msg_namelen = sizeof(to);
+            memset(&send_msg, 0, sizeof(send_msg));
+            memcpy(&send_dest_addr, to.get_data(), sizeof(universal_address));
+            send_msg.msg_name = &send_dest_addr;
+            send_msg.msg_namelen = sizeof(universal_address);
             send_msg.msg_iov = &send_iov;
             send_msg.msg_iovlen = 1;
-            util::native_workers_singleton::post_sendmsg(this, socket, &send_msg, 0);
-            while (!is_complete)
-                cv.wait(lock);
-            is_complete = false;
+        }
+
+        msghdr* get_recv_msg() {
+            return &recv_msg;
+        }
+
+        msghdr* get_send_msg() {
+            return &send_msg;
+        }
+
+        address get_recv_sender() {
+            return to_address((void*)&recv_sender_addr);
         }
 
         address local_address() {
             universal_address addr;
             socklen_t socklen = sizeof(universal_address);
-            if (getsockname(socket, (sockaddr*)&addr, &socklen) == -1)
+            if (getsockname(sock, (sockaddr*)&addr, &socklen) == -1)
                 return {};
             return to_address(addr);
         }
@@ -1232,11 +1230,155 @@ namespace fast_task::net {
         address remote_address() {
             universal_address addr;
             socklen_t socklen = sizeof(universal_address);
-            if (getpeername(socket, (sockaddr*)&addr, &socklen) == -1)
+            if (getpeername(sock, (sockaddr*)&addr, &socklen) == -1)
                 return {};
             return to_address(addr);
         }
     };
+
+    struct udp_recv_state : public native_state {
+        udp_handle* hdl;
+        address* out_sender;
+        uint32_t* out_bytes;
+        int32_t bytes_io = 0;
+
+        udp_recv_state(udp_handle* h, address* sender, uint32_t* bytes)
+            : native_state(h), hdl(h), out_sender(sender), out_bytes(bytes) {
+            out_processed_bytes = &bytes_io;
+        }
+    };
+
+    static_assert(sizeof(udp_recv_state) <= sizeof(opaque_network_state::data), "udp_recv_state too large for opaque_network_state");
+
+    struct udp_send_state : public native_state {
+        uint32_t* out_bytes;
+        int32_t bytes_io = 0;
+
+        udp_send_state(udp_handle* h, uint32_t* bytes)
+            : native_state(h), out_bytes(bytes) {
+            out_processed_bytes = &bytes_io;
+        }
+    };
+
+    static_assert(sizeof(udp_send_state) <= sizeof(opaque_network_state::data), "udp_send_state too large for opaque_network_state");
+
+    udp_socket::udp_socket(const address& ip_port, uint32_t) {
+        int sock = ::socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP);
+        if (sock == -1) {
+            handle = nullptr;
+            return;
+        }
+        if (::bind(sock, (const sockaddr*)ip_port.get_data(), (socklen_t)ip_port.data_size()) == -1) {
+            ::close(sock);
+            handle = nullptr;
+            return;
+        }
+        handle = new udp_handle(sock);
+    }
+
+    udp_socket::~udp_socket() {
+        delete handle;
+    }
+
+    uint32_t udp_socket::recv(std::span<uint8_t> data, address& sender) {
+        uint32_t bytes_read = 0;
+        opaque_network_state state;
+
+        if (loc.is_task_thread) {
+            mutex_unify mut(get_data(loc.curr_task).no_race);
+            std::lock_guard guard(mut);
+            if (!enter_recv(loc.curr_task, state, bytes_read, data, sender))
+                swapCtxRelock(mut);
+        } else {
+            std::mutex mtx;
+            std::condition_variable cv;
+            bool done = false;
+            auto t = task::create([&] {
+                std::lock_guard lock(mtx);
+                done = true;
+                cv.notify_one();
+            });
+            if (!enter_recv(t, state, bytes_read, data, sender)) {
+                std::unique_lock lock(mtx);
+                cv.wait(lock, [&] { return done; });
+            }
+        }
+        return bytes_read;
+    }
+
+    uint32_t udp_socket::send(std::span<const uint8_t> data, address& to) {
+        uint32_t bytes_sent = 0;
+        opaque_network_state state;
+
+        if (loc.is_task_thread) {
+            mutex_unify mut(get_data(loc.curr_task).no_race);
+            std::lock_guard guard(mut);
+            if (!enter_send(loc.curr_task, state, bytes_sent, data, to))
+                swapCtxRelock(mut);
+        } else {
+            std::mutex mtx;
+            std::condition_variable cv;
+            bool done = false;
+            auto t = task::create([&] {
+                std::lock_guard lock(mtx);
+                done = true;
+                cv.notify_one();
+            });
+            if (!enter_send(t, state, bytes_sent, data, to)) {
+                std::unique_lock lock(mtx);
+                cv.wait(lock, [&] { return done; });
+            }
+        }
+        return bytes_sent;
+    }
+
+    address udp_socket::local_address() {
+        if (!handle)
+            return {};
+        return handle->local_address();
+    }
+
+    address udp_socket::remote_address() {
+        if (!handle)
+            return {};
+        return handle->remote_address();
+    }
+
+    bool udp_socket::enter_recv(const std::shared_ptr<task>& t, opaque_network_state& state, uint32_t& bytes_read, std::span<uint8_t> data, address& sender) {
+        if (!handle || handle->get_socket() == INVALID_SOCKET) {
+            bytes_read = 0;
+            return true;
+        }
+        handle->setup_recv(data.data(), static_cast<uint32_t>(data.size()));
+        auto& ns = *new (&state) udp_recv_state(handle, &sender, &bytes_read);
+        ns.awaiting_task = t;
+        ns.on_complete = [](void* base) {
+            auto s = static_cast<udp_recv_state*>(base);
+            if (s->out_bytes)
+                *s->out_bytes = s->bytes_io >= 0 ? static_cast<uint32_t>(s->bytes_io) : 0;
+            if (s->out_sender && s->error == 0)
+                *s->out_sender = s->hdl->get_recv_sender();
+        };
+        util::native_workers_singleton::post_recvmsg(&ns, handle->get_socket(), handle->get_recv_msg(), 0);
+        return false;
+    }
+
+    bool udp_socket::enter_send(const std::shared_ptr<task>& t, opaque_network_state& state, uint32_t& bytes_sent, std::span<const uint8_t> data, address& to) {
+        if (!handle || handle->get_socket() == INVALID_SOCKET) {
+            bytes_sent = 0;
+            return true;
+        }
+        handle->setup_send(data.data(), static_cast<uint32_t>(data.size()), to);
+        auto& ns = *new (&state) udp_send_state(handle, &bytes_sent);
+        ns.awaiting_task = t;
+        ns.on_complete = [](void* base) {
+            auto s = static_cast<udp_send_state*>(base);
+            if (s->out_bytes)
+                *s->out_bytes = s->bytes_io >= 0 ? static_cast<uint32_t>(s->bytes_io) : 0;
+        };
+        util::native_workers_singleton::post_sendmsg(&ns, handle->get_socket(), handle->get_send_msg(), 0);
+        return false;
+    }
 
     uint8_t init_networking() {
         return 0;
