@@ -181,11 +181,29 @@ namespace fast_task::net {
         bool enter_close(const std::shared_ptr<task>& t, opaque_network_state& state);
     };
 
+    struct FT_API udp_configuration {
+        uint32_t recv_timeout_ms = 2000;
+        uint32_t send_timeout_ms = 2000;
+
+
+        uint32_t recv_buffer_size = 0; // 0 - OS default.
+        uint32_t send_buffer_size = 0; // 0 - OS default.
+
+        bool allow_ip4 : 1 = true;
+        bool enable_broadcast : 1 = false; // SO_BROADCAST
+        bool reuse_address : 1 = false;    // SO_REUSEADDR
+        bool reuse_port : 1 = false;       // SO_REUSEPORT
+
+        bool dont_fragment : 1 = false;     // IP_DONTFRAGMENT / IP_MTU_DISCOVER
+        bool multicast_loopback : 1 = true; // IP_MULTICAST_LOOP
+        uint8_t multicast_ttl = 1;          // IP_MULTICAST_TTL (1 is restricted to local subnet)
+    };
+
     class FT_API udp_socket {
         class udp_handle* handle;
 
     public:
-        udp_socket(const address& ip_port, uint32_t timeout_ms);
+        udp_socket(const address& ip_port, udp_configuration config = {});
         ~udp_socket();
 
         uint32_t recv(std::span<uint8_t> data, address& sender);
@@ -195,7 +213,6 @@ namespace fast_task::net {
         int32_t recvv(std::span<const std::span<uint8_t>> buffers, address& sender);
 
         address local_address();
-        address remote_address();
 
         bool enter_recv(const std::shared_ptr<task>& t, opaque_network_state& state, uint32_t& bytes_read, std::span<uint8_t> data, address& sender);
         bool enter_send(const std::shared_ptr<task>& t, opaque_network_state& state, uint32_t& bytes_sent, std::span<const uint8_t> data, const address& to);

@@ -1328,6 +1328,65 @@ namespace fast_task::net {
             }
         }
 
+        bool set_configuration(const udp_configuration& config) {
+            int cfg = !config.allow_ip4;
+            if (setsockopt(sock, IPPROTO_IPV6, IPV6_V6ONLY, &cfg, sizeof(cfg)) == -1)
+                return false;
+
+            cfg = config.reuse_address ? 1 : 0;
+            if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &cfg, sizeof(cfg)) == -1)
+                return false;
+
+            cfg = config.reuse_port ? 1 : 0;
+            if (setsockopt(sock, SOL_SOCKET, SO_REUSEPORT, &cfg, sizeof(cfg)) == -1)
+                return false;
+
+            cfg = config.enable_broadcast ? 1 : 0;
+            if (setsockopt(sock, SOL_SOCKET, SO_BROADCAST, &cfg, sizeof(cfg)) == -1)
+                return false;
+
+            cfg = (int)config.recv_timeout_ms;
+            if (setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &cfg, sizeof(cfg)) == -1)
+                return false;
+
+            cfg = (int)config.send_timeout_ms;
+            if (setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &cfg, sizeof(cfg)) == -1)
+                return false;
+
+            if (config.recv_buffer_size > 0) {
+                cfg = (int)config.recv_buffer_size;
+                if (setsockopt(sock, SOL_SOCKET, SO_RCVBUF, &cfg, sizeof(cfg)) == -1)
+                    return false;
+            }
+
+            if (config.send_buffer_size > 0) {
+                cfg = (int)config.send_buffer_size;
+                if (setsockopt(sock, SOL_SOCKET, SO_SNDBUF, &cfg, sizeof(cfg)) == -1)
+                    return false;
+            }
+
+            if (config.dont_fragment) {
+                cfg = IPV6_PMTUDISC_DO;
+                if (setsockopt(sock, IPPROTO_IPV6, IPV6_MTU_DISCOVER, &cfg, sizeof(cfg)) == -1)
+                    return false;
+                if (config.allow_ip4) {
+                    cfg = IP_PMTUDISC_DO;
+                    if (setsockopt(sock, IPPROTO_IP, IP_MTU_DISCOVER, &cfg, sizeof(cfg)) == -1)
+                        return false;
+                }
+            }
+
+            cfg = config.multicast_loopback ? 1 : 0;
+            if (setsockopt(sock, IPPROTO_IPV6, IPV6_MULTICAST_LOOP, &cfg, sizeof(cfg)) == -1)
+                return false;
+
+            cfg = config.multicast_ttl;
+            if (setsockopt(sock, IPPROTO_IPV6, IPV6_MULTICAST_HOPS, &cfg, sizeof(cfg)) == -1)
+                return false;
+
+            return true;
+        }
+
         void setup_recv(uint8_t* data, uint32_t size) {
             recv_iov.iov_base = data;
             recv_iov.iov_len = size;
@@ -1384,14 +1443,6 @@ namespace fast_task::net {
             universal_address addr;
             socklen_t socklen = sizeof(universal_address);
             if (getsockname(sock, (sockaddr*)&addr, &socklen) == -1)
-                return {};
-            return to_address(addr);
-        }
-
-        address remote_address() {
-            universal_address addr;
-            socklen_t socklen = sizeof(universal_address);
-            if (getpeername(sock, (sockaddr*)&addr, &socklen) == -1)
                 return {};
             return to_address(addr);
         }
@@ -1467,18 +1518,23 @@ namespace fast_task::net {
 
     static_assert(sizeof(udp_sendv_state) <= sizeof(opaque_network_state::data), "udp_sendv_state too large for opaque_network_state");
 
-    udp_socket::udp_socket(const address& ip_port, uint32_t) {
+    udp_socket::udp_socket(const address& ip_port, udp_configuration config) {
         int sock = ::socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP);
         if (sock == -1) {
             handle = nullptr;
             return;
         }
-        if (::bind(sock, (const sockaddr*)ip_port.get_data(), (socklen_t)ip_port.data_size()) == -1) {
-            ::close(sock);
+        handle = new udp_handle(sock);
+        if (!handle->set_configuration(config)) {
+            delete handle;
             handle = nullptr;
             return;
         }
-        handle = new udp_handle(sock);
+        if (::bind(sock, (const sockaddr*)ip_port.get_data(), (socklen_t)ip_port.data_size()) == -1) {
+            delete handle;
+            handle = nullptr;
+            return;
+        }
     }
 
     udp_socket::~udp_socket() {
@@ -1594,12 +1650,6 @@ namespace fast_task::net {
         if (!handle)
             return {};
         return handle->local_address();
-    }
-
-    address udp_socket::remote_address() {
-        if (!handle)
-            return {};
-        return handle->remote_address();
     }
 
     bool udp_socket::enter_recv(const std::shared_ptr<task>& t, opaque_network_state& state, uint32_t& bytes_read, std::span<uint8_t> data, address& sender) {

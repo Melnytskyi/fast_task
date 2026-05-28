@@ -1547,6 +1547,64 @@ namespace fast_task::net {
             }
         }
 
+        bool set_configuration(const udp_configuration& config) {
+            int cfg = !config.allow_ip4;
+            if (setsockopt(sock, IPPROTO_IPV6, IPV6_V6ONLY, (char*)&cfg, sizeof(cfg)) == SOCKET_ERROR)
+                return false;
+
+            cfg = config.reuse_address ? 1 : 0;
+            if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, (char*)&cfg, sizeof(cfg)) == SOCKET_ERROR)
+                return false;
+
+            cfg = config.enable_broadcast ? 1 : 0;
+            if (setsockopt(sock, SOL_SOCKET, SO_BROADCAST, (char*)&cfg, sizeof(cfg)) == SOCKET_ERROR)
+                return false;
+
+            cfg = (int)config.recv_timeout_ms;
+            if (setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (char*)&cfg, sizeof(cfg)) == SOCKET_ERROR)
+                return false;
+
+            cfg = (int)config.send_timeout_ms;
+            if (setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, (char*)&cfg, sizeof(cfg)) == SOCKET_ERROR)
+                return false;
+
+            if (config.recv_buffer_size > 0) {
+                cfg = (int)config.recv_buffer_size;
+                if (setsockopt(sock, SOL_SOCKET, SO_RCVBUF, (char*)&cfg, sizeof(cfg)) == SOCKET_ERROR)
+                    return false;
+            }
+
+            if (config.send_buffer_size > 0) {
+                cfg = (int)config.send_buffer_size;
+                if (setsockopt(sock, SOL_SOCKET, SO_SNDBUF, (char*)&cfg, sizeof(cfg)) == SOCKET_ERROR)
+                    return false;
+            }
+
+            if (config.dont_fragment) {
+                cfg = 1;
+                if (setsockopt(sock, IPPROTO_IPV6, IPV6_DONTFRAG, (char*)&cfg, sizeof(cfg)) == SOCKET_ERROR)
+                    return false;
+                if (config.allow_ip4) {
+                    if (setsockopt(sock, IPPROTO_IP, IP_DONTFRAGMENT, (char*)&cfg, sizeof(cfg)) == SOCKET_ERROR)
+                        return false;
+                }
+            }
+
+            cfg = config.multicast_loopback ? 1 : 0;
+            if (setsockopt(sock, IPPROTO_IPV6, IPV6_MULTICAST_LOOP, (char*)&cfg, sizeof(cfg)) == SOCKET_ERROR)
+                return false;
+
+            cfg = config.multicast_ttl;
+            if (setsockopt(sock, IPPROTO_IPV6, IPV6_MULTICAST_HOPS, (char*)&cfg, sizeof(cfg)) == SOCKET_ERROR)
+                return false;
+
+            DWORD argp = 1;
+            if (ioctlsocket(sock, FIONBIO, &argp) == SOCKET_ERROR)
+                return false;
+
+            return true;
+        }
+
         void setup_recv(uint8_t* data, uint32_t size) {
             recv_wsa_buf.buf = reinterpret_cast<char*>(data);
             recv_wsa_buf.len = size;
@@ -1601,14 +1659,6 @@ namespace fast_task::net {
             universal_address addr;
             int socklen = sizeof(universal_address);
             if (::getsockname(sock, (sockaddr*)&addr, &socklen) == SOCKET_ERROR)
-                return {};
-            return to_address(addr);
-        }
-
-        address remote_address() {
-            universal_address addr;
-            int socklen = sizeof(universal_address);
-            if (::getpeername(sock, (sockaddr*)&addr, &socklen) == SOCKET_ERROR)
                 return {};
             return to_address(addr);
         }
@@ -1684,18 +1734,23 @@ namespace fast_task::net {
 
     static_assert(sizeof(udp_sendv_state) <= sizeof(opaque_network_state::data), "udp_sendv_state too large for opaque_network_state");
 
-    udp_socket::udp_socket(const address& ip_port, uint32_t) {
+    udp_socket::udp_socket(const address& ip_port, udp_configuration config) {
         SOCKET sock = WSASocketW(AF_INET6, SOCK_DGRAM, IPPROTO_UDP, NULL, 0, WSA_FLAG_OVERLAPPED);
         if (sock == INVALID_SOCKET) {
             handle = nullptr;
             return;
         }
-        if (::bind(sock, (const sockaddr*)ip_port.get_data(), (int)ip_port.data_size()) == SOCKET_ERROR) {
-            closesocket(sock);
+        handle = new udp_handle(sock);
+        if (!handle->set_configuration(config)) {
+            delete handle;
             handle = nullptr;
             return;
         }
-        handle = new udp_handle(sock);
+        if (::bind(sock, (const sockaddr*)ip_port.get_data(), (int)ip_port.data_size()) == SOCKET_ERROR) {
+            delete handle;
+            handle = nullptr;
+            return;
+        }
     }
 
     udp_socket::~udp_socket() {
@@ -1811,12 +1866,6 @@ namespace fast_task::net {
         if (!handle)
             return {};
         return handle->local_address();
-    }
-
-    address udp_socket::remote_address() {
-        if (!handle)
-            return {};
-        return handle->remote_address();
     }
 
     bool udp_socket::enter_recv(const std::shared_ptr<task>& t, opaque_network_state& state, uint32_t& bytes_read, std::span<uint8_t> data, address& sender) {
