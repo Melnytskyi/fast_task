@@ -36,12 +36,12 @@ namespace fast_task {
             fast_task::condition_variable_any cd;
             bool has_res = false;
             if (*mut.mutex() == values.no_race) {
-                values.resume_task.emplace_back(nullptr, 0, &cd, &has_res);
+                values.resume_task.emplace_back(nullptr, (uint16_t)0, &cd, &has_res);
                 while (!has_res) //-V654
                     cd.wait(mut);
             } else {
                 fast_task::unique_lock no_race_guard(values.no_race);
-                values.resume_task.emplace_back(nullptr, 0, &cd, &has_res);
+                values.resume_task.emplace_back(nullptr, (uint16_t)0, &cd, &has_res);
                 relock_guard relock(mut);
                 while (!has_res) //-V654
                     cd.wait(no_race_guard);
@@ -72,7 +72,7 @@ namespace fast_task {
             fast_task::condition_variable_any cd;
             bool has_res = false;
             if (*mut.mutex() == values.no_race) {
-                values.resume_task.emplace_back(nullptr, 0, &cd, &has_res);
+                values.resume_task.emplace_back(nullptr, (uint16_t)0, &cd, &has_res);
                 while (!has_res) { //-V654
                     if (cd.wait_until(mut, time_point) == cv_status::timeout) {
                         auto it = std::find_if(values.resume_task.begin(), values.resume_task.end(), [&](const auto& a) { return a.native_cv == &cd; });
@@ -83,7 +83,7 @@ namespace fast_task {
                 }
             } else {
                 fast_task::unique_lock no_race_guard(values.no_race);
-                values.resume_task.emplace_back(nullptr, 0, &cd, &has_res);
+                values.resume_task.emplace_back(nullptr, (uint16_t)0, &cd, &has_res);
                 relock_guard relock(mut);
                 while (!has_res) { //-V654
                     if (cd.wait_until(no_race_guard, time_point) == cv_status::timeout) {
@@ -118,12 +118,12 @@ namespace fast_task {
             fast_task::condition_variable_any cd;
             bool has_res = false;
             if (*mut.mutex() == values.no_race) {
-                values.resume_task.emplace_back(nullptr, 0, &cd, &has_res);
+                values.resume_task.emplace_back(nullptr, (uint16_t)0, &cd, &has_res);
                 while (!has_res) //-V654
                     cd.wait(mut);
             } else {
                 fast_task::unique_lock no_race_guard(values.no_race);
-                values.resume_task.emplace_back(nullptr, 0, &cd, &has_res);
+                values.resume_task.emplace_back(nullptr, (uint16_t)0, &cd, &has_res);
                 relock_guard relock(mut);
                 while (!has_res) //-V654
                     cd.wait(no_race_guard);
@@ -154,7 +154,7 @@ namespace fast_task {
             fast_task::condition_variable_any cd;
             bool has_res = false;
             if (*mut.mutex() == values.no_race) {
-                values.resume_task.emplace_back(nullptr, 0, &cd, &has_res);
+                values.resume_task.emplace_back(nullptr, (uint16_t)0, &cd, &has_res);
                 while (!has_res) { //-V654
                     if (cd.wait_until(mut, time_point) == cv_status::timeout) {
                         auto it = std::find_if(values.resume_task.begin(), values.resume_task.end(), [&](const auto& a) { return a.native_cv == &cd; });
@@ -165,7 +165,7 @@ namespace fast_task {
                 }
             } else {
                 fast_task::unique_lock no_race_guard(values.no_race);
-                values.resume_task.emplace_back(nullptr, 0, &cd, &has_res);
+                values.resume_task.emplace_back(nullptr, (uint16_t)0, &cd, &has_res);
                 relock_guard relock(mut);
                 while (!has_res) { //-V654
                     if (cd.wait_until(no_race_guard, time_point) == cv_status::timeout) {

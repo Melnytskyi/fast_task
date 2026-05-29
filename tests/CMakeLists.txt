@@ -1,6 +1,18 @@
 enable_testing()
 
-find_package(GTest CONFIG REQUIRED)
+find_package(GTest CONFIG)
+if(NOT GTest_FOUND)
+  FetchContent_Declare(
+    GTest
+    GIT_REPOSITORY https://github.com/google/googletest.git
+    GIT_TAG        v1.16.0
+  )
+  FetchContent_MakeAvailable(GTest)
+  file(GLOB _gtest_public_headers "${GTest_SOURCE_DIR}/*.h")
+  file(MAKE_DIRECTORY "${GTest_SOURCE_DIR}/gtest")
+  file(COPY ${_gtest_public_headers} DESTINATION "${GTest_SOURCE_DIR}/gtest")
+  set(GTEST_EXTRA_INCLUDE_DIR "${GTest_SOURCE_DIR}")
+endif()
 include(GoogleTest)
 
 set(FT_TESTS_ROOT ${CMAKE_CURRENT_SOURCE_DIR})
@@ -17,7 +29,6 @@ function(add_ft_test TARGET_NAME SOURCE_FILE)
         CXX_EXTENSIONS OFF
     )
     if(MSVC)
-        set_property(TARGET ${TARGET_NAME} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
         target_compile_options(${TARGET_NAME} PRIVATE /utf-8 /W3 /wd4100)
     endif()
     gtest_discover_tests(${TARGET_NAME})

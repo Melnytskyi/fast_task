@@ -269,7 +269,7 @@ namespace fast_task::net {
             return sock;
         }
 
-        void handle(void* data, util::native_worker_handle* overlap, unsigned long dwBytesTransferred) override {
+        void handle([[maybe_unused]] void*, util::native_worker_handle* overlap, unsigned long dwBytesTransferred) override {
             auto state = static_cast<native_state*>(overlap);
             DWORD dwFlags = 0;
             DWORD cbTransfer = 0;
@@ -747,6 +747,8 @@ namespace fast_task::net {
         ::bind(sock, (SOCKADDR*)&bind_addr, sizeof(bind_addr));
 
         auto mgr = std::make_unique<manager>(sock);
+        if (!mgr->set_configuration(config))
+            return true;
 
         auto& n_state = *new (&state) native_state(mgr.get());
         n_state.awaiting_task = t;
@@ -785,6 +787,8 @@ namespace fast_task::net {
         ::bind(sock, (SOCKADDR*)&bind_addr, sizeof(bind_addr));
 
         auto mgr = std::make_unique<manager>(sock);
+        if (!mgr->set_configuration(config))
+            return true;
 
         auto& n_state = *new (&state) native_state(mgr.get());
         n_state.awaiting_task = t;
@@ -1004,7 +1008,7 @@ namespace fast_task::net {
         }
     };
 
-    bool tcp_socket::enter_send_file(const std::shared_ptr<task>& t, opaque_network_state& state, int32_t& bytes_sent, const char* file_path, size_t file_path_len, uint32_t data_len, uint64_t offset, uint32_t chunks_size) {
+    bool tcp_socket::enter_send_file(const std::shared_ptr<task>& t, opaque_network_state& state, int32_t& bytes_sent, const char* file_path, [[maybe_unused]] size_t file_path_len, uint32_t data_len, uint64_t offset, uint32_t chunks_size) {
         auto& ns = *new (&state) transmit_file_state(handle.get());
         ns.awaiting_task = t;
         ns.out_processed_bytes = &bytes_sent;
@@ -1070,7 +1074,7 @@ namespace fast_task::net {
         transmit_filev_state(util::native_worker_manager* mgr) : transmit_file_state(mgr) {}
     };
 
-    bool tcp_socket::enter_sendv_file(const std::shared_ptr<task>& t, opaque_network_state& state, int32_t& bytes_sent, const std::span<const uint8_t> prefix, const std::span<const uint8_t> postfix, const char* file_path, size_t file_path_len, uint32_t data_len, uint64_t offset, uint32_t chunks_size) {
+    bool tcp_socket::enter_sendv_file(const std::shared_ptr<task>& t, opaque_network_state& state, int32_t& bytes_sent, const std::span<const uint8_t> prefix, const std::span<const uint8_t> postfix, const char* file_path, [[maybe_unused]] size_t file_path_len, uint32_t data_len, uint64_t offset, uint32_t chunks_size) {
         if (prefix.size() > 0xFFFFFFFF || postfix.size() > 0xFFFFFFFF)
             throw std::invalid_argument("Prefix or postfix too large for TransmitFile");
 
@@ -1154,7 +1158,7 @@ namespace fast_task::net {
         return true;
     }
 
-    bool tcp_socket::enter_shutdown(const std::shared_ptr<task>& t, opaque_network_state& state, shutdown_mode mode) {
+    bool tcp_socket::enter_shutdown([[maybe_unused]] const std::shared_ptr<task>& t, opaque_network_state& state, shutdown_mode mode) {
         int how = SD_BOTH;
         switch (mode) {
         case shutdown_mode::read:
@@ -2046,7 +2050,7 @@ namespace fast_task::net {
         return false;
     }
 
-    bool udp_socket::enter_close(const std::shared_ptr<task>& t, opaque_network_state& state) {
+    bool udp_socket::enter_close([[maybe_unused]] const std::shared_ptr<task>& t, [[maybe_unused]] opaque_network_state& state) {
         if (!handle || handle->get_socket() == INVALID_SOCKET)
             return true;
         handle->close_socket();
@@ -2291,7 +2295,7 @@ namespace fast_task::net {
         return false;
     }
 
-    bool udp_peer::enter_close(const std::shared_ptr<task>& t, opaque_network_state& state) {
+    bool udp_peer::enter_close([[maybe_unused]] const std::shared_ptr<task>& t, [[maybe_unused]] opaque_network_state& state) {
         if (!handle || handle->get_socket() == INVALID_SOCKET)
             return true;
         handle->close_socket();

@@ -52,7 +52,7 @@ namespace fast_task {
             while (values.current_writer_task) {
                 fast_task::condition_variable_any cd;
                 bool has_res = false;
-                values.resume_task.emplace_back(nullptr, 0, &cd, &has_res);
+                values.resume_task.emplace_back(nullptr, (uint16_t)0, &cd, &has_res);
                 while (!has_res) //-V654
                     cd.wait(ul);
             }
@@ -104,7 +104,7 @@ namespace fast_task {
             while (values.current_writer_task) {
                 fast_task::condition_variable_any cd;
                 bool has_res = false;
-                auto& rs_task = values.resume_task.emplace_back(nullptr, 0, &cd, &has_res);
+                auto& rs_task = values.resume_task.emplace_back(nullptr, (uint16_t)0, &cd, &has_res);
                 while (!has_res) { //-V654
                     if (cd.wait_until(ul, time_point) == cv_status::timeout) {
                         rs_task.native_cv = nullptr;
@@ -218,14 +218,14 @@ namespace fast_task {
             fast_task::condition_variable_any cd;
             bool has_res = false;
             while (values.current_writer_task) {
-                values.resume_task.emplace_back(nullptr, 0, &cd, &has_res);
+                values.resume_task.emplace_back(nullptr, (uint16_t)0, &cd, &has_res);
                 while (!has_res) //-V654
                     cd.wait(ul);
             }
             values.current_writer_task = self_mask;
             has_res = false;
             while (!values.readers.empty()) {
-                values.resume_task.emplace_back(nullptr, 0, &cd, &has_res);
+                values.resume_task.emplace_back(nullptr, (uint16_t)0, &cd, &has_res);
                 while (!has_res) //-V654
                     cd.wait(ul);
             }
@@ -289,7 +289,7 @@ namespace fast_task {
             fast_task::condition_variable_any cd;
             while (values.current_writer_task) {
                 has_res = false;
-                auto& rs_task = values.resume_task.emplace_back(nullptr, 0, &cd, &has_res);
+                auto& rs_task = values.resume_task.emplace_back(nullptr, (uint16_t)0, &cd, &has_res);
                 while (!has_res) { //-V654
                     if (cd.wait_until(ul, time_point) == cv_status::timeout) {
                         rs_task.native_cv = nullptr;
@@ -304,7 +304,7 @@ namespace fast_task {
 
             while (!values.readers.empty()) {
                 has_res = false;
-                auto& rs_task = values.resume_task.emplace_back(nullptr, 0, &cd, &has_res);
+                auto& rs_task = values.resume_task.emplace_back(nullptr, (uint16_t)0, &cd, &has_res);
                 while (!has_res) { //-V654
                     if (cd.wait_until(ul, time_point) == cv_status::timeout) {
                         rs_task.native_cv = nullptr;

@@ -40,6 +40,16 @@
             "name": "Linux-Test",
             "configurePreset": "Linux-Test",
             "configuration": "Debug"
+        },
+        {
+            "name": "Win-Test-Rel",
+            "configurePreset": "Win-Test-Rel",
+            "configuration": "Release"
+        },
+        {
+            "name": "Linux-Test-Rel",
+            "configurePreset": "Linux-Test-Rel",
+            "configuration": "Release"
         }
     ],
     "configurePresets": [
@@ -135,6 +145,7 @@
             "displayName": "Win-Test",
             "inherits": [
                 "Win-Basic",
+                "Release",
                 "Test"
             ],
             "cacheVariables": {
@@ -147,6 +158,28 @@
             "inherits": [
                 "Linux-Basic",
                 "Test"
+            ],
+            "cacheVariables": {
+                "FAST_TASK_BUILD_TESTS": "ON"
+            }
+        },
+        {
+            "name": "Win-Test-Rel",
+            "displayName": "Win-Test-Rel",
+            "inherits": [
+                "Win-Basic",
+                "RelWithDebInfo"
+            ],
+            "cacheVariables": {
+                "FAST_TASK_BUILD_TESTS": "ON"
+            }
+        },
+        {
+            "name": "Linux-Test-Rel",
+            "displayName": "Linux-Test-Rel",
+            "inherits": [
+                "Linux-Basic",
+                "Release"
             ],
             "cacheVariables": {
                 "FAST_TASK_BUILD_TESTS": "ON"
@@ -166,6 +199,22 @@
             "name": "Linux-Test",
             "configurePreset": "Linux-Test",
             "configuration": "Debug",
+            "output": {
+                "outputOnFailure": true
+            }
+        },
+        {
+            "name": "Win-Test-Rel",
+            "configurePreset": "Win-Test-Rel",
+            "configuration": "Release",
+            "output": {
+                "outputOnFailure": true
+            }
+        },
+        {
+            "name": "Linux-Test-Rel",
+            "configurePreset": "Linux-Test-Rel",
+            "configuration": "Release",
             "output": {
                 "outputOnFailure": true
             }

@@ -889,7 +889,7 @@ namespace fast_task::file {
                 return res;
         }
 
-        void handle(void* data, util::native_worker_handle* overlapped, unsigned long dwBytesTransferred) override {
+        void handle([[maybe_unused]] void*, util::native_worker_handle* overlapped, unsigned long dwBytesTransferred) override {
             auto file = (File_*)overlapped;
             if (file->overlapped.Internal)
                 file->status_filter((DWORD)file->overlapped.Internal, dwBytesTransferred);
