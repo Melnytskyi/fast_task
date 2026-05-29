@@ -172,20 +172,24 @@ namespace fast_task {
             get_data(post_switch_loc.curr_task).relock_0 = nullptr;
             get_data(post_switch_loc.curr_task).relock_1 = nullptr;
             get_data(post_switch_loc.curr_task).relock_2 = nullptr;
+            auto old_time_end_flag = get_data(post_switch_loc.curr_task).time_end_flag;
+            auto old_awaked = get_data(post_switch_loc.curr_task).awaked;
             relock_state_0.relock_end();
             relock_state_1.relock_end();
             relock_state_2.relock_end();
             auto& post_relock_loc = get_loc();
             get_data(post_relock_loc.curr_task).awake_check++;
+            get_data(post_switch_loc.curr_task).time_end_flag = old_time_end_flag;
+            get_data(post_switch_loc.curr_task).awaked = old_awaked;
             post_relock_loc.context_in_swap = false;
             if (get_data(post_relock_loc.curr_task).invalid_switch_caught) {
                 get_data(post_relock_loc.curr_task).invalid_switch_caught = false;
                 throw invalid_switch();
             }
-            timer_reinit();
             if (get_data(post_relock_loc.curr_task).timeout != std::chrono::high_resolution_clock::time_point::min().time_since_epoch().count())
                 if (get_data(post_relock_loc.curr_task).timeout <= std::chrono::high_resolution_clock::now().time_since_epoch().count())
                     throw task_cancellation();
+            timer_reinit();
         } else
             throw invalid_context();
     }
