@@ -22,6 +22,14 @@
         #define PLATFORM_UNKNOWN
     #endif
 
+    #if defined(_MSC_VER)
+        #define NOINLINE __declspec(noinline)
+    #elif defined(__GNUC__) || defined(__clang__)
+        #define NOINLINE __attribute__((noinline))
+    #else
+        #define NOINLINE
+    #endif
+
 
     #include <barrier>
     #include <boost/context/continuation.hpp>
@@ -272,7 +280,8 @@ namespace fast_task {
         fast_task::mutex stw_mutex;
     };
 
-    extern thread_local FT_API_LOCAL executors_local loc;
+    NOINLINE executors_local& get_loc() noexcept;
+
     extern FT_API_LOCAL executor_global glob;
     constexpr size_t native_thread_flag = size_t(1) << (sizeof(size_t) * 8 - 1);
 
@@ -357,7 +366,7 @@ namespace fast_task {
     FT_DEBUG_ONLY(void FT_API_LOCAL unregister_object(deadline_timer*));
 
 
-    std::default_random_engine& FT_API_LOCAL get_thread_local_random_engine();
+    NOINLINE std::default_random_engine& FT_API_LOCAL get_thread_local_random_engine();
 }
 
 #endif

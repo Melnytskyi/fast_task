@@ -68,6 +68,7 @@ namespace fast_task::debug {
     debug_data::debug_data(debug_registry& reg) : virtual_id(reg.task_id_counter++) {
         if (reg._init_stack_trace)
             init_trace = make_trace(1);
+        auto& loc = get_loc();
         created_by_is_native = !loc.is_task_thread;
         if (loc.is_task_thread)
             created_by_id = reg.task_instances.at(loc.curr_task.get()).virtual_id;

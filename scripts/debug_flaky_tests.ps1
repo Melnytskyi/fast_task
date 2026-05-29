@@ -1,7 +1,7 @@
-Set-Location -Path "$PSScriptRoot/../out/build/Win-Test/"
-$logFile = "$PSScriptRoot/../out/build/Win-Test/test_hunt_results_$(Get-Date -Format 'yyyyMMdd_HHmmss').log"
+Set-Location -Path "$PSScriptRoot/../out/build/Win-Test-Rel/"
+$logFile = "$PSScriptRoot/../out/build/Win-Test-Rel/test_hunt_results_$(Get-Date -Format 'yyyyMMdd_HHmmss').log"
 $maxConcurrentJobs = 24
-$testExecutables = Get-ChildItem -Path ".\tests\*\Debug\*.exe" 
+$testExecutables = Get-ChildItem -Path ".\tests\*\*\*.exe"
 
 # Initialize the log file
 Set-Content -Path $logFile -Value "--- Test Hunt Started $(Get-Date) ---`n" -Encoding utf8

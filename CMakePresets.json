@@ -44,12 +44,12 @@
         {
             "name": "Win-Test-Rel",
             "configurePreset": "Win-Test-Rel",
-            "configuration": "Release"
+            "configuration": "RelWithDebInfo"
         },
         {
             "name": "Linux-Test-Rel",
             "configurePreset": "Linux-Test-Rel",
-            "configuration": "Release"
+            "configuration": "RelWithDebInfo"
         }
     ],
     "configurePresets": [
@@ -206,7 +206,7 @@
         {
             "name": "Win-Test-Rel",
             "configurePreset": "Win-Test-Rel",
-            "configuration": "Release",
+            "configuration": "RelWithDebInfo",
             "output": {
                 "outputOnFailure": true
             }
@@ -214,7 +214,7 @@
         {
             "name": "Linux-Test-Rel",
             "configurePreset": "Linux-Test-Rel",
-            "configuration": "Release",
+            "configuration": "RelWithDebInfo",
             "output": {
                 "outputOnFailure": true
             }

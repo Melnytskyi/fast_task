@@ -295,10 +295,10 @@ namespace fast_task::net {
         std::optional<tcp_socket> res;
         opaque_network_state state;
 
-        if (loc.is_task_thread) {
-            mutex_unify mut(get_data(loc.curr_task).no_race);
+        if (get_loc().is_task_thread) {
+            mutex_unify mut(get_data(get_loc().curr_task).no_race);
             std::lock_guard guard(mut);
-            if (!tcp_socket::enter_connect(loc.curr_task, state, res, ip_port, config))
+            if (!tcp_socket::enter_connect(get_loc().curr_task, state, res, ip_port, config))
                 swapCtxRelock(mut);
         } else {
             std::mutex mtx;
@@ -323,10 +323,10 @@ namespace fast_task::net {
         std::optional<tcp_socket> res;
         opaque_network_state state;
 
-        if (loc.is_task_thread) {
-            mutex_unify mut(get_data(loc.curr_task).no_race);
+        if (get_loc().is_task_thread) {
+            mutex_unify mut(get_data(get_loc().curr_task).no_race);
             std::lock_guard guard(mut);
-            if (!tcp_socket::enter_connect(loc.curr_task, state, res, ip_port, data, size, config))
+            if (!tcp_socket::enter_connect(get_loc().curr_task, state, res, ip_port, data, size, config))
                 swapCtxRelock(mut);
         } else {
             std::mutex mtx;
@@ -351,10 +351,10 @@ namespace fast_task::net {
         opaque_network_state state;
         int32_t bytes_read = 0;
 
-        if (loc.is_task_thread) {
-            mutex_unify mut(get_data(loc.curr_task).no_race);
+        if (get_loc().is_task_thread) {
+            mutex_unify mut(get_data(get_loc().curr_task).no_race);
             std::lock_guard guard(mut);
-            if (!tcp_socket::enter_recv(loc.curr_task, state, bytes_read, data))
+            if (!tcp_socket::enter_recv(get_loc().curr_task, state, bytes_read, data))
                 swapCtxRelock(mut);
         } else {
             std::mutex mtx;
@@ -379,10 +379,10 @@ namespace fast_task::net {
         opaque_network_state state;
         int32_t bytes_read = 0;
 
-        if (loc.is_task_thread) {
-            mutex_unify mut(get_data(loc.curr_task).no_race);
+        if (get_loc().is_task_thread) {
+            mutex_unify mut(get_data(get_loc().curr_task).no_race);
             std::lock_guard guard(mut);
-            if (!tcp_socket::enter_recvv(loc.curr_task, state, bytes_read, data))
+            if (!tcp_socket::enter_recvv(get_loc().curr_task, state, bytes_read, data))
                 swapCtxRelock(mut);
         } else {
             std::mutex mtx;
@@ -407,10 +407,10 @@ namespace fast_task::net {
         opaque_network_state state;
         int32_t res = 0;
 
-        if (loc.is_task_thread) {
-            mutex_unify mut(get_data(loc.curr_task).no_race);
+        if (get_loc().is_task_thread) {
+            mutex_unify mut(get_data(get_loc().curr_task).no_race);
             std::lock_guard guard(mut);
-            if (!tcp_socket::enter_send(loc.curr_task, state, res, data))
+            if (!tcp_socket::enter_send(get_loc().curr_task, state, res, data))
                 swapCtxRelock(mut);
         } else {
             std::mutex mtx;
@@ -435,10 +435,10 @@ namespace fast_task::net {
         opaque_network_state state;
         int32_t res = 0;
 
-        if (loc.is_task_thread) {
-            mutex_unify mut(get_data(loc.curr_task).no_race);
+        if (get_loc().is_task_thread) {
+            mutex_unify mut(get_data(get_loc().curr_task).no_race);
             std::lock_guard guard(mut);
-            if (!tcp_socket::enter_sendv(loc.curr_task, state, res, data))
+            if (!tcp_socket::enter_sendv(get_loc().curr_task, state, res, data))
                 swapCtxRelock(mut);
         } else {
             std::mutex mtx;
@@ -462,10 +462,10 @@ namespace fast_task::net {
         opaque_network_state state;
         int32_t res = 0;
 
-        if (loc.is_task_thread) {
-            mutex_unify mut(get_data(loc.curr_task).no_race);
+        if (get_loc().is_task_thread) {
+            mutex_unify mut(get_data(get_loc().curr_task).no_race);
             std::lock_guard guard(mut);
-            if (!tcp_socket::enter_send_file(loc.curr_task, state, res, file_path, file_path_len, data_len, offset, chunks_size))
+            if (!tcp_socket::enter_send_file(get_loc().curr_task, state, res, file_path, file_path_len, data_len, offset, chunks_size))
                 swapCtxRelock(mut);
         } else {
             std::mutex mtx;
@@ -489,10 +489,10 @@ namespace fast_task::net {
         opaque_network_state state;
         int32_t res = 0;
 
-        if (loc.is_task_thread) {
-            mutex_unify mut(get_data(loc.curr_task).no_race);
+        if (get_loc().is_task_thread) {
+            mutex_unify mut(get_data(get_loc().curr_task).no_race);
             std::lock_guard guard(mut);
-            if (!tcp_socket::enter_send_file(loc.curr_task, state, res, file, data_len, offset, chunks_size))
+            if (!tcp_socket::enter_send_file(get_loc().curr_task, state, res, file, data_len, offset, chunks_size))
                 swapCtxRelock(mut);
         } else {
             std::mutex mtx;
@@ -516,10 +516,10 @@ namespace fast_task::net {
         opaque_network_state state;
         int32_t res = 0;
 
-        if (loc.is_task_thread) {
-            mutex_unify mut(get_data(loc.curr_task).no_race);
+        if (get_loc().is_task_thread) {
+            mutex_unify mut(get_data(get_loc().curr_task).no_race);
             std::lock_guard guard(mut);
-            if (!tcp_socket::enter_sendv_file(loc.curr_task, state, res, prefix, postfix, file_path, file_path_len, data_len, offset, chunks_size))
+            if (!tcp_socket::enter_sendv_file(get_loc().curr_task, state, res, prefix, postfix, file_path, file_path_len, data_len, offset, chunks_size))
                 swapCtxRelock(mut);
         } else {
             std::mutex mtx;
@@ -543,10 +543,10 @@ namespace fast_task::net {
         opaque_network_state state;
         int32_t res = 0;
 
-        if (loc.is_task_thread) {
-            mutex_unify mut(get_data(loc.curr_task).no_race);
+        if (get_loc().is_task_thread) {
+            mutex_unify mut(get_data(get_loc().curr_task).no_race);
             std::lock_guard guard(mut);
-            if (!tcp_socket::enter_sendv_file(loc.curr_task, state, res, prefix, postfix, file, data_len, offset, chunks_size))
+            if (!tcp_socket::enter_sendv_file(get_loc().curr_task, state, res, prefix, postfix, file, data_len, offset, chunks_size))
                 swapCtxRelock(mut);
         } else {
             std::mutex mtx;
@@ -569,10 +569,10 @@ namespace fast_task::net {
     void tcp_socket::shutdown(shutdown_mode mode) {
         opaque_network_state state;
 
-        if (loc.is_task_thread) {
-            mutex_unify mut(get_data(loc.curr_task).no_race);
+        if (get_loc().is_task_thread) {
+            mutex_unify mut(get_data(get_loc().curr_task).no_race);
             std::lock_guard guard(mut);
-            if (!tcp_socket::enter_shutdown(loc.curr_task, state, mode))
+            if (!tcp_socket::enter_shutdown(get_loc().curr_task, state, mode))
                 swapCtxRelock(mut);
         } else {
             std::mutex mtx;
@@ -594,10 +594,10 @@ namespace fast_task::net {
     void tcp_socket::reset() {
         opaque_network_state state;
 
-        if (loc.is_task_thread) {
-            mutex_unify mut(get_data(loc.curr_task).no_race);
+        if (get_loc().is_task_thread) {
+            mutex_unify mut(get_data(get_loc().curr_task).no_race);
             std::lock_guard guard(mut);
-            if (!tcp_socket::enter_reset(loc.curr_task, state))
+            if (!tcp_socket::enter_reset(get_loc().curr_task, state))
                 swapCtxRelock(mut);
         } else {
             std::mutex mtx;
@@ -619,10 +619,10 @@ namespace fast_task::net {
     void tcp_socket::close() {
         opaque_network_state state;
 
-        if (loc.is_task_thread) {
-            mutex_unify mut(get_data(loc.curr_task).no_race);
+        if (get_loc().is_task_thread) {
+            mutex_unify mut(get_data(get_loc().curr_task).no_race);
             std::lock_guard guard(mut);
-            if (!tcp_socket::enter_close(loc.curr_task, state))
+            if (!tcp_socket::enter_close(get_loc().curr_task, state))
                 swapCtxRelock(mut);
         } else {
             std::mutex mtx;
@@ -1188,10 +1188,10 @@ namespace fast_task::net {
         std::optional<tcp_socket> res;
         opaque_network_state state;
 
-        if (loc.is_task_thread) {
-            mutex_unify mut(get_data(loc.curr_task).no_race);
+        if (get_loc().is_task_thread) {
+            mutex_unify mut(get_data(get_loc().curr_task).no_race);
             std::lock_guard guard(mut);
-            if (!enter_accept(loc.curr_task, state, res))
+            if (!enter_accept(get_loc().curr_task, state, res))
                 swapCtxRelock(mut);
         } else {
             std::mutex mtx;
@@ -1213,10 +1213,10 @@ namespace fast_task::net {
     void tcp_listener::close() {
         opaque_network_state state;
 
-        if (loc.is_task_thread) {
-            mutex_unify mut(get_data(loc.curr_task).no_race);
+        if (get_loc().is_task_thread) {
+            mutex_unify mut(get_data(get_loc().curr_task).no_race);
             std::lock_guard guard(mut);
-            if (!enter_close(loc.curr_task, state))
+            if (!enter_close(get_loc().curr_task, state))
                 swapCtxRelock(mut);
         } else {
             std::mutex mtx;
@@ -1570,10 +1570,10 @@ namespace fast_task::net {
         uint32_t bytes_read = 0;
         opaque_network_state state;
 
-        if (loc.is_task_thread) {
-            mutex_unify mut(get_data(loc.curr_task).no_race);
+        if (get_loc().is_task_thread) {
+            mutex_unify mut(get_data(get_loc().curr_task).no_race);
             std::lock_guard guard(mut);
-            if (!enter_recv(loc.curr_task, state, bytes_read, data, sender))
+            if (!enter_recv(get_loc().curr_task, state, bytes_read, data, sender))
                 swapCtxRelock(mut);
         } else {
             std::mutex mtx;
@@ -1596,10 +1596,10 @@ namespace fast_task::net {
         uint32_t bytes_sent = 0;
         opaque_network_state state;
 
-        if (loc.is_task_thread) {
-            mutex_unify mut(get_data(loc.curr_task).no_race);
+        if (get_loc().is_task_thread) {
+            mutex_unify mut(get_data(get_loc().curr_task).no_race);
             std::lock_guard guard(mut);
-            if (!enter_send(loc.curr_task, state, bytes_sent, data, to))
+            if (!enter_send(get_loc().curr_task, state, bytes_sent, data, to))
                 swapCtxRelock(mut);
         } else {
             std::mutex mtx;
@@ -1623,10 +1623,10 @@ namespace fast_task::net {
         opaque_network_state state;
         std::span<std::span<uint8_t>> mbufs{const_cast<std::span<uint8_t>*>(buffers.data()), buffers.size()};
 
-        if (loc.is_task_thread) {
-            mutex_unify mut(get_data(loc.curr_task).no_race);
+        if (get_loc().is_task_thread) {
+            mutex_unify mut(get_data(get_loc().curr_task).no_race);
             std::lock_guard guard(mut);
-            if (!enter_recvv(loc.curr_task, state, bytes_read, mbufs, sender))
+            if (!enter_recvv(get_loc().curr_task, state, bytes_read, mbufs, sender))
                 swapCtxRelock(mut);
         } else {
             std::mutex mtx;
@@ -1649,10 +1649,10 @@ namespace fast_task::net {
         uint32_t bytes_sent = 0;
         opaque_network_state state;
 
-        if (loc.is_task_thread) {
-            mutex_unify mut(get_data(loc.curr_task).no_race);
+        if (get_loc().is_task_thread) {
+            mutex_unify mut(get_data(get_loc().curr_task).no_race);
             std::lock_guard guard(mut);
-            if (!enter_sendv(loc.curr_task, state, bytes_sent, data, to))
+            if (!enter_sendv(get_loc().curr_task, state, bytes_sent, data, to))
                 swapCtxRelock(mut);
         } else {
             std::mutex mtx;
@@ -1719,10 +1719,10 @@ namespace fast_task::net {
 
     void udp_socket::close() {
         opaque_network_state state;
-        if (loc.is_task_thread) {
-            mutex_unify mut(get_data(loc.curr_task).no_race);
+        if (get_loc().is_task_thread) {
+            mutex_unify mut(get_data(get_loc().curr_task).no_race);
             std::lock_guard guard(mut);
-            if (!enter_close(loc.curr_task, state))
+            if (!enter_close(get_loc().curr_task, state))
                 swapCtxRelock(mut);
         } else {
             std::mutex mtx;
@@ -1844,10 +1844,10 @@ namespace fast_task::net {
     uint32_t udp_peer::recv(std::span<uint8_t> data) {
         uint32_t bytes_read = 0;
         opaque_network_state state;
-        if (loc.is_task_thread) {
-            mutex_unify mut(get_data(loc.curr_task).no_race);
+        if (get_loc().is_task_thread) {
+            mutex_unify mut(get_data(get_loc().curr_task).no_race);
             std::lock_guard guard(mut);
-            if (!enter_recv(loc.curr_task, state, bytes_read, data))
+            if (!enter_recv(get_loc().curr_task, state, bytes_read, data))
                 swapCtxRelock(mut);
         } else {
             std::mutex mtx;
@@ -1865,10 +1865,10 @@ namespace fast_task::net {
     uint32_t udp_peer::send(std::span<const uint8_t> data) {
         uint32_t bytes_sent = 0;
         opaque_network_state state;
-        if (loc.is_task_thread) {
-            mutex_unify mut(get_data(loc.curr_task).no_race);
+        if (get_loc().is_task_thread) {
+            mutex_unify mut(get_data(get_loc().curr_task).no_race);
             std::lock_guard guard(mut);
-            if (!enter_send(loc.curr_task, state, bytes_sent, data))
+            if (!enter_send(get_loc().curr_task, state, bytes_sent, data))
                 swapCtxRelock(mut);
         } else {
             std::mutex mtx;
@@ -1887,10 +1887,10 @@ namespace fast_task::net {
         uint32_t bytes_read = 0;
         opaque_network_state state;
         std::span<std::span<uint8_t>> mbufs{const_cast<std::span<uint8_t>*>(buffers.data()), buffers.size()};
-        if (loc.is_task_thread) {
-            mutex_unify mut(get_data(loc.curr_task).no_race);
+        if (get_loc().is_task_thread) {
+            mutex_unify mut(get_data(get_loc().curr_task).no_race);
             std::lock_guard guard(mut);
-            if (!enter_recvv(loc.curr_task, state, bytes_read, mbufs))
+            if (!enter_recvv(get_loc().curr_task, state, bytes_read, mbufs))
                 swapCtxRelock(mut);
         } else {
             std::mutex mtx;
@@ -1908,10 +1908,10 @@ namespace fast_task::net {
     int32_t udp_peer::sendv(std::span<const std::span<const uint8_t>> data) {
         uint32_t bytes_sent = 0;
         opaque_network_state state;
-        if (loc.is_task_thread) {
-            mutex_unify mut(get_data(loc.curr_task).no_race);
+        if (get_loc().is_task_thread) {
+            mutex_unify mut(get_data(get_loc().curr_task).no_race);
             std::lock_guard guard(mut);
-            if (!enter_sendv(loc.curr_task, state, bytes_sent, data))
+            if (!enter_sendv(get_loc().curr_task, state, bytes_sent, data))
                 swapCtxRelock(mut);
         } else {
             std::mutex mtx;
@@ -1940,10 +1940,10 @@ namespace fast_task::net {
 
     void udp_peer::close() {
         opaque_network_state state;
-        if (loc.is_task_thread) {
-            mutex_unify mut(get_data(loc.curr_task).no_race);
+        if (get_loc().is_task_thread) {
+            mutex_unify mut(get_data(get_loc().curr_task).no_race);
             std::lock_guard guard(mut);
-            if (!enter_close(loc.curr_task, state))
+            if (!enter_close(get_loc().curr_task, state))
                 swapCtxRelock(mut);
         } else {
             std::mutex mtx;
@@ -2297,10 +2297,10 @@ namespace fast_task::net {
                              address::family preferred_family) {
         address res;
         opaque_network_state state;
-        if (loc.is_task_thread) {
-            mutex_unify mut(fast_task::get_data(loc.curr_task).no_race);
+        if (get_loc().is_task_thread) {
+            mutex_unify mut(fast_task::get_data(get_loc().curr_task).no_race);
             std::lock_guard guard(mut);
-            if (!enter_resolve(loc.curr_task, state, res, host, service, preferred_family))
+            if (!enter_resolve(get_loc().curr_task, state, res, host, service, preferred_family))
                 swapCtxRelock(mut);
         } else {
             std::mutex mtx;
@@ -2319,10 +2319,10 @@ namespace fast_task::net {
                              address::family preferred_family) {
         address res;
         opaque_network_state state;
-        if (loc.is_task_thread) {
-            mutex_unify mut(fast_task::get_data(loc.curr_task).no_race);
+        if (get_loc().is_task_thread) {
+            mutex_unify mut(fast_task::get_data(get_loc().curr_task).no_race);
             std::lock_guard guard(mut);
-            if (!enter_resolve(loc.curr_task, state, res, host, service, port, preferred_family))
+            if (!enter_resolve(get_loc().curr_task, state, res, host, service, port, preferred_family))
                 swapCtxRelock(mut);
         } else {
             std::mutex mtx;
@@ -2341,10 +2341,10 @@ namespace fast_task::net {
                                                    address::family preferred_family) {
         std::vector<address> res;
         opaque_network_state state;
-        if (loc.is_task_thread) {
-            mutex_unify mut(fast_task::get_data(loc.curr_task).no_race);
+        if (get_loc().is_task_thread) {
+            mutex_unify mut(fast_task::get_data(get_loc().curr_task).no_race);
             std::lock_guard guard(mut);
-            if (!enter_resolve_multiple(loc.curr_task, state, res, host, service, preferred_family))
+            if (!enter_resolve_multiple(get_loc().curr_task, state, res, host, service, preferred_family))
                 swapCtxRelock(mut);
         } else {
             std::mutex mtx;
@@ -2363,10 +2363,10 @@ namespace fast_task::net {
                                                    uint16_t port, address::family preferred_family) {
         std::vector<address> res;
         opaque_network_state state;
-        if (loc.is_task_thread) {
-            mutex_unify mut(fast_task::get_data(loc.curr_task).no_race);
+        if (get_loc().is_task_thread) {
+            mutex_unify mut(fast_task::get_data(get_loc().curr_task).no_race);
             std::lock_guard guard(mut);
-            if (!enter_resolve_multiple(loc.curr_task, state, res, host, service, port, preferred_family))
+            if (!enter_resolve_multiple(get_loc().curr_task, state, res, host, service, port, preferred_family))
                 swapCtxRelock(mut);
         } else {
             std::mutex mtx;

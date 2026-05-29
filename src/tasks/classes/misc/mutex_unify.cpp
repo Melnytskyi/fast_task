@@ -486,7 +486,7 @@ namespace fast_task {
             urmut->mutex.values.current_task = target_owner;
             break;
         case mutex_unify_type::urwmut_r:
-            urwmut->values.readers.remove(loc.curr_task.get());
+            urwmut->values.readers.remove(get_loc().curr_task.get());
             urwmut->values.readers.push_back(target_owner);
             break;
         case mutex_unify_type::urwmut_w:

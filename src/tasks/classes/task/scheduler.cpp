@@ -258,6 +258,7 @@ namespace fast_task::scheduler {
     }
 
     void become_task_executor() {
+        auto& loc = get_loc();
         try {
             ++glob.thread_count;
             taskExecutor();
@@ -273,7 +274,7 @@ namespace fast_task::scheduler {
     }
 
     void await_no_tasks(bool be_executor) {
-        if (be_executor && !loc.is_task_thread) {
+        if (be_executor && !get_loc().is_task_thread) {
             ++glob.thread_count;
             taskExecutor(true);
         } else {
@@ -308,7 +309,7 @@ namespace fast_task::scheduler {
     }
 
     void await_end_tasks(bool be_executor) {
-        if (be_executor && !loc.is_task_thread) {
+        if (be_executor && !get_loc().is_task_thread) {
             while (glob.executing_tasks) {
                 try {
                     ++glob.thread_count;
@@ -321,7 +322,7 @@ namespace fast_task::scheduler {
             mutex_unify uni(glob.task_thread_safety);
             fast_task::unique_lock l(uni);
 
-            if (loc.is_task_thread)
+            if (get_loc().is_task_thread)
                 while (glob.executing_tasks != 1) {
                     if (!total_executors())
                         create_executor(1);
@@ -377,11 +378,11 @@ namespace fast_task::scheduler {
     }
 
     const std::shared_ptr<task>& current_context_task() {
-        return loc.curr_task;
+        return get_loc().curr_task;
     }
 
     void request_stw(const std::function<void()>& func) {
-        if (!loc.is_task_thread)
+        if (!get_loc().is_task_thread)
             unsafe_perform_stop_the_world(func);
         else
             throw invalid_native_context{};

@@ -23,13 +23,13 @@ namespace fast_task {
     }
 
     void task_condition_variable::wait(fast_task::unique_lock<mutex_unify>& mut) {
-        if (loc.is_task_thread) {
+        if (get_loc().is_task_thread) {
             if (*mut.mutex() == values.no_race) {
-                values.resume_task.emplace_back(loc.curr_task, get_data(loc.curr_task).awake_check);
+                values.resume_task.emplace_back(get_loc().curr_task, get_data(get_loc().curr_task).awake_check);
                 swapCtxRelock(values.no_race);
             } else {
                 fast_task::lock_guard guard(values.no_race);
-                values.resume_task.emplace_back(loc.curr_task, get_data(loc.curr_task).awake_check);
+                values.resume_task.emplace_back(get_loc().curr_task, get_data(get_loc().curr_task).awake_check);
                 swapCtxRelock(*mut.mutex(), values.no_race);
             }
         } else {
@@ -51,19 +51,19 @@ namespace fast_task {
     }
 
     bool task_condition_variable::wait_until(fast_task::unique_lock<mutex_unify>& mut, std::chrono::high_resolution_clock::time_point time_point) {
-        if (loc.is_task_thread) {
+        if (get_loc().is_task_thread) {
             fast_task::lock_guard guard(glob.task_timer_safety);
             makeTimeWait_unsafe(time_point);
             {
                 fast_task::lock_guard _guard(values.no_race);
-                values.resume_task.emplace_back(loc.curr_task, get_data(loc.curr_task).awake_check);
+                values.resume_task.emplace_back(get_loc().curr_task, get_data(get_loc().curr_task).awake_check);
             }
             swapCtxRelock(glob.task_timer_safety);
-            auto time_end_flag = get_data(loc.curr_task).time_end_flag;
+            auto time_end_flag = get_data(get_loc().curr_task).time_end_flag;
             resetTimeWait();
             if (time_end_flag) {
                 fast_task::lock_guard _guard(values.no_race);
-                auto it = std::find_if(values.resume_task.begin(), values.resume_task.end(), [](const auto& a){ return a.task == loc.curr_task; });
+                auto it = std::find_if(values.resume_task.begin(), values.resume_task.end(), [](const auto& a) { return a.task == get_loc().curr_task; });
                 if (it != values.resume_task.end())
                     values.resume_task.erase(it);
                 return false;
@@ -105,13 +105,13 @@ namespace fast_task {
     }
 
     void task_condition_variable::wait(std::unique_lock<mutex_unify>& mut) {
-        if (loc.is_task_thread) {
+        if (get_loc().is_task_thread) {
             if (*mut.mutex() == values.no_race) {
-                values.resume_task.emplace_back(loc.curr_task, get_data(loc.curr_task).awake_check);
+                values.resume_task.emplace_back(get_loc().curr_task, get_data(get_loc().curr_task).awake_check);
                 swapCtxRelock(values.no_race);
             } else {
                 fast_task::lock_guard guard(values.no_race);
-                values.resume_task.emplace_back(loc.curr_task, get_data(loc.curr_task).awake_check);
+                values.resume_task.emplace_back(get_loc().curr_task, get_data(get_loc().curr_task).awake_check);
                 swapCtxRelock(*mut.mutex(), values.no_race);
             }
         } else {
@@ -133,19 +133,19 @@ namespace fast_task {
     }
 
     bool task_condition_variable::wait_until(std::unique_lock<mutex_unify>& mut, std::chrono::high_resolution_clock::time_point time_point) {
-        if (loc.is_task_thread) {
+        if (get_loc().is_task_thread) {
             fast_task::lock_guard guard(glob.task_timer_safety);
             makeTimeWait_unsafe(time_point);
             {
                 fast_task::lock_guard _guard(values.no_race);
-                values.resume_task.emplace_back(loc.curr_task, get_data(loc.curr_task).awake_check);
+                values.resume_task.emplace_back(get_loc().curr_task, get_data(get_loc().curr_task).awake_check);
             }
             swapCtxRelock(glob.task_timer_safety);
-            auto time_end_flag = get_data(loc.curr_task).time_end_flag;
+            auto time_end_flag = get_data(get_loc().curr_task).time_end_flag;
             resetTimeWait();
             if (time_end_flag) {
                 fast_task::lock_guard _guard(values.no_race);
-                auto it = std::find_if(values.resume_task.begin(), values.resume_task.end(), [](const auto& a){ return a.task == loc.curr_task; });
+                auto it = std::find_if(values.resume_task.begin(), values.resume_task.end(), [](const auto& a) { return a.task == get_loc().curr_task; });
                 if (it != values.resume_task.end())
                     values.resume_task.erase(it);
                 return false;
@@ -209,8 +209,8 @@ namespace fast_task {
                 }
             }
             glob.tasks_notifier.notify_one();
-            if (task::max_running_tasks && loc.is_task_thread) {
-                if (can_be_scheduled_task_to_hot() && loc.curr_task && !get_data(loc.curr_task).end_of_life)
+            if (task::max_running_tasks && get_loc().is_task_thread) {
+                if (can_be_scheduled_task_to_hot() && get_loc().curr_task && !get_data(get_loc().curr_task).end_of_life)
                     to_yield = true;
             }
         }
@@ -244,8 +244,8 @@ namespace fast_task {
             }
         }
         glob.tasks_notifier.notify_one();
-        if (task::max_running_tasks && loc.is_task_thread) {
-            if (can_be_scheduled_task_to_hot() && loc.curr_task && !get_data(loc.curr_task).end_of_life)
+        if (task::max_running_tasks && get_loc().is_task_thread) {
+            if (can_be_scheduled_task_to_hot() && get_loc().curr_task && !get_data(get_loc().curr_task).end_of_life)
                 to_yield = true;
         }
         if (to_yield)
@@ -286,8 +286,8 @@ namespace fast_task {
         {
             get_data(tsk).awaked = true;
             fast_task::shared_lock guard(glob.task_thread_safety);
-            if (task::max_running_tasks && loc.is_task_thread) {
-                if (can_be_scheduled_task_to_hot() && loc.curr_task && !get_data(loc.curr_task).end_of_life)
+            if (task::max_running_tasks && get_loc().is_task_thread) {
+                if (can_be_scheduled_task_to_hot() && get_loc().curr_task && !get_data(get_loc().curr_task).end_of_life)
                     to_yield = true;
             }
             guard.unlock();
