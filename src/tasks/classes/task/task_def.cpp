@@ -15,9 +15,12 @@ namespace fast_task {
     task::data::callbacks_data::callbacks_data(callbacks_data&& move) noexcept {
         is_sbo = move.is_sbo;
         on_move = move.on_move;
-        if (on_move)
+        if (on_move) {
+            buf.dat.data = nullptr;
+            buf.dat.on_await = nullptr;
+            buf.dat.on_cancel = nullptr;
             on_move(get_data(), move.get_data());
-        else {
+        } else {
             buf.dat.data = move.buf.dat.data;
             buf.dat.on_await = move.buf.dat.on_await;
             buf.dat.on_cancel = move.buf.dat.on_cancel;

@@ -338,6 +338,19 @@ namespace fast_task {
         auto operator co_await() const& noexcept {
             return result_awaiter{task_handle};
         }
+
+        template <class U = T>
+        U sync_get() const {
+            task_handle->await_task();
+            if constexpr (!std::is_same_v<U, void>) {
+                T result{};
+                task_handle->access_dummy([&result](void* addr) {
+                    auto h = std::coroutine_handle<fast_task::task_promise<T>>::from_address(addr);
+                    result = h.promise().result();
+                });
+                return result;
+            }
+        }
     };
 
     inline auto operator co_await(const std::shared_ptr<task>& t) noexcept {

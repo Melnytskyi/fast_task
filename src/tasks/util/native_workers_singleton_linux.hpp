@@ -141,6 +141,7 @@ namespace fast_task::util {
             int wakeup_eventfd;
             fast_task::thread dispatcher_thread;
             alignas(64) std::atomic<bool> is_sleeping{false};
+            std::atomic<bool> stop_flag{false};
 
             io_shard() : wakeup_eventfd(-1) {}
 
@@ -186,6 +187,93 @@ namespace fast_task::util {
             io_uring_sqe_set_data(sqe, reinterpret_cast<void*>(1));
         }
 
+        static void prepare_handle_sqe(io_shard& shard, native_worker_handle* h) {
+            io_uring_sqe* sqe = io_uring_get_sqe(&shard.ring);
+            if (!sqe) {
+                io_uring_submit(&shard.ring);
+                sqe = io_uring_get_sqe(&shard.ring);
+            }
+            switch (h->request_data.opcode) {
+            case operations::nop:
+                io_uring_prep_nop(sqe);
+                break;
+            case operations::connect:
+                io_uring_prep_connect(sqe, h->request_data.fd, h->request_data.addr_target.addr, h->request_data.addr_target.len);
+                break;
+            case operations::fast_connect:
+                io_uring_prep_connect(sqe, h->request_data.fd, h->request_data.addr_target.addr, h->request_data.addr_target.len);
+                io_uring_sqe_set_data(sqe, nullptr);
+                sqe->flags |= IOSQE_IO_LINK;
+                sqe = io_uring_get_sqe(&shard.ring);
+                io_uring_prep_recv(sqe, h->request_data.fd, const_cast<void*>(h->request_data.b.buf), h->request_data.b.len, 0);
+                break;
+            case operations::recv:
+                io_uring_prep_recv(sqe, h->request_data.fd, const_cast<void*>(h->request_data.b.buf), h->request_data.b.len, h->request_data.flags);
+                break;
+            case operations::send:
+                io_uring_prep_send(sqe, h->request_data.fd, h->request_data.b.buf, h->request_data.b.len, h->request_data.flags);
+                break;
+            case operations::close:
+                io_uring_prep_close(sqe, h->request_data.fd);
+                break;
+            case operations::accept:
+                io_uring_prep_accept(sqe, h->request_data.fd, h->request_data.addr_recv.addr, h->request_data.addr_recv.len, h->request_data.flags);
+                break;
+            case operations::recvmsg:
+                io_uring_prep_recvmsg(sqe, h->request_data.fd, h->request_data.pMsg, h->request_data.flags);
+                break;
+            case operations::sendmsg:
+                io_uring_prep_sendmsg(sqe, h->request_data.fd, h->request_data.pMsg, h->request_data.flags);
+                break;
+            case operations::sendfile: {
+                io_uring_prep_splice(sqe, h->request_data.splice_fds.file_fd, (int64_t)h->request_data.offset, h->request_data.splice_fds.pipe_wfd, -1, h->request_data.splice_fds.len, SPLICE_F_MOVE);
+                io_uring_sqe_set_data(sqe, nullptr);
+                sqe->flags |= IOSQE_IO_LINK;
+                sqe = io_uring_get_sqe(&shard.ring);
+                io_uring_prep_splice(sqe, h->request_data.splice_fds.pipe_rfd, -1, h->request_data.fd, -1, h->request_data.splice_fds.len, SPLICE_F_MOVE);
+                break;
+            }
+            case operations::sendv_file: {
+                if (h->request_data.send_file_v.prefix_len > 0) {
+                    io_uring_prep_send(sqe, h->request_data.fd, h->request_data.send_file_v.prefix, h->request_data.send_file_v.prefix_len, 0);
+                    io_uring_sqe_set_data(sqe, nullptr);
+                    sqe->flags |= IOSQE_IO_LINK;
+                    sqe = io_uring_get_sqe(&shard.ring);
+                }
+                io_uring_prep_splice(sqe, h->request_data.splice_fds.file_fd, (int64_t)h->request_data.offset, h->request_data.splice_fds.pipe_wfd, -1, h->request_data.splice_fds.len, SPLICE_F_MOVE);
+                io_uring_sqe_set_data(sqe, nullptr);
+                sqe->flags |= IOSQE_IO_LINK;
+                sqe = io_uring_get_sqe(&shard.ring);
+                io_uring_prep_splice(sqe, h->request_data.splice_fds.pipe_rfd, -1, h->request_data.fd, -1, h->request_data.splice_fds.len, SPLICE_F_MOVE);
+                if (h->request_data.send_file_v.postfix_len > 0) {
+                    io_uring_sqe_set_data(sqe, nullptr);
+                    sqe->flags |= IOSQE_IO_LINK;
+                    sqe = io_uring_get_sqe(&shard.ring);
+                    io_uring_prep_send(sqe, h->request_data.fd, h->request_data.send_file_v.postfix, h->request_data.send_file_v.postfix_len, 0);
+                }
+                break;
+            }
+            case operations::read:
+                io_uring_prep_read(sqe, h->request_data.fd, const_cast<void*>(h->request_data.b.buf), h->request_data.b.len, h->request_data.offset);
+                break;
+            case operations::write:
+                io_uring_prep_write(sqe, h->request_data.fd, h->request_data.b.buf, h->request_data.b.len, h->request_data.offset);
+                break;
+            case operations::readv:
+                io_uring_prep_readv(sqe, h->request_data.fd, h->request_data.vector.iovs, h->request_data.vector.iovcnt, h->request_data.offset);
+                break;
+            case operations::writev:
+                io_uring_prep_writev(sqe, h->request_data.fd, h->request_data.vector.iovs, h->request_data.vector.iovcnt, h->request_data.offset);
+                break;
+            case operations::poll_add:
+                io_uring_prep_poll_add(sqe, h->request_data.fd, (uint32_t)(unsigned short)h->request_data.mask);
+                break;
+            default:
+                break;
+            }
+            io_uring_sqe_set_data(sqe, h);
+        }
+
         static void dispatch(io_shard& shard) {
             pthread_setname_np(pthread_self(), "native_dispatcher");
             native_worker_handle* handles[256];
@@ -195,95 +283,21 @@ namespace fast_task::util {
             while (true) {
                 size_t count = shard.queue.try_dequeue_bulk(handles, 256);
 
-                for (size_t i = 0; i < count; ++i) {
-                    io_uring_sqe* sqe = io_uring_get_sqe(&shard.ring);
-                    auto* h = handles[i];
+                for (size_t i = 0; i < count; ++i)
+                    prepare_handle_sqe(shard, handles[i]);
 
-                    switch (h->request_data.opcode) {
-                    case operations::nop:
-                        io_uring_prep_nop(sqe);
-                        break;
-                    case operations::connect:
-                        io_uring_prep_connect(sqe, h->request_data.fd, h->request_data.addr_target.addr, h->request_data.addr_target.len);
-                        break;
-                    case operations::fast_connect:
-                        io_uring_prep_connect(sqe, h->request_data.fd, h->request_data.addr_target.addr, h->request_data.addr_target.len);
-                        io_uring_sqe_set_data(sqe, nullptr);
-                        sqe->flags |= IOSQE_IO_LINK;
-                        sqe = io_uring_get_sqe(&shard.ring);
-                        io_uring_prep_recv(sqe, h->request_data.fd, const_cast<void*>(h->request_data.b.buf), h->request_data.b.len, 0);
-                        break;
-                    case operations::recv:
-                        io_uring_prep_recv(sqe, h->request_data.fd, const_cast<void*>(h->request_data.b.buf), h->request_data.b.len, h->request_data.flags);
-                        break;
-                    case operations::send:
-                        io_uring_prep_send(sqe, h->request_data.fd, h->request_data.b.buf, h->request_data.b.len, h->request_data.flags);
-                        break;
-                    case operations::close:
-                        io_uring_prep_close(sqe, h->request_data.fd);
-                        break;
-                    case operations::accept:
-                        io_uring_prep_accept(sqe, h->request_data.fd, h->request_data.addr_recv.addr, h->request_data.addr_recv.len, h->request_data.flags);
-                        break;
-                    case operations::recvmsg:
-                        io_uring_prep_recvmsg(sqe, h->request_data.fd, h->request_data.pMsg, h->request_data.flags);
-                        break;
-                    case operations::sendmsg:
-                        io_uring_prep_sendmsg(sqe, h->request_data.fd, h->request_data.pMsg, h->request_data.flags);
-                        break;
-                    case operations::sendfile: {
-                        io_uring_prep_splice(sqe, h->request_data.splice_fds.file_fd, (int64_t)h->request_data.offset, h->request_data.splice_fds.pipe_wfd, -1, h->request_data.splice_fds.len, SPLICE_F_MOVE);
-                        io_uring_sqe_set_data(sqe, nullptr);
-                        sqe->flags |= IOSQE_IO_LINK;
-                        sqe = io_uring_get_sqe(&shard.ring);
-                        io_uring_prep_splice(sqe, h->request_data.splice_fds.pipe_rfd, -1, h->request_data.fd, -1, h->request_data.splice_fds.len, SPLICE_F_MOVE);
-                        break;
-                    }
-                    case operations::sendv_file: {
-                        if (h->request_data.send_file_v.prefix_len > 0) {
-                            io_uring_prep_send(sqe, h->request_data.fd, h->request_data.send_file_v.prefix, h->request_data.send_file_v.prefix_len, 0);
-                            io_uring_sqe_set_data(sqe, nullptr);
-                            sqe->flags |= IOSQE_IO_LINK;
-                            sqe = io_uring_get_sqe(&shard.ring);
-                        }
-                        io_uring_prep_splice(sqe, h->request_data.splice_fds.file_fd, (int64_t)h->request_data.offset, h->request_data.splice_fds.pipe_wfd, -1, h->request_data.splice_fds.len, SPLICE_F_MOVE);
-                        io_uring_sqe_set_data(sqe, nullptr);
-                        sqe->flags |= IOSQE_IO_LINK;
-                        sqe = io_uring_get_sqe(&shard.ring);
-                        io_uring_prep_splice(sqe, h->request_data.splice_fds.pipe_rfd, -1, h->request_data.fd, -1, h->request_data.splice_fds.len, SPLICE_F_MOVE);
-                        if (h->request_data.send_file_v.postfix_len > 0) {
-                            io_uring_sqe_set_data(sqe, nullptr);
-                            sqe->flags |= IOSQE_IO_LINK;
-                            sqe = io_uring_get_sqe(&shard.ring);
-                            io_uring_prep_send(sqe, h->request_data.fd, h->request_data.send_file_v.postfix, h->request_data.send_file_v.postfix_len, 0);
-                        }
-                        break;
-                    }
-
-                    case operations::read:
-                        io_uring_prep_read(sqe, h->request_data.fd, const_cast<void*>(h->request_data.b.buf), h->request_data.b.len, h->request_data.offset);
-                        break;
-                    case operations::write:
-                        io_uring_prep_write(sqe, h->request_data.fd, h->request_data.b.buf, h->request_data.b.len, h->request_data.offset);
-                        break;
-                    case operations::readv:
-                        io_uring_prep_readv(sqe, h->request_data.fd, h->request_data.vector.iovs, h->request_data.vector.iovcnt, h->request_data.offset);
-                        break;
-                    case operations::writev:
-                        io_uring_prep_writev(sqe, h->request_data.fd, h->request_data.vector.iovs, h->request_data.vector.iovcnt, h->request_data.offset);
-                        break;
-                    case operations::poll_add:
-                        io_uring_prep_poll_add(sqe, h->request_data.fd, (uint32_t)(unsigned short)h->request_data.mask);
-                        break;
-                    default:
-                        break;
-                    }
-                    io_uring_sqe_set_data(sqe, h);
+                shard.is_sleeping.store(true, std::memory_order_seq_cst);
+                count = shard.queue.try_dequeue_bulk(handles, 256);
+                if (count > 0) {
+                    shard.is_sleeping.store(false, std::memory_order_relaxed);
+                    for (size_t i = 0; i < count; ++i)
+                        prepare_handle_sqe(shard, handles[i]);
+                    io_uring_submit(&shard.ring);
+                    continue;
                 }
 
-                shard.is_sleeping.store(true, std::memory_order_release);
                 io_uring_submit_and_wait(&shard.ring, 1);
-                shard.is_sleeping.store(false, std::memory_order_acquire);
+                shard.is_sleeping.store(false, std::memory_order_relaxed);
 
                 io_uring_cqe* cqe;
                 unsigned head;
@@ -296,6 +310,10 @@ namespace fast_task::util {
                     if (user_data == 1) {
                         uint64_t val;
                         read(shard.wakeup_eventfd, &val, sizeof(val));
+                        if (shard.stop_flag.load(std::memory_order_acquire)) {
+                            io_uring_cq_advance(&shard.ring, cqe_count);
+                            return;
+                        }
                         arm_wakeup(shard);
                         continue;
                     }
@@ -326,7 +344,7 @@ namespace fast_task::util {
             auto& instance = get_instance();
             auto& shard = instance.get_shard(hFile);
             shard.queue.enqueue(handle);
-            if (shard.is_sleeping.load(std::memory_order_relaxed)) {
+            if (shard.is_sleeping.load(std::memory_order_seq_cst)) {
                 uint64_t val = 1;
                 write(shard.wakeup_eventfd, &val, sizeof(val));
             }
@@ -334,6 +352,11 @@ namespace fast_task::util {
 
     public:
         ~native_workers_singleton() {
+            for (auto& pool : io_pool) {
+                pool->stop_flag.store(true, std::memory_order_release);
+                uint64_t val = 1;
+                write(pool->wakeup_eventfd, &val, sizeof(val));
+            }
             for (auto& pool : io_pool)
                 pool->dispatcher_thread.join();
         }

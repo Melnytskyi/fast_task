@@ -2044,121 +2044,137 @@ namespace fast_task::net {
 
     #pragma region DNS
 
-    // Heap-allocated state for an async DNS resolution (c-ares + io_uring poll_add).
-    // opaque_network_state stores a raw pointer to resolve_state; the state is
-    // reference-counted and deletes itself when all pending io_uring polls have fired.
+    struct resolve_state : public native_state, public util::native_worker_manager {
+        ares_channel channel = nullptr;
+        address* out_single = nullptr;
+        std::vector<address>* out_multi = nullptr;
+        char port_buf[16]{};
 
-    struct resolve_state;
+        std::atomic<int> pending_polls{0};
+        std::atomic_flag processing{};
+        address::family preferred_family = address::family::none;
+        bool done = false;
 
-    struct ares_poll_handle : public util::native_worker_handle {
-        resolve_state* state;
-        ares_socket_t  ares_fd;
-        short          events;
+        struct sock_poll_handle : public util::native_worker_handle {
+            resolve_state* state;
+            ares_socket_t fd;
+            int events;
+            bool is_active;
+            sock_poll_handle* next;
 
-        ares_poll_handle(resolve_state* s, ares_socket_t fd, short ev);
-    };
+            sock_poll_handle(resolve_state* s, ares_socket_t f)
+                : util::native_worker_handle(s), state(s), fd(f), events(0), is_active(false), next(nullptr) {}
+        };
 
-    struct resolve_state : public util::native_worker_manager {
-        std::atomic_flag    processing{};               // spinlock: serialises ares_process_fd
-        bool                done          = false;
-        address::family     preferred_family = address::family::none;
-        int                 error         = 0;
-        std::atomic<int>    pending_polls {0};
-        std::atomic<int>    ref_count     {1};          // 1 per pending poll handle + 1 initial
-        char*               host_buf      = nullptr;   // heap copy, freed in callback
-        char*               service_buf   = nullptr;   // heap copy, freed in callback
-        ares_channel        channel       = nullptr;
-        address*            out_single    = nullptr;   // target for enter_resolve (single)
-        std::vector<address>* out_multi   = nullptr;   // target for enter_resolve_multiple
-        std::shared_ptr<task> awaiting_task;
+        sock_poll_handle* active_polls = nullptr;
 
-        void add_poll() {
-            ref_count.fetch_add(1, std::memory_order_relaxed);
-            pending_polls.fetch_add(1, std::memory_order_relaxed);
+        resolve_state() : native_state(this) {
         }
 
-        void release() {
-            if (ref_count.fetch_sub(1, std::memory_order_acq_rel) == 1)
-                delete this;
-        }
-
-        void submit_polls() {
-            ares_socket_t socks[ARES_GETSOCK_MAXNUM];
-            int bitmask = ares_getsock(channel, socks, ARES_GETSOCK_MAXNUM);
-            for (int i = 0; i < ARES_GETSOCK_MAXNUM; i++) {
-                bool rd = ARES_GETSOCK_READABLE(bitmask, i);
-                bool wr = ARES_GETSOCK_WRITABLE(bitmask, i);
-                if (!rd && !wr)
-                    continue;
-                short ev = 0;
-                if (rd) ev |= POLLIN;
-                if (wr) ev |= POLLOUT;
-                auto* ph = new ares_poll_handle(this, socks[i], ev);
-                add_poll();
-                util::native_workers_singleton::post_poll_add(ph, (int)socks[i], ev);
+        ~resolve_state() {
+            while (active_polls) {
+                auto* next = active_polls->next;
+                delete active_polls;
+                active_polls = next;
             }
         }
 
-        // Callback from io_uring when a polled fd becomes ready.
-        void handle(util::native_worker_handle* h, int32_t res, uint32_t) override {
-            auto* ph = static_cast<ares_poll_handle*>(h);
-            ares_socket_t fd = ph->ares_fd;
-            short         ev = ph->events;
-            delete ph;
+        void add_poll(sock_poll_handle* ph) {
+            ph->is_active = true;
+            pending_polls.fetch_add(1, std::memory_order_relaxed);
+            util::native_workers_singleton::post_poll_add(ph, ph->fd, ph->events);
+        }
 
-            std::shared_ptr<task> to_resume;
+        void handle(util::native_worker_handle* h, int32_t res, uint32_t) override {
+            auto* ph = static_cast<sock_poll_handle*>(h);
+            ares_socket_t fd = ph->fd;
 
             while (processing.test_and_set(std::memory_order_acquire))
-                ;   // brief spin; critical section is just one ares_process_fd call
+                ;
 
-            if (!done && channel) {
+            ph->is_active = false;
+
+            if (!done && channel && ph->events != 0) {
                 ares_socket_t rfd = ARES_SOCKET_BAD, wfd = ARES_SOCKET_BAD;
                 if (res > 0) {
-                    if (ev & POLLIN)  rfd = fd;
-                    if (ev & POLLOUT) wfd = fd;
+                    if (ph->events & POLLIN)
+                        rfd = fd;
+                    if (ph->events & POLLOUT)
+                        wfd = fd;
                 } else {
-                    // Error/hangup – pass fd to both sides so c-ares detects it
                     rfd = wfd = fd;
                 }
                 ares_process_fd(channel, rfd, wfd);
-                // ares_addrinfo_cb may have been called synchronously above,
-                // setting done=true and freeing host_buf/service_buf.
             }
-
-            if (done && channel) {
-                ares_destroy(channel);
-                channel = nullptr;
-            }
-
-            if (done)
-                to_resume = std::move(awaiting_task);
 
             int rem = pending_polls.fetch_sub(1, std::memory_order_acq_rel) - 1;
-            bool resubmit = (!done && rem == 0);
 
-            processing.clear(std::memory_order_release);
+            if (done) {
+                if (channel) {
+                    ares_destroy(channel);
+                    channel = nullptr;
+                }
 
-            // Resume task BEFORE release() – release() may delete 'this'.
-            if (to_resume) {
-                fast_task::lock_guard guard(get_data(to_resume).no_race);
-                transfer_task(std::move(to_resume));
-            } else if (resubmit && channel) {
-                submit_polls();
+                std::shared_ptr<task> to_resume;
+                if (rem == 0) {
+                    to_resume = std::move(awaiting_task);
+                }
+                processing.clear(std::memory_order_release);
+
+                if (to_resume) {
+                    fast_task::lock_guard guard(get_data(to_resume).no_race);
+                    transfer_task(std::move(to_resume));
+                }
+
+                if (rem == 0) {
+                    this->~resolve_state();
+                }
+                return;
+            } else {
+                if (ph->events != 0) {
+                    add_poll(ph);
+                }
             }
 
-            release();
+            processing.clear(std::memory_order_release);
         }
     };
 
-    inline ares_poll_handle::ares_poll_handle(resolve_state* s, ares_socket_t fd, short ev)
-        : util::native_worker_handle(s), state(s), ares_fd(fd), events(ev) {}
+    static_assert(sizeof(resolve_state) <= sizeof(opaque_network_state::data), "opaque_network_state::data too small for resolve_state");
 
-    // Stored inside opaque_network_state::data (just a pointer to the heap state).
-    struct resolve_ptr_state {
-        resolve_state* rs;
-    };
-    static_assert(sizeof(resolve_ptr_state) <= sizeof(opaque_network_state::data),
-                  "opaque_network_state::data too small for resolve_ptr_state");
+    static void ares_sock_state_cb(void* data, ares_socket_t socket_fd, int readable, int writable) {
+        auto* rs = static_cast<resolve_state*>(data);
+
+        int events = 0;
+        if (readable)
+            events |= POLLIN;
+        if (writable)
+            events |= POLLOUT;
+
+        resolve_state::sock_poll_handle* handle = nullptr;
+        for (auto* ph = rs->active_polls; ph; ph = ph->next) {
+            if (ph->fd == socket_fd) {
+                handle = ph;
+                break;
+            }
+        }
+
+        if (events == 0) {
+            if (handle) {
+                handle->events = 0;
+            }
+        } else {
+            if (!handle) {
+                handle = new resolve_state::sock_poll_handle(rs, socket_fd);
+                handle->next = rs->active_polls;
+                rs->active_polls = handle;
+            }
+            handle->events = events;
+            if (!handle->is_active) {
+                rs->add_poll(handle);
+            }
+        }
+    }
 
     static void ares_addrinfo_cb(void* arg, int status, int /*timeouts*/, struct ares_addrinfo* result) {
         auto* rs = static_cast<resolve_state*>(arg);
@@ -2167,8 +2183,10 @@ namespace fast_task::net {
             for (auto* node = result->nodes; node; node = node->ai_next) {
                 if (rs->preferred_family != address::family::none) {
                     address::family nf = address::family::none;
-                    if (node->ai_family == AF_INET)       nf = address::family::ipv4;
-                    else if (node->ai_family == AF_INET6) nf = address::family::ipv6;
+                    if (node->ai_family == AF_INET)
+                        nf = address::family::ipv4;
+                    else if (node->ai_family == AF_INET6)
+                        nf = address::family::ipv6;
                     if (nf != rs->preferred_family)
                         continue;
                 }
@@ -2186,85 +2204,69 @@ namespace fast_task::net {
             rs->error = status;
         }
 
-        // Free string copies now; do NOT call ares_destroy here (called after
-        // ares_process_fd returns, inside handle()).
-        free(rs->host_buf);    rs->host_buf    = nullptr;
-        free(rs->service_buf); rs->service_buf = nullptr;
-
         rs->done = true;
-        // Task will be resumed in handle() after ares_process_fd returns.
     }
 
-    static bool enter_resolve_impl(
+    static bool enter_resolve_impl( //TODO add timeout handling
         const std::shared_ptr<task>& t,
         opaque_network_state& state,
-        address*              out_single,
+        address* out_single,
         std::vector<address>* out_multi,
-        std::string_view      host,
-        std::string_view      service,
-        uint16_t              port_override,
-        address::family       preferred_family)
-    {
-        auto* rs = new resolve_state{};
-        rs->out_single       = out_single;
-        rs->out_multi        = out_multi;
+        std::string_view host,
+        std::string_view service,
+        uint16_t port_override,
+        address::family preferred_family
+    ) {
+        auto* rs = new (state.data) resolve_state();
+        rs->out_single = out_single;
+        rs->out_multi = out_multi;
         rs->preferred_family = preferred_family;
 
-        rs->host_buf = strndup(host.data(), host.size());
+        const char* service_ptr = nullptr;
         if (port_override != 0) {
-            char port_str[8];
-            snprintf(port_str, sizeof(port_str), "%u", (unsigned)port_override);
-            rs->service_buf = strdup(port_str);
-        } else {
-            rs->service_buf = strndup(service.data(), service.size());
-        }
+            snprintf(rs->port_buf, sizeof(rs->port_buf), "%u", (unsigned)port_override);
+            service_ptr = rs->port_buf;
+        } else if (!service.empty())
+            service_ptr = service.data();
 
-        ares_channel channel;
-        if (ares_init(&channel) != ARES_SUCCESS) {
-            free(rs->host_buf);
-            free(rs->service_buf);
-            delete rs;
-            return true;  // immediate completion (with error)
+        while (rs->processing.test_and_set(std::memory_order_acquire))
+            ;
+
+        struct ares_options options{};
+        int optmask = ARES_OPT_SOCK_STATE_CB;
+        options.sock_state_cb = ares_sock_state_cb;
+        options.sock_state_cb_data = rs;
+
+        if (ares_init_options(&rs->channel, &options, optmask) != ARES_SUCCESS) {
+            rs->error = EINVAL;
+            rs->processing.clear(std::memory_order_release);
+            rs->~resolve_state();
+            return true;
         }
-        rs->channel = channel;
 
         struct ares_addrinfo_hints hints{};
-        hints.ai_family   = AF_UNSPEC;
-        if (preferred_family == address::family::ipv4)      hints.ai_family = AF_INET;
-        else if (preferred_family == address::family::ipv6) hints.ai_family = AF_INET6;
+        hints.ai_family = AF_UNSPEC;
+        if (preferred_family == address::family::ipv4)
+            hints.ai_family = AF_INET;
+        else if (preferred_family == address::family::ipv6)
+            hints.ai_family = AF_INET6;
         hints.ai_socktype = SOCK_STREAM;
 
-        // ares_getaddrinfo may call ares_addrinfo_cb synchronously for numeric IPs.
-        ares_getaddrinfo(channel, rs->host_buf,
-                         rs->service_buf && rs->service_buf[0] ? rs->service_buf : nullptr,
-                         &hints, ares_addrinfo_cb, rs);
+        ares_getaddrinfo(rs->channel, host.data(), service_ptr, &hints, ares_addrinfo_cb, rs);
 
         if (rs->done) {
-            // Synchronous completion (numeric IP or cached) – no io_uring needed.
             if (rs->channel) {
                 ares_destroy(rs->channel);
                 rs->channel = nullptr;
             }
-            delete rs;
-            return true;
+            if (rs->pending_polls.load(std::memory_order_acquire) == 0) {
+                rs->processing.clear(std::memory_order_release);
+                rs->~resolve_state();
+                return true;
+            }
         }
-
-        // Async path: store pointer, set awaiting task, submit io_uring polls.
-        new (&state) resolve_ptr_state{rs};
         rs->awaiting_task = t;
-        rs->submit_polls();
-
-        if (rs->done && rs->pending_polls.load(std::memory_order_relaxed) == 0) {
-            // Resolved between getaddrinfo and submit_polls with no io_uring ops.
-            // awaiting_task was never used; resume synchronously.
-            rs->awaiting_task.reset();
-            delete rs;
-            // Clear the ptr we stored above
-            new (&state) resolve_ptr_state{nullptr};
-            return true;
-        }
-
-        rs->release();  // release initial ref; io_uring poll handles hold remaining refs
+        rs->processing.clear(std::memory_order_release);
         return false;
     }
 

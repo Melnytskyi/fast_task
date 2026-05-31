@@ -23,6 +23,7 @@
     #include <file.hpp>
     #include <task.hpp>
     #include <task/future.hpp>
+    #include <tasks/_internal.hpp>
     #include <tasks/util/native_workers_singleton.hpp>
     #include <variant>
     #include <vector>

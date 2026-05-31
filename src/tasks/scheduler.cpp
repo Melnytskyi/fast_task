@@ -179,8 +179,8 @@ namespace fast_task {
             relock_state_2.relock_end();
             auto& post_relock_loc = get_loc();
             get_data(post_relock_loc.curr_task).awake_check++;
-            get_data(post_switch_loc.curr_task).time_end_flag = old_time_end_flag;
-            get_data(post_switch_loc.curr_task).awaked = old_awaked;
+            get_data(post_relock_loc.curr_task).time_end_flag = old_time_end_flag;
+            get_data(post_relock_loc.curr_task).awaked = old_awaked;
             post_relock_loc.context_in_swap = false;
             if (get_data(post_relock_loc.curr_task).invalid_switch_caught) {
                 get_data(post_relock_loc.curr_task).invalid_switch_caught = false;
