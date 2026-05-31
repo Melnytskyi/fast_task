@@ -235,7 +235,10 @@ namespace fast_task::file {
                 exception(io_errors::no_enough_quota);
                 return true;
             case ECANCELED:
+                exception(io_errors::operation_canceled);
+                return true;
             case EINTR:
+                ststd();
                 return false;
             case ESPIPE:
                 exception(io_errors::eof);

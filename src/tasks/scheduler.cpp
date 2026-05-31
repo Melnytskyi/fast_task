@@ -153,9 +153,10 @@ namespace fast_task {
                 relock_state_0.relock_end();
                 relock_state_1.relock_end();
                 relock_state_2.relock_end();
+                auto& post_relock_loc = get_loc();
 
-                post_switch_loc.curr_task = old_curr_task;
-                post_switch_loc.context_in_swap = old_context_in_swap;
+                post_relock_loc.curr_task = old_curr_task;
+                post_relock_loc.context_in_swap = old_context_in_swap;
                 throw;
             }
             auto& post_switch_loc = get_loc();

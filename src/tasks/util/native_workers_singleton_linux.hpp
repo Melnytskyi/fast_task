@@ -172,7 +172,18 @@ namespace fast_task::util {
 
                 struct io_uring_params params;
                 std::memset(&params, 0, sizeof(params));
-                if (io_uring_queue_init_params(1024, &shard.ring, &params) < 0) {
+                int uring_ret;
+                for (int attempt = 0; attempt < 5; ++attempt) {
+                    uring_ret = io_uring_queue_init_params(1024, &shard.ring, &params);
+                    if (uring_ret == 0)
+                        break;
+                    if (uring_ret != -ENOMEM)
+                        break;
+                    struct timespec ts = {0, 10000000};
+                    nanosleep(&ts, nullptr);
+                }
+                if (uring_ret < 0) {
+                    fprintf(stderr, "io_uring_queue_init_params failed: %s (ret=%d)\n", strerror(-uring_ret), uring_ret);
                     assert(false && "io_uring_queue_init_params failed with the error");
                     std::terminate();
                 }
