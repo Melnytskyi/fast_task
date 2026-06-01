@@ -9,9 +9,47 @@
 #include "../shared.hpp"
 #include "../task/task.hpp"
 #include "promise.hpp"
+#include <concepts>
 #include <variant>
 
 namespace fast_task {
+    namespace detail {
+        struct FT_API task_result_awaiter {
+            std::shared_ptr<task> t;
+
+            bool await_ready() noexcept {
+                return t->is_ended();
+            }
+
+            template <class Promise>
+            bool await_suspend(std::coroutine_handle<Promise> h) {
+                if constexpr (std::derived_from<Promise, task_promise_base>) {
+                    return !t->enter_wait(h.promise().task_object);
+                } else {
+                    auto on_start_resume = [](void* handle_addr) {
+                        std::coroutine_handle<>::from_address(handle_addr).resume();
+                    };
+                    auto on_nop = [](void*) {};
+                    auto bridge_task = std::make_shared<fast_task::task>(
+                        h.address(),
+                        on_start_resume,
+                        on_nop,
+                        on_nop,
+                        on_nop,
+                        false,
+                        true
+                    );
+                    if (t->is_ended())
+                        return false;
+                    t->callback(bridge_task);
+                    return true;
+                }
+            }
+
+            void await_resume() {}
+        };
+    }
+
     template <class T>
     struct task_promise final : public task_promise_base {
         task_promise() noexcept {}
@@ -107,13 +145,11 @@ namespace fast_task {
             std::coroutine_handle<> h_frame = h_promise;
 
             auto on_start = [](void* handle_addr) {
-                auto h = std::coroutine_handle<>::from_address(handle_addr);
-                h.resume();
+                std::coroutine_handle<>::from_address(handle_addr).resume();
             };
 
             auto on_destruct = [](void* handle_addr) {
-                auto h = std::coroutine_handle<>::from_address(handle_addr);
-                h.destroy();
+                std::coroutine_handle<>::from_address(handle_addr).destroy();
             };
 
             task_object = std::make_shared<task>(
@@ -171,13 +207,11 @@ namespace fast_task {
             std::coroutine_handle<> h_frame = h_promise;
 
             auto on_start = [](void* handle_addr) {
-                auto h = std::coroutine_handle<>::from_address(handle_addr);
-                h.resume();
+                std::coroutine_handle<>::from_address(handle_addr).resume();
             };
 
             auto on_destruct = [](void* handle_addr) {
-                auto h = std::coroutine_handle<>::from_address(handle_addr);
-                h.destroy();
+                std::coroutine_handle<>::from_address(handle_addr).destroy();
             };
 
             task_object = std::make_shared<task>(
@@ -225,6 +259,57 @@ namespace fast_task {
 
     template <class T>
     class [[nodiscard]] task_coro {
+        struct result_awaiter {
+            std::shared_ptr<fast_task::task> task_handle;
+
+            bool await_ready() noexcept {
+                return task_handle->is_ended();
+            }
+
+            template <class Promise>
+            bool await_suspend(std::coroutine_handle<Promise> h) {
+                if constexpr (std::derived_from<Promise, task_promise_base>) {
+                    return !task_handle->enter_wait(h.promise().task_object);
+                } else {
+                    auto on_start_resume = [](void* handle_addr) {
+                        std::coroutine_handle<>::from_address(handle_addr).resume();
+                    };
+                    auto on_nop = [](void*) {};
+                    auto bridge_task = std::make_shared<fast_task::task>(
+                        h.address(),
+                        on_start_resume,
+                        on_nop,
+                        on_nop,
+                        on_nop,
+                        false,
+                        true
+                    );
+                    if (task_handle->is_ended())
+                        return false;
+                    task_handle->callback(bridge_task);
+                    return true;
+                }
+            }
+
+            auto await_resume() {
+                void* handle_address = nullptr;
+                task_handle->access_dummy([&](void* data) {
+                    handle_address = data;
+                });
+
+                if (!handle_address)
+                    throw std::runtime_error("Coroutine task has no valid handle address.");
+
+                auto handle = std::coroutine_handle<fast_task::task_promise<T>>::from_address(handle_address);
+                fast_task::task_promise<T>& promise = handle.promise();
+                if constexpr (!std::is_same_v<T, void>) {
+                    return std::move(promise.result());
+                } else {
+                    promise.result();
+                }
+            }
+        };
+
     public:
         using promise_type = fast_task::task_promise<T>;
 
@@ -251,94 +336,25 @@ namespace fast_task {
         }
 
         auto operator co_await() const& noexcept {
-            struct result_awaiter {
-                std::shared_ptr<fast_task::task> task_handle;
-
-                bool await_ready() noexcept {
-                    return task_handle->is_ended();
-                }
-
-                bool await_suspend(std::coroutine_handle<> h) {
-                    auto on_start_resume = [](void* handle_addr) {
-                        auto awaiting_handle = std::coroutine_handle<>::from_address(handle_addr);
-                        awaiting_handle.resume();
-                    };
-
-                    auto on_nop = [](void* handle_addr) {};
-
-                    auto bridge_task = std::make_shared<fast_task::task>(
-                        h.address(),
-                        on_start_resume,
-                        on_nop,
-                        on_nop,
-                        on_nop,
-                        false,
-                        true
-                    );
-                    if (task_handle->is_ended())
-                        return false;
-                    task_handle->callback(bridge_task);
-                    return true;
-                }
-
-                auto await_resume() {
-                    void* handle_address = nullptr;
-                    task_handle->access_dummy([&](void* data) {
-                        handle_address = data;
-                    });
-
-                    if (!handle_address)
-                        throw std::runtime_error("Coroutine task has no valid handle address.");
-
-                    auto handle = std::coroutine_handle<fast_task::task_promise<T>>::from_address(handle_address);
-                    fast_task::task_promise<T>& promise = handle.promise();
-                    if constexpr (!std::is_same_v<T, void>) {
-                        return std::move(promise.result());
-                    } else {
-                        promise.result();
-                    }
-                }
-            };
-
             return result_awaiter{task_handle};
+        }
+
+        template <class U = T>
+        U sync_get() const {
+            task_handle->await_task();
+            if constexpr (!std::is_same_v<U, void>) {
+                T result{};
+                task_handle->access_dummy([&result](void* addr) {
+                    auto h = std::coroutine_handle<fast_task::task_promise<T>>::from_address(addr);
+                    result = h.promise().result();
+                });
+                return result;
+            }
         }
     };
 
-    inline auto operator co_await(std::shared_ptr<task>&& t) noexcept {
-        struct FT_API result_awaiter {
-            std::shared_ptr<task> t;
-
-            bool await_ready() noexcept {
-                return t->is_ended();
-            }
-
-            bool await_suspend(std::coroutine_handle<> h) {
-                auto on_start_resume = [](void* handle_addr) {
-                    auto awaiting_handle = std::coroutine_handle<>::from_address(handle_addr);
-                    awaiting_handle.resume();
-                };
-
-                auto on_nop = [](void* handle_addr) {};
-
-                auto bridge_task = std::make_shared<fast_task::task>(
-                    h.address(),
-                    on_start_resume,
-                    on_nop,
-                    on_nop,
-                    on_nop,
-                    false,
-                    true
-                );
-                if (t->is_ended())
-                    return false;
-                t->callback(bridge_task);
-                return true;
-            }
-
-            void await_resume() {}
-        };
-
-        return result_awaiter{std::move(t)};
+    inline auto operator co_await(const std::shared_ptr<task>& t) noexcept {
+        return detail::task_result_awaiter{t};
     }
 
     template <class T>

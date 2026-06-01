@@ -12,7 +12,7 @@ namespace fast_task::this_task {
             }
 
             bool await_suspend(base_coro_handle h) {
-                return enter_yield();
+                return !enter_yield();
             }
 
             void await_resume() {}
@@ -30,7 +30,7 @@ namespace fast_task::this_task {
             }
 
             bool await_suspend(base_coro_handle h) {
-                return enter_sleep_until(time_point);
+                return !enter_sleep_until(time_point);
             }
 
             void await_resume() {}
@@ -41,7 +41,7 @@ namespace fast_task::this_task {
 
     template <class Rep, class Period>
     [[nodiscard]] inline auto async_sleep_for(task_limiter& mut, const std::chrono::duration<Rep, Period>& duration) {
-        return enter_sleep_until(mut, std::chrono::high_resolution_clock::now() + duration);
+        return async_sleep_until(mut, std::chrono::high_resolution_clock::now() + duration);
     }
 }
 

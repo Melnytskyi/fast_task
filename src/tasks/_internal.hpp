@@ -22,6 +22,14 @@
         #define PLATFORM_UNKNOWN
     #endif
 
+    #if defined(_MSC_VER)
+        #define NOINLINE __declspec(noinline)
+    #elif defined(__GNUC__) || defined(__clang__)
+        #define NOINLINE __attribute__((noinline))
+    #else
+        #define NOINLINE
+    #endif
+
 
     #include <barrier>
     #include <boost/context/continuation.hpp>
@@ -201,6 +209,15 @@ namespace fast_task {
         bool is_task_thread : 1 = false;
         bool context_in_swap : 1 = false;
         bool yield_request : 1 = false;
+
+        struct {
+    #if FT_TASK_TRANSFERS_LIMIT > 0
+            std::atomic_size_t transfers = 0;
+    #endif
+            std::shared_ptr<task> pending = nullptr;
+        } transfer_state;
+
+        void reset();
     };
 
     struct FT_API_LOCAL timing {
@@ -263,7 +280,8 @@ namespace fast_task {
         fast_task::mutex stw_mutex;
     };
 
-    extern thread_local FT_API_LOCAL executors_local loc;
+    NOINLINE executors_local& get_loc() noexcept;
+
     extern FT_API_LOCAL executor_global glob;
     constexpr size_t native_thread_flag = size_t(1) << (sizeof(size_t) * 8 - 1);
 
@@ -321,8 +339,6 @@ namespace fast_task {
     bool FT_API_LOCAL can_be_scheduled_task_to_hot();
     void FT_API_LOCAL forceCancelCancellation(const task_cancellation& restart);
 
-    void FT_API_LOCAL __install_signal_handler_mem();
-
     bool FT_API_LOCAL _set_name_thread_dbg(const std::string& name, unsigned long thread_id);
     bool FT_API_LOCAL _set_name_thread_dbg(const std::string& name);
     std::string FT_API_LOCAL _get_name_thread_dbg(unsigned long thread_id);
@@ -350,7 +366,7 @@ namespace fast_task {
     FT_DEBUG_ONLY(void FT_API_LOCAL unregister_object(deadline_timer*));
 
 
-    std::default_random_engine& FT_API_LOCAL get_thread_local_random_engine();
+    NOINLINE std::default_random_engine& FT_API_LOCAL get_thread_local_random_engine();
 }
 
 #endif

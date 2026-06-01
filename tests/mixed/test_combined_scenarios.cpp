@@ -4,10 +4,9 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
-#include <helpers.hpp>
-#include <coroutine.hpp>
-#include <future.hpp>
 #include <atomic>
+#include <coroutine.hpp>
+#include <helpers.hpp>
 
 class CombinedScenariosTest : public SchedulerFixture {};
 

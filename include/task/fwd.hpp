@@ -30,6 +30,9 @@ namespace fast_task {
     namespace debug {
         struct _debug_collect;
     }
+
+    template <class T>
+    class future;
 }
 
 #endif /* FAST_TASK_TASK_FWD */

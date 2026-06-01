@@ -21,8 +21,8 @@ namespace fast_task {
     }
 
     void task_recursive_mutex::lock() {
-        if (loc.is_task_thread) {
-            if (mutex.values.current_task == &*loc.curr_task) {
+        if (get_loc().is_task_thread) {
+            if (mutex.values.current_task == &*get_loc().curr_task) {
                 recursive_count++;
                 if (recursive_count == 0) {
                     recursive_count--;
@@ -47,8 +47,8 @@ namespace fast_task {
     }
 
     bool task_recursive_mutex::try_lock() {
-        if (loc.is_task_thread) {
-            if (mutex.values.current_task == &*loc.curr_task) {
+        if (get_loc().is_task_thread) {
+            if (mutex.values.current_task == &*get_loc().curr_task) {
                 recursive_count++;
                 if (recursive_count == 0) {
                     recursive_count--;
@@ -77,8 +77,8 @@ namespace fast_task {
     }
 
     bool task_recursive_mutex::try_lock_until(std::chrono::high_resolution_clock::time_point time_point) {
-        if (loc.is_task_thread) {
-            if (mutex.values.current_task == &*loc.curr_task) {
+        if (get_loc().is_task_thread) {
+            if (mutex.values.current_task == &*get_loc().curr_task) {
                 recursive_count++;
                 if (recursive_count == 0) {
                     recursive_count--;
@@ -111,8 +111,8 @@ namespace fast_task {
             recursive_count--;
             if (!recursive_count) {
                 fast_task::lock_guard lg0(mutex.values.no_race);
-                if (loc.is_task_thread) {
-                    if (mutex.values.current_task != &*loc.curr_task)
+                if (get_loc().is_task_thread) {
+                    if (mutex.values.current_task != &*get_loc().curr_task)
                         throw std::logic_error("Tried unlock non owned mutex");
                 } else if (mutex.values.current_task != reinterpret_cast<task*>((size_t)_thread_id() | native_thread_flag))
                     throw std::logic_error("Tried unlock non owned mutex");
@@ -159,8 +159,8 @@ namespace fast_task {
     }
 
     bool task_recursive_mutex::is_own() {
-        if (loc.is_task_thread) {
-            if (mutex.values.current_task == &*loc.curr_task)
+        if (get_loc().is_task_thread) {
+            if (mutex.values.current_task == &*get_loc().curr_task)
                 return true;
         } else if (mutex.values.current_task == reinterpret_cast<task*>((size_t)_thread_id() | native_thread_flag))
             return true;

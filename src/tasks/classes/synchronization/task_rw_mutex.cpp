@@ -21,23 +21,22 @@ namespace fast_task {
         }
     }
 
-#pragma optimize("", off)
 
     void task_rw_mutex::read_lock() {
-        if (loc.is_task_thread) {
-            get_data(loc.curr_task).awaked = false;
-            get_data(loc.curr_task).time_end_flag = false;
+        if (get_loc().is_task_thread) {
+            get_data(get_loc().curr_task).awaked = false;
+            get_data(get_loc().curr_task).time_end_flag = false;
 
             fast_task::lock_guard lg(values.no_race);
-            if (std::find(values.readers.begin(), values.readers.end(), &*loc.curr_task) != values.readers.end())
+            if (std::find(values.readers.begin(), values.readers.end(), &*get_loc().curr_task) != values.readers.end())
                 throw std::logic_error("Tried lock mutex twice");
-            if (values.current_writer_task == &*loc.curr_task)
+            if (values.current_writer_task == &*get_loc().curr_task)
                 throw std::logic_error("Tried lock write and then read mode");
             while (values.current_writer_task) {
-                values.resume_task.emplace_back(loc.curr_task, get_data(loc.curr_task).awake_check);
+                values.resume_task.emplace_back(get_loc().curr_task, get_data(get_loc().curr_task).awake_check);
                 swapCtxRelock(values.no_race);
             }
-            values.readers.push_back(&*loc.curr_task);
+            values.readers.push_back(&*get_loc().curr_task);
         } else {
             fast_task::unique_lock ul(values.no_race);
             fast_task::task* self_mask = reinterpret_cast<fast_task::task*>((size_t)_thread_id() | native_thread_flag);
@@ -46,7 +45,7 @@ namespace fast_task {
             while (values.current_writer_task) {
                 fast_task::condition_variable_any cd;
                 bool has_res = false;
-                values.resume_task.emplace_back(nullptr, 0, &cd, &has_res);
+                values.resume_task.emplace_back(nullptr, (uint16_t)0, &cd, &has_res);
                 while (!has_res) //-V654
                     cd.wait(ul);
             }
@@ -63,13 +62,13 @@ namespace fast_task {
             return false;
         else {
             task* self_mask;
-            if (loc.is_task_thread || loc.context_in_swap)
-                self_mask = &*loc.curr_task;
+            if (get_loc().is_task_thread || get_loc().context_in_swap)
+                self_mask = &*get_loc().curr_task;
             else
                 self_mask = reinterpret_cast<task*>((size_t)_thread_id() | native_thread_flag);
             if (std::find(values.readers.begin(), values.readers.end(), self_mask) != values.readers.end())
                 return false;
-            if (values.current_writer_task == &*loc.curr_task)
+            if (values.current_writer_task == &*get_loc().curr_task)
                 return false;
             values.readers.push_back(self_mask);
             return true;
@@ -78,17 +77,17 @@ namespace fast_task {
 
     bool task_rw_mutex::try_read_lock_until(std::chrono::high_resolution_clock::time_point time_point) {
         fast_task::unique_lock ul(values.no_race);
-        if (loc.is_task_thread) {
+        if (get_loc().is_task_thread) {
             while (values.current_writer_task) {
-                get_data(loc.curr_task).awaked = false;
-                get_data(loc.curr_task).time_end_flag = false;
-                values.resume_task.emplace_back(loc.curr_task, get_data(loc.curr_task).awake_check);
+                get_data(get_loc().curr_task).awaked = false;
+                get_data(get_loc().curr_task).time_end_flag = false;
+                values.resume_task.emplace_back(get_loc().curr_task, get_data(get_loc().curr_task).awake_check);
                 makeTimeWait(time_point);
-                swapCtxRelock(get_data(loc.curr_task).no_race, values.no_race);
-                auto awaked = get_data(loc.curr_task).awaked;
+                swapCtxRelock(get_data(get_loc().curr_task).no_race, values.no_race);
+                auto awaked = get_data(get_loc().curr_task).awaked;
                 resetTimeWait();
                 if (!awaked) {
-                    auto it = std::find_if(values.resume_task.begin(), values.resume_task.end(), [](const auto& a) { return a.task == loc.curr_task; });
+                    auto it = std::find_if(values.resume_task.begin(), values.resume_task.end(), [](const auto& a) { return a.task == get_loc().curr_task; });
                     if (it != values.resume_task.end())
                         values.resume_task.erase(it);
                     return false;
@@ -98,7 +97,7 @@ namespace fast_task {
             while (values.current_writer_task) {
                 fast_task::condition_variable_any cd;
                 bool has_res = false;
-                auto& rs_task = values.resume_task.emplace_back(nullptr, 0, &cd, &has_res);
+                auto& rs_task = values.resume_task.emplace_back(nullptr, (uint16_t)0, &cd, &has_res);
                 while (!has_res) { //-V654
                     if (cd.wait_until(ul, time_point) == cv_status::timeout) {
                         rs_task.native_cv = nullptr;
@@ -109,13 +108,13 @@ namespace fast_task {
         }
         {
             task* self_mask;
-            if (loc.is_task_thread || loc.context_in_swap)
-                self_mask = &*loc.curr_task;
+            if (get_loc().is_task_thread || get_loc().context_in_swap)
+                self_mask = &*get_loc().curr_task;
             else
                 self_mask = reinterpret_cast<task*>((size_t)_thread_id() | native_thread_flag);
             if (std::find(values.readers.begin(), values.readers.end(), self_mask) != values.readers.end())
                 return false;
-            if (values.current_writer_task == &*loc.curr_task)
+            if (values.current_writer_task == &*get_loc().curr_task)
                 return false;
             values.readers.push_back(self_mask);
             return true;
@@ -128,8 +127,8 @@ namespace fast_task {
             throw std::logic_error("Tried unlock non owned mutex");
         else {
             task* self_mask;
-            if (loc.is_task_thread || loc.context_in_swap)
-                self_mask = &*loc.curr_task;
+            if (get_loc().is_task_thread || get_loc().context_in_swap)
+                self_mask = &*get_loc().curr_task;
             else
                 self_mask = reinterpret_cast<task*>((size_t)_thread_id() | native_thread_flag);
             auto it = std::find(values.readers.begin(), values.readers.end(), self_mask);
@@ -161,8 +160,8 @@ namespace fast_task {
 
     bool task_rw_mutex::is_read_locked() {
         task* self_mask;
-        if (loc.is_task_thread || loc.context_in_swap)
-            self_mask = &*loc.curr_task;
+        if (get_loc().is_task_thread || get_loc().context_in_swap)
+            self_mask = &*get_loc().curr_task;
         else
             self_mask = reinterpret_cast<task*>((size_t)_thread_id() | native_thread_flag);
         auto it = std::find(values.readers.begin(), values.readers.end(), self_mask);
@@ -170,37 +169,38 @@ namespace fast_task {
     }
 
     void task_rw_mutex::lifecycle_read_lock(std::shared_ptr<task>&& lock_task) {
-        if (get_data(lock_task).started)
-            throw std::logic_error("Task already started");
-        if (!get_data(lock_task).callbacks.on_start)
-            throw std::logic_error("lifecycle_lock requires the on_start variable to be set");
-        else if (!get_data(lock_task).callbacks.is_restartable)
-            throw std::logic_error("lifecycle_lock requires the restartable mode to be disabled");
-        else {
-            task::run([lock_task, this]() {
-                fast_task::read_lock guard(*this);
-                task::await_task(lock_task, true);
-            });
+        {
+            fast_task::lock_guard guard(get_data(lock_task).no_race);
+            if (get_data(lock_task).running || get_data(lock_task).end_of_life)
+                throw std::runtime_error("Task is running or completed and cannot be registered");
+            if (get_data(lock_task).started && (!get_data(lock_task).suspended && get_data(lock_task).is_on_scheduler))
+                throw std::runtime_error("Task is already in the scheduler queue");
+            if (!get_data(lock_task).callbacks.on_start)
+                throw std::logic_error("task_rw_mutex::lifecycle_read_lock requires the on_start callback to be set");
         }
+        task::run([lock_task, this]() {
+            fast_task::read_lock guard(*this);
+            task::await_task(lock_task, true);
+        });
     }
 
     void task_rw_mutex::write_lock() {
-        if (loc.is_task_thread) {
-            get_data(loc.curr_task).awaked = false;
-            get_data(loc.curr_task).time_end_flag = false;
+        if (get_loc().is_task_thread) {
+            get_data(get_loc().curr_task).awaked = false;
+            get_data(get_loc().curr_task).time_end_flag = false;
 
             fast_task::lock_guard lg(values.no_race);
-            if (values.current_writer_task == &*loc.curr_task)
+            if (values.current_writer_task == &*get_loc().curr_task)
                 throw std::logic_error("Tried lock mutex twice");
-            if (std::find(values.readers.begin(), values.readers.end(), &*loc.curr_task) != values.readers.end())
+            if (std::find(values.readers.begin(), values.readers.end(), &*get_loc().curr_task) != values.readers.end())
                 throw std::logic_error("Tried lock read and then write mode");
             while (values.current_writer_task) {
-                values.resume_task.emplace_back(loc.curr_task, get_data(loc.curr_task).awake_check);
+                values.resume_task.emplace_back(get_loc().curr_task, get_data(get_loc().curr_task).awake_check);
                 swapCtxRelock(values.no_race);
             }
-            values.current_writer_task = &*loc.curr_task;
+            values.current_writer_task = &*get_loc().curr_task;
             while (!values.readers.empty()) {
-                values.resume_task.emplace_back(loc.curr_task, get_data(loc.curr_task).awake_check);
+                values.resume_task.emplace_back(get_loc().curr_task, get_data(get_loc().curr_task).awake_check);
                 swapCtxRelock(values.no_race);
             }
         } else {
@@ -211,14 +211,14 @@ namespace fast_task {
             fast_task::condition_variable_any cd;
             bool has_res = false;
             while (values.current_writer_task) {
-                values.resume_task.emplace_back(nullptr, 0, &cd, &has_res);
+                values.resume_task.emplace_back(nullptr, (uint16_t)0, &cd, &has_res);
                 while (!has_res) //-V654
                     cd.wait(ul);
             }
             values.current_writer_task = self_mask;
             has_res = false;
             while (!values.readers.empty()) {
-                values.resume_task.emplace_back(nullptr, 0, &cd, &has_res);
+                values.resume_task.emplace_back(nullptr, (uint16_t)0, &cd, &has_res);
                 while (!has_res) //-V654
                     cd.wait(ul);
             }
@@ -232,8 +232,8 @@ namespace fast_task {
 
         if (values.current_writer_task || !values.readers.empty())
             return false;
-        else if (loc.is_task_thread || loc.context_in_swap)
-            values.current_writer_task = &*loc.curr_task;
+        else if (get_loc().is_task_thread || get_loc().context_in_swap)
+            values.current_writer_task = &*get_loc().curr_task;
         else
             values.current_writer_task = reinterpret_cast<task*>((size_t)_thread_id() | native_thread_flag);
         return true;
@@ -242,35 +242,35 @@ namespace fast_task {
     bool task_rw_mutex::try_write_lock_until(std::chrono::high_resolution_clock::time_point time_point) {
         fast_task::unique_lock ul(values.no_race);
 
-        if (loc.is_task_thread && !loc.context_in_swap) {
-            get_data(loc.curr_task).awaked = false;
-            get_data(loc.curr_task).time_end_flag = false;
+        if (get_loc().is_task_thread && !get_loc().context_in_swap) {
+            get_data(get_loc().curr_task).awaked = false;
+            get_data(get_loc().curr_task).time_end_flag = false;
             while (values.current_writer_task) {
                 fast_task::lock_guard guard(glob.task_timer_safety);
                 makeTimeWait_unsafe(time_point);
-                values.resume_task.emplace_back(loc.curr_task, get_data(loc.curr_task).awake_check);
+                values.resume_task.emplace_back(get_loc().curr_task, get_data(get_loc().curr_task).awake_check);
                 swapCtxRelock(glob.task_timer_safety, values.no_race);
-                auto awaked = get_data(loc.curr_task).awaked;
+                auto awaked = get_data(get_loc().curr_task).awaked;
                 resetTimeWait();
                 if (!awaked) {
-                    auto it = std::find_if(values.resume_task.begin(), values.resume_task.end(), [](const auto& a) { return a.task == loc.curr_task; });
+                    auto it = std::find_if(values.resume_task.begin(), values.resume_task.end(), [](const auto& a) { return a.task == get_loc().curr_task; });
                     if (it != values.resume_task.end())
                         values.resume_task.erase(it);
                     return false;
                 }
             }
-            values.current_writer_task = &*loc.curr_task;
+            values.current_writer_task = &*get_loc().curr_task;
 
             while (!values.readers.empty()) {
                 fast_task::lock_guard guard(glob.task_timer_safety);
                 makeTimeWait_unsafe(time_point);
-                values.resume_task.emplace_back(loc.curr_task, get_data(loc.curr_task).awake_check);
+                values.resume_task.emplace_back(get_loc().curr_task, get_data(get_loc().curr_task).awake_check);
                 swapCtxRelock(glob.task_timer_safety, values.no_race);
-                auto awaked = get_data(loc.curr_task).awaked;
+                auto awaked = get_data(get_loc().curr_task).awaked;
                 resetTimeWait();
                 if (!awaked) {
                     values.current_writer_task = nullptr;
-                    auto it = std::find_if(values.resume_task.begin(), values.resume_task.end(), [](const auto& a) { return a.task == loc.curr_task; });
+                    auto it = std::find_if(values.resume_task.begin(), values.resume_task.end(), [](const auto& a) { return a.task == get_loc().curr_task; });
                     if (it != values.resume_task.end())
                         values.resume_task.erase(it);
                     return false;
@@ -282,7 +282,7 @@ namespace fast_task {
             fast_task::condition_variable_any cd;
             while (values.current_writer_task) {
                 has_res = false;
-                auto& rs_task = values.resume_task.emplace_back(nullptr, 0, &cd, &has_res);
+                auto& rs_task = values.resume_task.emplace_back(nullptr, (uint16_t)0, &cd, &has_res);
                 while (!has_res) { //-V654
                     if (cd.wait_until(ul, time_point) == cv_status::timeout) {
                         rs_task.native_cv = nullptr;
@@ -290,14 +290,14 @@ namespace fast_task {
                     }
                 }
             }
-            if (!loc.context_in_swap)
+            if (!get_loc().context_in_swap)
                 values.current_writer_task = reinterpret_cast<task*>((size_t)_thread_id() | native_thread_flag);
             else
-                values.current_writer_task = &*loc.curr_task;
+                values.current_writer_task = &*get_loc().curr_task;
 
             while (!values.readers.empty()) {
                 has_res = false;
-                auto& rs_task = values.resume_task.emplace_back(nullptr, 0, &cd, &has_res);
+                auto& rs_task = values.resume_task.emplace_back(nullptr, (uint16_t)0, &cd, &has_res);
                 while (!has_res) { //-V654
                     if (cd.wait_until(ul, time_point) == cv_status::timeout) {
                         rs_task.native_cv = nullptr;
@@ -313,8 +313,8 @@ namespace fast_task {
     void task_rw_mutex::write_unlock() {
         fast_task::unique_lock ul(values.no_race);
         task* self_mask;
-        if (loc.is_task_thread || loc.context_in_swap)
-            self_mask = &*loc.curr_task;
+        if (get_loc().is_task_thread || get_loc().context_in_swap)
+            self_mask = &*get_loc().curr_task;
         else
             self_mask = reinterpret_cast<task*>((size_t)_thread_id() | native_thread_flag);
 
@@ -341,30 +341,29 @@ namespace fast_task {
         }
     }
 
-#pragma optimize("", on)
-
     bool task_rw_mutex::is_write_locked() {
         task* self_mask;
-        if (loc.is_task_thread || loc.context_in_swap)
-            self_mask = &*loc.curr_task;
+        if (get_loc().is_task_thread || get_loc().context_in_swap)
+            self_mask = &*get_loc().curr_task;
         else
             self_mask = reinterpret_cast<task*>((size_t)_thread_id() | native_thread_flag);
         return values.current_writer_task == self_mask;
     }
 
     void task_rw_mutex::lifecycle_write_lock(std::shared_ptr<task>&& lock_task) {
-        if (get_data(lock_task).started)
-            throw std::logic_error("Task already started");
-        if (!get_data(lock_task).callbacks.on_start)
-            throw std::logic_error("lifecycle_lock requires the on_start variable to be set");
-        else if (!get_data(lock_task).callbacks.is_restartable)
-            throw std::logic_error("lifecycle_lock requires the restartable mode be to disabled");
-        else {
-            task::run([lock_task, this]() {
-                fast_task::write_lock guard(*this);
-                task::await_task(lock_task, true);
-            });
+        {
+            fast_task::lock_guard guard(get_data(lock_task).no_race);
+            if (get_data(lock_task).running || get_data(lock_task).end_of_life)
+                throw std::runtime_error("Task is running or completed and cannot be registered");
+            if (get_data(lock_task).started && (!get_data(lock_task).suspended && get_data(lock_task).is_on_scheduler))
+                throw std::runtime_error("Task is already in the scheduler queue");
+            if (!get_data(lock_task).callbacks.on_start)
+                throw std::logic_error("task_rw_mutex::lifecycle_write_lock requires the on_start callback to be set");
         }
+        task::run([lock_task, this]() {
+            fast_task::write_lock guard(*this);
+            task::await_task(lock_task, true);
+        });
     }
 
     bool task_rw_mutex::is_own() {

@@ -85,5 +85,5 @@ TEST(Allocator, AllocatorAllocateDeallocate) {
     for (int i = 0; i < 10; ++i)
         p[i] = i * 2;
     EXPECT_EQ(p[5], 10);
-    alloc.deallocate(p, 10);
+    (void)alloc.deallocate(p, 10);
 }

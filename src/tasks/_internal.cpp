@@ -16,7 +16,10 @@
 #endif
 
 namespace fast_task {
-    thread_local executors_local loc;
+    NOINLINE executors_local& get_loc() noexcept {
+        static thread_local executors_local loc;
+        return loc;
+    }
     executor_global glob;
 
     std::chrono::nanoseconds next_quantum(task_priority priority, std::chrono::nanoseconds& current_available_quantum) {
@@ -56,9 +59,16 @@ namespace fast_task {
         return true;
     }
 
-    std::default_random_engine& FT_API_LOCAL get_thread_local_random_engine() {
+    NOINLINE std::default_random_engine& FT_API_LOCAL get_thread_local_random_engine() {
         static thread_local std::default_random_engine engine(std::random_device{}());
         return engine;
+    }
+
+    void executors_local::reset() {
+        local_tasks.reset();
+        ex_ptr = nullptr;
+        curr_task.reset();
+        transfer_state.pending.reset();
     }
 
 #if PLATFORM_WINDOWS

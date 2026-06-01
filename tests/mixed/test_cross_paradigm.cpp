@@ -4,10 +4,9 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
-#include <helpers.hpp>
-#include <coroutine.hpp>
-#include <future.hpp>
 #include <atomic>
+#include <coroutine.hpp>
+#include <helpers.hpp>
 
 class CrossParadigmTest : public SchedulerFixture {};
 
@@ -78,7 +77,7 @@ TEST_F(CrossParadigmTest, NativeThreadWaitsOnFutureStartedByCoroutine) {
 fast_task::task_coro<void> coro_spawns_task(std::atomic<bool>& ran) {
     auto t = std::make_shared<fast_task::task>([&] { ran = true; });
     fast_task::scheduler::start(t);
-    co_await std::move(t);
+    co_await t;
 }
 
 TEST_F(CrossParadigmTest, CoroutineSpawnsAndAwaitsStackfulTask) {

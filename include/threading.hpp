@@ -308,6 +308,27 @@ namespace fast_task {
             start(0, false, std::forward<F>(f), std::forward<Args>(args)...);
         }
 
+        thread() {
+            _id = 0;
+            _thread = nullptr;
+        }
+
+        thread(thread&& other) noexcept
+            : _id(other._id), _thread(other._thread) {
+            other._id = 0;
+            other._thread = nullptr;
+        }
+
+        thread& operator=(thread&& other) noexcept {
+            if (joinable())
+                detach();
+            _id = other._id;
+            _thread = other._thread;
+            other._id = 0;
+            other._thread = nullptr;
+            return *this;
+        }
+
         ~thread() {
             if (_thread)
                 detach();

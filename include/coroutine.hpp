@@ -10,6 +10,7 @@
     #include "coroutine/condition_variable.hpp"
     #include "coroutine/core.hpp"
     #include "coroutine/deadline_timer.hpp"
+    #include "coroutine/future.hpp"
     #include "coroutine/helpers.hpp"
     #include "coroutine/mutex.hpp"
     #include "coroutine/mutex_unify.hpp"

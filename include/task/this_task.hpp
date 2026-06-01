@@ -17,12 +17,13 @@ namespace fast_task::this_task {
     void sleep_for(std::chrono::duration<Dur_resolution, Dur_type> duration) {
         sleep_until(std::chrono::high_resolution_clock::now() + duration);
     }
-
+    
     void FT_API check_cancellation();
     bool FT_API is_cancellation_requested() noexcept;
     void FT_API self_cancel();
     bool FT_API is_task() noexcept;
     void FT_API the_coroutine_ended(const std::shared_ptr<task>&) noexcept;
+    bool FT_API transfer_to(const std::shared_ptr<task>& target);
 
 
     bool FT_API enter_sleep_until(std::chrono::high_resolution_clock::time_point time_point);

@@ -9,6 +9,7 @@
     #define FAST_TASK_TASKS
     #include "task/condition_variable.hpp"
     #include "task/deadline_timer.hpp"
+    #include "task/future.hpp"
     #include "task/mutex.hpp"
     #include "task/mutex_unify.hpp"
     #include "task/query.hpp"

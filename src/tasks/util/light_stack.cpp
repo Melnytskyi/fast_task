@@ -6,9 +6,9 @@
 
 #include <algorithm>
 #include <atomic>
-#include <boost/lockfree/queue.hpp>
 #include <cassert>
 #include <concurrentqueue/moodycamel/concurrentqueue.h>
+#include <string.h>
 #include <vector>
 
 #include <tasks/_internal.hpp>
@@ -23,6 +23,8 @@ namespace fast_task {
     size_t light_stack::max_buffer_size = 0;
 }
 #if PLATFORM_WINDOWS
+    #define WIN32_LEAN_AND_MEAN
+    #define NOMINMAX
     #include <Windows.h>
 
     #ifndef FT_GUARD_PAGE_COUNT
@@ -43,7 +45,6 @@ namespace fast_task {
         if (!vp)
             throw std::bad_alloc();
 
-        // needs at least 3 pages to fully construct the coroutine and switch to it
         const auto init_commit_size = page_size * 3;
         auto pPtr = static_cast<PBYTE>(vp) + size;
         pPtr -= init_commit_size;
@@ -52,14 +53,13 @@ namespace fast_task {
             throw std::bad_alloc();
         }
 
-#if FT_GUARD_PAGE_COUNT > 0
-        // create guard page(s) so the OS can catch stack overflows (fast-fail)
+    #if FT_GUARD_PAGE_COUNT > 0
         pPtr -= guard_page_size;
         if (!VirtualAlloc(pPtr, guard_page_size, MEM_COMMIT, PAGE_READWRITE | PAGE_GUARD)) {
             VirtualFree(vp, size, MEM_FREE);
             throw std::bad_alloc();
         }
-#endif
+    #endif
 
         stack_context sctx;
         sctx.size = size;
@@ -71,9 +71,6 @@ namespace fast_task {
 
     stack_context light_stack::allocate() {
         const size_t guard_page_size = page_size * FT_GUARD_PAGE_COUNT;
-        // Allocate size + guard_page_size so the usable portion is exactly 'size',
-        // regardless of guard page configuration (a large FT_GUARD_PAGE_COUNT would
-        // otherwise consume the entire requested allocation).
         const size_t size__ = ((size + guard_page_size + page_size - 1) / page_size) * page_size;
 
         stack_context result;
@@ -136,30 +133,23 @@ namespace fast_task {
     static const size_t page_size = boost::context::stack_traits::page_size();
     static const size_t guard_page_size = page_size * FT_GUARD_PAGE_COUNT;
 
-    void __install_signal_handler_mem() {
-        // Guard pages serve as fast-fail sentinels only; no signal handler is installed.
-    }
-
-    //create proper guard page
     stack_context create_stack(size_t size) {
         size_t total_size = std::max(size, page_size * 3);
         void* vp = mmap(nullptr, total_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
         if (vp == MAP_FAILED)
             throw std::bad_alloc();
 
-#if FT_GUARD_PAGE_COUNT > 0
-        // Create PROT_NONE guard page(s) at the bottom of the stack.
-        // A stack overflow will trigger SIGSEGV, terminating the process fast.
+    #if FT_GUARD_PAGE_COUNT > 0
         if (mprotect(vp, guard_page_size, PROT_NONE) == -1) {
             munmap(vp, total_size);
             throw std::bad_alloc();
         }
-#endif
+    #endif
 
         if (RUNNING_ON_VALGRIND) {
-            void* stack_bottom = static_cast<uint8_t*>(vp) + guard_page_size;
-            void* stack_top = static_cast<uint8_t*>(vp) + total_size;
-            get_execution_data(loc.curr_task).valgrind_stack_id = VALGRIND_STACK_REGISTER(stack_bottom, stack_top);
+            [[maybe_unused]] void* stack_bottom = static_cast<uint8_t*>(vp) + guard_page_size;
+            [[maybe_unused]] void* stack_top = static_cast<uint8_t*>(vp) + total_size;
+            get_execution_data(get_loc().curr_task).valgrind_stack_id = VALGRIND_STACK_REGISTER(stack_bottom, stack_top);
         }
 
         stack_context sctx;
@@ -173,7 +163,7 @@ namespace fast_task {
             return;
 
         if (RUNNING_ON_VALGRIND)
-            VALGRIND_STACK_DEREGISTER(get_execution_data(loc.curr_task).valgrind_stack_id);
+            VALGRIND_STACK_DEREGISTER(get_execution_data(get_loc().curr_task).valgrind_stack_id);
 
         munmap(static_cast<char*>(sctx.sp) - sctx.size, sctx.size);
         sctx.sp = nullptr;
@@ -183,9 +173,6 @@ namespace fast_task {
     light_stack::light_stack(size_t size) BOOST_NOEXCEPT_OR_NOTHROW : size(size) {}
 
     stack_context light_stack::allocate() {
-        // Allocate size + guard_page_size so the usable portion is exactly 'size',
-        // regardless of guard page configuration (a large FT_GUARD_PAGE_COUNT would
-        // otherwise consume the entire requested allocation).
         const size_t size__ = ((size + guard_page_size + page_size - 1) / page_size) * page_size;
 
         stack_context result;

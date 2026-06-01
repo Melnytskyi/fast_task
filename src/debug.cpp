@@ -5,7 +5,7 @@
 // http://www.boost.org/LICENSE_1_0.txt)
 
 #include <debug.hpp>
-#include <files.hpp>
+#include <file.hpp>
 
 #include <atomic>
 #include <barrier>
@@ -68,6 +68,7 @@ namespace fast_task::debug {
     debug_data::debug_data(debug_registry& reg) : virtual_id(reg.task_id_counter++) {
         if (reg._init_stack_trace)
             init_trace = make_trace(1);
+        auto& loc = get_loc();
         created_by_is_native = !loc.is_task_thread;
         if (loc.is_task_thread)
             created_by_id = reg.task_instances.at(loc.curr_task.get()).virtual_id;
@@ -539,7 +540,7 @@ namespace fast_task::debug {
         return {};
     }
 
-    void enable_init_stack_trace(bool enable) {}
+    void enable_init_stack_trace(bool) {}
 
     std::string raw_stack_trace::entry::symbol() {
         return "";
@@ -644,7 +645,7 @@ namespace fast_task::debug {
             delete init_call_stack;
     }
 
-    void FT_API dump_stack_(files::async_iofstream& ii, raw_stack_trace& trace, size_t t_count) {
+    void FT_API dump_stack_(file::async_iofstream& ii, raw_stack_trace& trace, size_t t_count) {
         std::string space(t_count, '\t');
         ii << space << "Trace: " << std::endl;
         space += '\t';
@@ -652,7 +653,7 @@ namespace fast_task::debug {
             ii << space << it.symbol() << ':' << it.line() << '.' << it.column() << (it.is_inline() ? " (inline)" : "") << std::endl;
     }
 
-    void FT_API dump_await_(files::async_iofstream& ii, array<awake_item>& items, size_t t_count) {
+    void FT_API dump_await_(file::async_iofstream& ii, array<awake_item>& items, size_t t_count) {
         std::string space(t_count, '\t');
         ii << space << "Await items: " << std::endl;
         space += '\t';
@@ -663,7 +664,7 @@ namespace fast_task::debug {
                 ii << space << "id-" << it.id << ", awake_check-" << it.awake_check << std::endl;
     }
 
-    void FT_API dump_task_ids_(files::async_iofstream& ii, array<uintptr_t>& items, size_t t_count) {
+    void FT_API dump_task_ids_(file::async_iofstream& ii, array<uintptr_t>& items, size_t t_count) {
         std::string space(t_count + 1, '\t');
         for (auto& id : items)
             ii << space << id << std::endl;
@@ -671,7 +672,7 @@ namespace fast_task::debug {
 
     void FT_API save_program_state_dump(const char* path) {
         auto dump = dump_program_state();
-        files::async_iofstream ii(path, std::ios_base::trunc | std::ios_base::out);
+        file::async_iofstream ii(path, std::ios_base::trunc | std::ios_base::out);
 
         ii << "Program dump: " << std::endl;
         ii << "\tStart: " << std::chrono::system_clock::time_point(std::chrono::system_clock::duration(dump.start_timestamp)) << std::endl;

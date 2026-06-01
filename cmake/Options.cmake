@@ -1,0 +1,39 @@
+
+option(FAST_TASK_STATIC "Enable static build for fast task library" ON)
+option(FAST_TASK_BUILD_TESTS "Build the test suite" OFF)
+option(FAST_TASK_ENABLE_DEBUG_API "Enable the debugging and introspection API" OFF)
+option(FAST_TASK_ENABLE_ABORT_IF_ALREADY_STARTED "Abort if the task already started" OFF)
+option(FAST_TASK_ENABLE_ABORT_IF_NEVER_STARTED "Abort if task's destructor called before the task even started" OFF)
+option(FAST_TASK_ENABLE_PREEMPTIVE_SCHEDULER "Enables time sliced preemption for tasks, the tasks should use interrupt_unsafe_region on regions where preemption should be disabled." OFF)
+option(FAST_TASK_INCLUDE_THREAD_INTERRUPT_CODE "Allows the code to stop the thread and execute custom function on top of its stack, doesn't have effect if FAST_TASK_ENABLE_PREEMPTIVE_SCHEDULER enabled" ON)
+option(FAST_TASK_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
+
+set(FAST_TASK_GUARD_PAGE_COUNT 1 CACHE STRING
+  "Number of PROT_NONE (Linux) / PAGE_GUARD (Windows) pages placed at the bottom of each task stack. Set to 0 to disable guard pages entirely.")
+if(NOT FAST_TASK_GUARD_PAGE_COUNT MATCHES "^[0-9]+$")
+  message(FATAL_ERROR "FAST_TASK_GUARD_PAGE_COUNT must be a non-negative integer.")
+endif()
+
+
+set(FAST_TASK_TASK_TRANSFERS_LIMIT 8 CACHE 
+STRING 
+"Limits the count of the cooperative task transfers without making the context switch
+  - 0: No limit, the task can be transferred any number of times.
+  - N: The task can only be transferred N times, after that the transfer requests would be ignored.")
+
+if(NOT FAST_TASK_TASK_TRANSFERS_LIMIT MATCHES "^[0-9]+$")
+  message(FATAL_ERROR "FAST_TASK_TASK_TRANSFERS_LIMIT must be a non-negative integer.")
+endif()
+set(FAST_TASK_EXCEPTION_POLICY "NONE" CACHE 
+STRING 
+"Sets the exception handling policy for context switches:
+  - NONE: No checks.
+  - CHECK: abort if a context switch occurs in catch block or in other exception handling stage. (Has performance cost)
+  - PRESERVE: Preserve the exception on context switch and rethrow when switched back. (Has performance cost)")
+
+set_property(CACHE FAST_TASK_EXCEPTION_POLICY PROPERTY STRINGS "NONE" "CHECK" "PRESERVE")
+
+mark_as_advanced(FAST_TASK_ENABLE_PREEMPTIVE_SCHEDULER)
+mark_as_advanced(FAST_TASK_EXCEPTION_POLICY)
+mark_as_advanced(FAST_TASK_TASK_TRANSFERS_LIMIT)
+mark_as_advanced(FAST_TASK_GUARD_PAGE_COUNT)

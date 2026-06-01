@@ -4,16 +4,16 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 #include <functional>
-#include <future.hpp>
+#include <task/future.hpp>
 
 namespace fast_task {
-    template struct FT_API future<void>;
-
-    future<void>::~future() = default;
+    template class FT_API future<void>;
 
     std::shared_ptr<future<void>> future<void>::make_ready() {
         std::shared_ptr<future> future_ = std::make_shared<future>();
-        future_->_is_ready = true;
+        future_->task_ = task::callback_dummy(nullptr, nullptr, nullptr, nullptr, nullptr);
+        future_->task_->end_dummy([](auto) {});
+        future_->has_result = true;
         return future_;
     }
 
@@ -22,53 +22,45 @@ namespace fast_task {
     }
 
     void future<void>::take() {
-        get();
+        wait();
+    }
+    
+    void future<void>::callback(const std::shared_ptr<task>& task) {
+        task_->callback(task);
     }
 
-    bool future<void>::is_ready() const {
-        return _is_ready;
+    bool future<void>::is_ready() {
+        return task_->is_ended();
     }
 
     void future<void>::wait() {
-        mutex_unify um(task_mt);
-        fast_task::unique_lock lock(um);
-        while (!_is_ready)
-            task_cv.wait(lock);
+        if (!task_->is_ended())
+            task_->await_task();
         if (ex_ptr)
             std::rethrow_exception(ex_ptr);
-    }
-
-    bool future<void>::wait_for(std::chrono::milliseconds ms) {
-        return wait_until(std::chrono::high_resolution_clock::now() + ms);
+        if (task_->is_cancellation_requested())
+            throw std::runtime_error("Task has been canceled. Can not receive result.");
     }
 
     bool future<void>::wait_until(std::chrono::time_point<std::chrono::high_resolution_clock> time) {
-        mutex_unify um(task_mt);
-        fast_task::unique_lock lock(um);
-        while (!_is_ready)
-            if (!task_cv.wait_until(lock, time))
+        if (!task_->is_ended())
+            if (!task_->await_task_until(time))
                 return false;
         if (ex_ptr)
             std::rethrow_exception(ex_ptr);
+        if (task_->is_cancellation_requested())
+            throw std::runtime_error("Task has been canceled. Can not receive result.");
         return true;
     }
 
     void future<void>::wait_no_except() {
-        mutex_unify um(task_mt);
-        fast_task::unique_lock lock(um);
-        while (!_is_ready)
-            task_cv.wait(lock);
-    }
-
-    bool future<void>::wait_for_no_except(std::chrono::milliseconds ms) {
-        return wait_until_no_except(std::chrono::high_resolution_clock::now() + ms);
+        if (!task_->is_ended())
+            task_->await_task();
     }
 
     bool future<void>::wait_until_no_except(std::chrono::time_point<std::chrono::high_resolution_clock> time) {
-        mutex_unify um(task_mt);
-        fast_task::unique_lock lock(um);
-        while (!_is_ready)
-            if (!task_cv.wait_until(lock, time))
+        if (!task_->is_ended())
+            if (!task_->await_task_until(time))
                 return false;
         return true;
     }
@@ -77,4 +69,19 @@ namespace fast_task {
         return (bool)ex_ptr;
     }
 
+    void future<void>::cancel() {
+        task_->await_notify_cancel();
+    }
+
+    bool future<void>::is_canceled() const {
+        return task_->is_cancellation_requested();
+    }
+
+    bool future<void>::enter_wait(const std::shared_ptr<task>& t) {
+        return task_->enter_wait(t);
+    }
+
+    bool future<void>::enter_wait_until(const std::shared_ptr<task>& t, std::chrono::high_resolution_clock::time_point time) {
+        return task_->enter_wait_until(t, time);
+    }
 }

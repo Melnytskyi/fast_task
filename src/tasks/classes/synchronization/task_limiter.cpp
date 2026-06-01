@@ -51,10 +51,10 @@ namespace fast_task {
     void task_limiter::lock() {
         fast_task::unique_lock guard(values.no_race);
         while (values.locked) {
-            if (loc.is_task_thread) {
-                get_data(loc.curr_task).awaked = false;
-                get_data(loc.curr_task).time_end_flag = false;
-                values.resume_task.emplace_back(loc.curr_task, get_data(loc.curr_task).awake_check);
+            if (get_loc().is_task_thread) {
+                get_data(get_loc().curr_task).awaked = false;
+                get_data(get_loc().curr_task).time_end_flag = false;
+                values.resume_task.emplace_back(get_loc().curr_task, get_data(get_loc().curr_task).awake_check);
                 swapCtxRelock(*guard.mutex());
             } else
                 values.native_notify.wait(guard);
@@ -62,13 +62,13 @@ namespace fast_task {
         if (--values.allow_threshold == 0)
             values.locked = true;
 
-        if (std::find(values.lock_check.begin(), values.lock_check.end(), &*loc.curr_task) != values.lock_check.end()) {
+        if (std::find(values.lock_check.begin(), values.lock_check.end(), &*get_loc().curr_task) != values.lock_check.end()) {
             if (++values.allow_threshold != 0)
                 values.locked = false;
             values.no_race.unlock();
             throw std::logic_error("Dead lock. task try lock already locked task limiter");
         } else
-            values.lock_check.push_back(&*loc.curr_task);
+            values.lock_check.push_back(&*get_loc().curr_task);
         values.no_race.unlock();
         return;
     }
@@ -82,13 +82,13 @@ namespace fast_task {
         } else if (--values.allow_threshold <= 0)
             values.locked = true;
 
-        if (std::find(values.lock_check.begin(), values.lock_check.end(), &*loc.curr_task) != values.lock_check.end()) {
+        if (std::find(values.lock_check.begin(), values.lock_check.end(), &*get_loc().curr_task) != values.lock_check.end()) {
             if (++values.allow_threshold != 0)
                 values.locked = false;
             values.no_race.unlock();
             throw std::logic_error("Dead lock. task try lock already locked task limiter");
         } else
-            values.lock_check.push_back(&*loc.curr_task);
+            values.lock_check.push_back(&*get_loc().curr_task);
         values.no_race.unlock();
         return true;
     }
@@ -96,13 +96,13 @@ namespace fast_task {
     bool task_limiter::try_lock_until(std::chrono::high_resolution_clock::time_point time_point) {
         fast_task::unique_lock guard(values.no_race);
         while (values.locked) {
-            if (loc.is_task_thread) {
-                get_data(loc.curr_task).awaked = false;
-                get_data(loc.curr_task).time_end_flag = false;
+            if (get_loc().is_task_thread) {
+                get_data(get_loc().curr_task).awaked = false;
+                get_data(get_loc().curr_task).time_end_flag = false;
                 makeTimeWait(time_point);
-                values.resume_task.emplace_back(loc.curr_task, get_data(loc.curr_task).awake_check);
+                values.resume_task.emplace_back(get_loc().curr_task, get_data(get_loc().curr_task).awake_check);
                 swapCtxRelock(values.no_race);
-                auto awaked = get_data(loc.curr_task).awaked;
+                auto awaked = get_data(get_loc().curr_task).awaked;
                 resetTimeWait();
                 if (!awaked)
                     return false;
@@ -112,20 +112,20 @@ namespace fast_task {
         if (--values.allow_threshold <= 0)
             values.locked = true;
 
-        if (std::find(values.lock_check.begin(), values.lock_check.end(), &*loc.curr_task) != values.lock_check.end()) {
+        if (std::find(values.lock_check.begin(), values.lock_check.end(), &*get_loc().curr_task) != values.lock_check.end()) {
             if (++values.allow_threshold != 0)
                 values.locked = false;
             values.no_race.unlock();
             throw std::logic_error("Dead lock. task try lock already locked task limiter");
         } else
-            values.lock_check.push_back(&*loc.curr_task);
+            values.lock_check.push_back(&*get_loc().curr_task);
         values.no_race.unlock();
         return true;
     }
 
     void task_limiter::unlock() {
         fast_task::lock_guard lg0(values.no_race);
-        auto item = std::find(values.lock_check.begin(), values.lock_check.end(), &*loc.curr_task);
+        auto item = std::find(values.lock_check.begin(), values.lock_check.end(), &*get_loc().curr_task);
         if (item == values.lock_check.end())
             throw std::logic_error("Invalid unlock. task try unlock already unlocked task limiter");
         else

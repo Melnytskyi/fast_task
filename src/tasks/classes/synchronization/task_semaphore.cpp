@@ -47,12 +47,12 @@ namespace fast_task {
     }
 
     void task_semaphore::lock() {
-        get_data(loc.curr_task).awaked = false;
-        get_data(loc.curr_task).time_end_flag = false;
+        get_data(get_loc().curr_task).awaked = false;
+        get_data(get_loc().curr_task).time_end_flag = false;
         fast_task::unique_lock keeper(values.no_race);
         while (!values.allow_threshold) {
-            if (loc.is_task_thread) {
-                values.resume_task.emplace_back(loc.curr_task, get_data(loc.curr_task).awake_check);
+            if (get_loc().is_task_thread) {
+                values.resume_task.emplace_back(get_loc().curr_task, get_data(get_loc().curr_task).awake_check);
                 swapCtxRelock(values.no_race);
             } else
                 values.native_notify.wait(keeper);
@@ -76,15 +76,15 @@ namespace fast_task {
         fast_task::unique_lock keeper(values.no_race);
 
         while (!values.allow_threshold) {
-            if (loc.is_task_thread) {
+            if (get_loc().is_task_thread) {
                 fast_task::lock_guard guard(glob.task_timer_safety);
-                values.resume_task.emplace_back(loc.curr_task, get_data(loc.curr_task).awake_check);
+                values.resume_task.emplace_back(get_loc().curr_task, get_data(get_loc().curr_task).awake_check);
                 makeTimeWait_unsafe(time_point);
                 swapCtxRelock(glob.task_timer_safety, values.no_race);
-                auto awaked = get_data(loc.curr_task).awaked;
+                auto awaked = get_data(get_loc().curr_task).awaked;
                 resetTimeWait();
                 if (!awaked) {
-                    auto it = std::find_if(values.resume_task.begin(), values.resume_task.end(), [](const auto& a) { return a.task == loc.curr_task; });
+                    auto it = std::find_if(values.resume_task.begin(), values.resume_task.end(), [](const auto& a) { return a.task == get_loc().curr_task; });
                     if (it != values.resume_task.end())
                         values.resume_task.erase(it);
                     return false;

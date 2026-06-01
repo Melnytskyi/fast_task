@@ -16,10 +16,28 @@ namespace fast_task::scheduler {
         if (!total_executors())
             create_executor(1);
         std::shared_ptr<task> lgr_task = _task;
-        if (get_data(lgr_task).started)
-            return;
-        get_data(lgr_task).started = true;
-        ++glob.executing_tasks;
+        {
+            fast_task::lock_guard guard(get_data(_task).no_race);
+            if (get_data(_task).running || get_data(_task).end_of_life) {
+#ifdef FT_ENABLE_ABORT_IF_ALREADY_STARTED
+                assert(false && "The task is already running or stopped.");
+                std::abort();
+#endif
+                return;
+            }
+            if (get_data(_task).started && (!get_data(_task).suspended && get_data(_task).is_on_scheduler)) {
+#ifdef FT_ENABLE_ABORT_IF_ALREADY_STARTED
+                assert(false && "The task is already started.");
+                std::abort();
+#endif
+                return;
+            }
+        }
+        if (!get_data(lgr_task).started) {
+            get_data(lgr_task).started = true;
+            ++glob.executing_tasks;
+        } else if (get_data(lgr_task).suspended)
+            get_data(lgr_task).suspended = false;
 
         if (glob.shutdown_requested.load(std::memory_order_acquire)) {
             transfer_task(std::move(lgr_task));
@@ -55,16 +73,38 @@ namespace fast_task::scheduler {
     void start(const std::shared_ptr<task>& tsk) {
         if (!total_executors())
             create_executor(1);
+
         std::shared_ptr<task> lgr_task = tsk;
-        if (get_data(lgr_task).started) {
+
+        {
+            fast_task::lock_guard guard(get_data(lgr_task).no_race);
+
+            // Reject if currently executing or completely dead
+            if (get_data(lgr_task).running || get_data(lgr_task).end_of_life) {
 #ifdef FT_ENABLE_ABORT_IF_ALREADY_STARTED
-            assert(false && "The task is already started.");
-            std::abort();
+                assert(false && "The task is already running or stopped.");
+                std::abort();
 #endif
-            return;
+                return;
+            }
+
+            // Reject if it is already scheduled but not yet executing
+            if (get_data(lgr_task).started && !get_data(lgr_task).suspended) {
+#ifdef FT_ENABLE_ABORT_IF_ALREADY_STARTED
+                assert(false && "The task is already started.");
+                std::abort();
+#endif
+                return;
+            }
+
+            if (!get_data(lgr_task).started) {
+                get_data(lgr_task).started = true;
+                ++glob.executing_tasks;
+            } else if (get_data(lgr_task).suspended) {
+                get_data(lgr_task).suspended = false;
+            }
         }
-        get_data(lgr_task).started = true;
-        ++glob.executing_tasks;
+
         transfer_task(std::move(lgr_task));
     }
 
@@ -218,6 +258,7 @@ namespace fast_task::scheduler {
     }
 
     void become_task_executor() {
+        auto& loc = get_loc();
         try {
             ++glob.thread_count;
             taskExecutor();
@@ -233,7 +274,7 @@ namespace fast_task::scheduler {
     }
 
     void await_no_tasks(bool be_executor) {
-        if (be_executor && !loc.is_task_thread) {
+        if (be_executor && !get_loc().is_task_thread) {
             ++glob.thread_count;
             taskExecutor(true);
         } else {
@@ -268,7 +309,7 @@ namespace fast_task::scheduler {
     }
 
     void await_end_tasks(bool be_executor) {
-        if (be_executor && !loc.is_task_thread) {
+        if (be_executor && !get_loc().is_task_thread) {
             while (glob.executing_tasks) {
                 try {
                     ++glob.thread_count;
@@ -281,7 +322,7 @@ namespace fast_task::scheduler {
             mutex_unify uni(glob.task_thread_safety);
             fast_task::unique_lock l(uni);
 
-            if (loc.is_task_thread)
+            if (get_loc().is_task_thread)
                 while (glob.executing_tasks != 1) {
                     if (!total_executors())
                         create_executor(1);
@@ -312,15 +353,19 @@ namespace fast_task::scheduler {
 
         while (!glob.binded_workers.empty())
             close_bind_only_executor(glob.binded_workers.begin()->first);
+        {
+            fast_task::unique_lock guard(glob.task_thread_safety);
+            glob.executor_shutting_down.store(true, std::memory_order_release);
+            glob.tasks_notifier.notify_all();
+            while (glob.executors)
+                glob.executor_shutdown_notifier.wait(guard);
+        }
+        {
+            fast_task::unique_lock guard(glob.task_timer_safety);
+            glob.time_control_enabled = false;
+            glob.time_notifier.notify_all();
+        }
 
-        fast_task::unique_lock guard(glob.task_thread_safety);
-        glob.executor_shutting_down.store(true, std::memory_order_release);
-        glob.tasks_notifier.notify_all();
-        while (glob.executors)
-            glob.executor_shutdown_notifier.wait(guard);
-        glob.time_control_enabled = false;
-        glob.time_notifier.notify_all();
-        guard.unlock();
 
         while (glob.thread_count.load())
             std::this_thread::yield();
@@ -333,11 +378,11 @@ namespace fast_task::scheduler {
     }
 
     const std::shared_ptr<task>& current_context_task() {
-        return loc.curr_task;
+        return get_loc().curr_task;
     }
 
     void request_stw(const std::function<void()>& func) {
-        if (!loc.is_task_thread)
+        if (!get_loc().is_task_thread)
             unsafe_perform_stop_the_world(func);
         else
             throw invalid_native_context{};

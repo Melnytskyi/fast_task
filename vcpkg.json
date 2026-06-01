@@ -1,15 +1,18 @@
 {
     "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
     "name": "fast-task",
-    "version": "1.0.0-beta-004",
+    "version": "1.0.0-beta-005",
     "dependencies": [
         "boost-context",
-        "boost-lockfree",
         "concurrentqueue",
         "cpptrace",
         "gtest",
         {
             "name": "liburing",
+            "platform": "linux"
+        },
+        {
+            "name": "c-ares",
             "platform": "linux"
         }
     ]

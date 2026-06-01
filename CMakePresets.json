@@ -40,6 +40,16 @@
             "name": "Linux-Test",
             "configurePreset": "Linux-Test",
             "configuration": "Debug"
+        },
+        {
+            "name": "Win-Test-Rel",
+            "configurePreset": "Win-Test-Rel",
+            "configuration": "RelWithDebInfo"
+        },
+        {
+            "name": "Linux-Test-Rel",
+            "configurePreset": "Linux-Test-Rel",
+            "configuration": "RelWithDebInfo"
         }
     ],
     "configurePresets": [
@@ -49,8 +59,6 @@
             "generator": "Visual Studio 18",
             "binaryDir": "${sourceDir}/out/build/${presetName}",
             "cacheVariables": {
-                "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/vcpkg/scripts/buildsystems/vcpkg.cmake",
-                "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/${presetName}",
                 "VCPKG_TARGET_TRIPLET": "x64-windows-static"
             }
         },
@@ -61,8 +69,6 @@
             
             "binaryDir": "${sourceDir}/out/build/${presetName}",
             "cacheVariables": {
-                "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/vcpkg/scripts/buildsystems/vcpkg.cmake",
-                "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/${presetName}",
                 "VCPKG_TARGET_TRIPLET": "x64-linux"
             }
         },
@@ -70,7 +76,6 @@
             "name": "Test",
             "hidden": true,
             "cacheVariables": {
-                "ENABLE_TEST_COVERAGE": "ON",
                 "CMAKE_BUILD_TYPE": "Debug"
             }
         },
@@ -78,7 +83,6 @@
             "name": "Debug",
             "hidden": true,
             "cacheVariables": {
-                "ENABLE_TEST_COVERAGE": "OFF",
                 "CMAKE_BUILD_TYPE": "Debug"
             }
         },
@@ -86,7 +90,6 @@
             "name": "Release",
             "hidden": true,
             "cacheVariables": {
-                "ENABLE_TEST_COVERAGE": "OFF",
                 "CMAKE_BUILD_TYPE": "Release"
             }
         },
@@ -142,6 +145,7 @@
             "displayName": "Win-Test",
             "inherits": [
                 "Win-Basic",
+                "Release",
                 "Test"
             ],
             "cacheVariables": {
@@ -154,6 +158,28 @@
             "inherits": [
                 "Linux-Basic",
                 "Test"
+            ],
+            "cacheVariables": {
+                "FAST_TASK_BUILD_TESTS": "ON"
+            }
+        },
+        {
+            "name": "Win-Test-Rel",
+            "displayName": "Win-Test-Rel",
+            "inherits": [
+                "Win-Basic",
+                "RelWithDebInfo"
+            ],
+            "cacheVariables": {
+                "FAST_TASK_BUILD_TESTS": "ON"
+            }
+        },
+        {
+            "name": "Linux-Test-Rel",
+            "displayName": "Linux-Test-Rel",
+            "inherits": [
+                "Linux-Basic",
+                "Release"
             ],
             "cacheVariables": {
                 "FAST_TASK_BUILD_TESTS": "ON"
@@ -173,6 +199,22 @@
             "name": "Linux-Test",
             "configurePreset": "Linux-Test",
             "configuration": "Debug",
+            "output": {
+                "outputOnFailure": true
+            }
+        },
+        {
+            "name": "Win-Test-Rel",
+            "configurePreset": "Win-Test-Rel",
+            "configuration": "RelWithDebInfo",
+            "output": {
+                "outputOnFailure": true
+            }
+        },
+        {
+            "name": "Linux-Test-Rel",
+            "configurePreset": "Linux-Test-Rel",
+            "configuration": "RelWithDebInfo",
             "output": {
                 "outputOnFailure": true
             }

@@ -754,7 +754,6 @@ namespace fast_task {
     }
 
     void thread::init_dat() {
-        __install_signal_handler_mem();
     }
 
     void* thread::create(void (*function)(void*), void* arg, unsigned long& id, size_t stack_size, bool stack_reservation, int& error_code) {
@@ -839,18 +838,18 @@ namespace fast_task {
         return resume(_id);
     }
 
-    void thread::insert_context(void (*inserted_context)(void*), void* arg) {
+    void thread::insert_context(void (*)(void*), void*) {
     }
 
-    bool thread::suspend(id id) {
+    bool thread::suspend(id) {
         return false;
     }
 
-    bool thread::resume(id id) {
+    bool thread::resume(id) {
         return false;
     }
 
-    bool thread::insert_context(id id, void (*inserted_context)(void*), void* arg) {
+    bool thread::insert_context(id, void (*)(void*), void*) {
         return false;
     }
 
