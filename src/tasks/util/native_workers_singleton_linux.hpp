@@ -6,7 +6,6 @@
 // http://www.boost.org/LICENSE_1_0.txt)
 #ifndef SRC_TASKS_UTIL_NATIVE_WORKERS_SINGLETON_LINUX
 #define SRC_TASKS_UTIL_NATIVE_WORKERS_SINGLETON_LINUX
-#include <bitset>
 #include <chrono>
 #include <concurrentqueue/moodycamel/concurrentqueue.h>
 #include <cstring>
@@ -19,7 +18,9 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <sys/eventfd.h>
+#include <sys/resource.h>
 #include <unistd.h>
+
 namespace fast_task::util {
     class FT_API_LOCAL native_worker_manager {
     public:
@@ -83,7 +84,6 @@ namespace fast_task::util {
                     uint32_t iovcnt;
                 } vector;
 
-
                 msghdr* pMsg;
                 uint64_t range;
                 short mask;
@@ -133,7 +133,6 @@ namespace fast_task::util {
         native_worker_handle& operator=(native_worker_handle&&) = delete;
     };
 
-
     class FT_API_LOCAL native_workers_singleton {
         struct io_shard {
             io_uring ring;
@@ -153,17 +152,44 @@ namespace fast_task::util {
         };
 
         std::vector<std::unique_ptr<io_shard>> io_pool;
-        std::bitset<IORING_OP_LAST> probe_ops;
 
         native_workers_singleton() {
-            auto* probe = io_uring_get_probe();
-            for (int i = 0; i < probe->ops_len && i < IORING_OP_LAST; ++i) {
-                if (probe->ops[i].flags & IO_URING_OP_SUPPORTED)
-                    probe_ops.set(i);
-            }
-            io_uring_free_probe(probe);
             auto size = std::max<unsigned int>(fast_task::thread::hardware_concurrency(), 1);
             io_pool.reserve(size);
+
+            struct rlimit mem_rl = {};
+            getrlimit(RLIMIT_MEMLOCK, &mem_rl);
+            size_t locked_kb = 0;
+            if (mem_rl.rlim_cur != RLIM_INFINITY) {
+                if (FILE* f = fopen("/proc/self/status", "r")) {
+                    char line[256];
+                    while (fgets(line, sizeof(line), f))
+                        if (sscanf(line, "VmLck: %zu kB", &locked_kb) == 1)
+                            break;
+                    fclose(f);
+                }
+            }
+
+            auto ring_bytes_estimate = [](unsigned int q) -> size_t {
+                return static_cast<size_t>(q) * 112 + 16384;
+            };
+
+            static constexpr unsigned int candidates[] = {1024, 512, 256, 128, 64};
+            static constexpr unsigned int num_candidates = sizeof(candidates) / sizeof(*candidates);
+            unsigned int start_idx = 0;
+            if (mem_rl.rlim_cur != RLIM_INFINITY) {
+                size_t available = static_cast<size_t>(mem_rl.rlim_cur) > locked_kb * 1024
+                                       ? static_cast<size_t>(mem_rl.rlim_cur) - locked_kb * 1024
+                                       : 0;
+                size_t per_shard = available / size;
+                start_idx = num_candidates - 1;
+                for (unsigned int ci = 0; ci < num_candidates; ++ci) {
+                    if (ring_bytes_estimate(candidates[ci]) <= per_shard) {
+                        start_idx = ci;
+                        break;
+                    }
+                }
+            }
 
             for (unsigned int i = 0; i < size; i++) {
                 io_pool.push_back(std::make_unique<io_shard>());
@@ -172,19 +198,34 @@ namespace fast_task::util {
 
                 struct io_uring_params params;
                 std::memset(&params, 0, sizeof(params));
-                int uring_ret;
-                for (int attempt = 0; attempt < 5; ++attempt) {
-                    uring_ret = io_uring_queue_init_params(1024, &shard.ring, &params);
+                int uring_ret = -ENOMEM;
+                for (unsigned int ci = start_idx; ci < num_candidates && uring_ret == -ENOMEM; ++ci) {
+                    for (int attempt = 0; attempt < 10 && uring_ret == -ENOMEM; ++attempt) {
+                        uring_ret = io_uring_queue_init_params(candidates[ci], &shard.ring, &params);
+                        if (uring_ret != -ENOMEM)
+                            break;
+                        struct timespec ts = {0, static_cast<long>(20000000L * (attempt + 1))};
+                        nanosleep(&ts, nullptr);
+                    }
                     if (uring_ret == 0)
                         break;
-                    if (uring_ret != -ENOMEM)
-                        break;
-                    struct timespec ts = {0, 10000000};
-                    nanosleep(&ts, nullptr);
+                    std::memset(&params, 0, sizeof(params));
                 }
                 if (uring_ret < 0) {
-                    fprintf(stderr, "io_uring_queue_init_params failed: %s (ret=%d)\n", strerror(-uring_ret), uring_ret);
-                    assert(false && "io_uring_queue_init_params failed with the error");
+                    fprintf(stderr, "fast_task: io_uring_queue_init_params failed: %s\n", strerror(-uring_ret));
+                    if (uring_ret == -ENOMEM && mem_rl.rlim_cur != RLIM_INFINITY) {
+                        fprintf(stderr, "  RLIMIT_MEMLOCK = %zu KB, currently locked = %zu KB\n"
+                                        "  Estimated minimum requirement: ~%zu KB for %u shards\n"
+                                        "  To fix, increase the locked memory limit:\n"
+                                        "    session:   ulimit -l unlimited\n"
+                                        "    permanent: add '* - memlock unlimited' to /etc/security/limits.conf\n"
+                                        "               then log out and back in\n",
+                                static_cast<size_t>(mem_rl.rlim_cur) / 1024,
+                                locked_kb,
+                                ring_bytes_estimate(candidates[num_candidates - 1]) * size / 1024,
+                                size);
+                    }
+                    assert(false && "io_uring_queue_init_params failed");
                     std::terminate();
                 }
 
