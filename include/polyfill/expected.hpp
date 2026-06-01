@@ -59,6 +59,14 @@ namespace fast_task::polyfill {
             return std::get<T>(m_var);
         }
 
+        constexpr T* operator->() & noexcept {
+            return &std::get<T>(m_var);
+        }
+
+        constexpr const T* operator->() const& noexcept {
+            return &std::get<T>(m_var);
+        }
+
         constexpr T&& operator*() && noexcept {
             return std::get<T>(std::move(m_var));
         }
