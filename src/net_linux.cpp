@@ -22,6 +22,13 @@ namespace fast_task::net {
 
     static_assert(sizeof(universal_address) <= sizeof(address), "address buffer is too small for universal_address!");
 
+    static bool set_socket_timeout(int sock, int optname, uint32_t timeout_ms) {
+        timeval tv;
+        tv.tv_sec = timeout_ms / 1000;
+        tv.tv_usec = (timeout_ms % 1000) * 1000;
+        return setsockopt(sock, SOL_SOCKET, optname, &tv, sizeof(tv)) != -1;
+    }
+
     address address::any() {
         address res;
         internal_makeIP6(*(universal_address*)res.data, "::", 0);
@@ -259,12 +266,10 @@ namespace fast_task::net {
             if (setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, &cfg, sizeof(cfg)) == -1)
                 return false;
 
-            cfg = config.recv_timeout_ms;
-            if (setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &cfg, sizeof(cfg)) == -1)
+            if (!set_socket_timeout(sock, SO_RCVTIMEO, config.recv_timeout_ms))
                 return false;
 
-            cfg = config.send_timeout_ms;
-            if (setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &cfg, sizeof(cfg)) == -1)
+            if (!set_socket_timeout(sock, SO_SNDTIMEO, config.send_timeout_ms))
                 return false;
 
             cfg = config.enable_keep_alive;
@@ -1121,12 +1126,10 @@ namespace fast_task::net {
             if (setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, &cfg, sizeof(cfg)) == -1)
                 return false;
 
-            cfg = config.recv_timeout_ms;
-            if (setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &cfg, sizeof(cfg)) == -1)
+            if (!set_socket_timeout(sock, SO_RCVTIMEO, config.recv_timeout_ms))
                 return false;
 
-            cfg = config.send_timeout_ms;
-            if (setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &cfg, sizeof(cfg)) == -1)
+            if (!set_socket_timeout(sock, SO_SNDTIMEO, config.send_timeout_ms))
                 return false;
 
             cfg = config.enable_keep_alive;
@@ -1285,6 +1288,9 @@ namespace fast_task::net {
         return false;
     }
 
+    #pragma endregion
+    #pragma region UDP
+
     class udp_handle : public util::native_worker_manager {
         int sock = -1;
         struct iovec recv_iov{};
@@ -1341,12 +1347,10 @@ namespace fast_task::net {
             if (setsockopt(sock, SOL_SOCKET, SO_BROADCAST, &cfg, sizeof(cfg)) == -1)
                 return false;
 
-            cfg = (int)config.recv_timeout_ms;
-            if (setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &cfg, sizeof(cfg)) == -1)
+            if (!set_socket_timeout(sock, SO_RCVTIMEO, config.recv_timeout_ms))
                 return false;
 
-            cfg = (int)config.send_timeout_ms;
-            if (setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &cfg, sizeof(cfg)) == -1)
+            if (!set_socket_timeout(sock, SO_SNDTIMEO, config.send_timeout_ms))
                 return false;
 
             if (config.recv_buffer_size > 0) {
@@ -2044,6 +2048,7 @@ namespace fast_task::net {
         return false;
     }
 
+    #pragma endregion
     #pragma region DNS
 
     struct resolve_state : public native_state, public util::native_worker_manager {
@@ -2385,7 +2390,7 @@ namespace fast_task::net {
         return res;
     }
 
-    #pragma endregion DNS
+    #pragma endregion
 
     uint8_t init_networking() {
         if (!inited) {
