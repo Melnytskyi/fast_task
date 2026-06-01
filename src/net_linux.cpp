@@ -24,13 +24,13 @@ namespace fast_task::net {
 
     address address::any() {
         address res;
-        internal_makeIP(*(universal_address*)res.data, "[::]", 0);
+        internal_makeIP6(*(universal_address*)res.data, "::", 0);
         return res;
     }
 
     address address::any(uint16_t port) {
         address res;
-        internal_makeIP(*(universal_address*)res.data, "[::]", port);
+        internal_makeIP6(*(universal_address*)res.data, "::", port);
         return res;
     }
 
@@ -50,7 +50,7 @@ namespace fast_task::net {
 
     address::address(std::string_view ip, uint16_t port) {
         if (ip.empty())
-            ip = "[::]";
+            ip = "::";
         internal_makeIP(*((universal_address*)data), ip.data(), port);
     }
 
@@ -91,9 +91,11 @@ namespace fast_task::net {
         universal_address* addr = (universal_address*)data;
         if (addr->ss_family == AF_INET)
             return family::ipv4;
-        else if (addr->ss_family == AF_INET6)
+        else if (addr->ss_family == AF_INET6) {
+            if (IN6_IS_ADDR_V4MAPPED(&((sockaddr_in6*)addr)->sin6_addr))
+                return family::ipv4;
             return family::ipv6;
-        else
+        } else
             return family::other;
     }
 
