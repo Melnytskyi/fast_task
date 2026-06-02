@@ -18,8 +18,8 @@ namespace fast_task {
         struct FT_API_LOCAL resume_task;
 
         struct private_values {
-            struct resume_task* begin;
-            struct resume_task* end;
+            struct resume_task* begin = nullptr;
+            struct resume_task* end = nullptr;
             fast_task::spin_lock no_race;
             fast_task::condition_variable_any native_notify;
             size_t allow_threshold = 0;
@@ -58,8 +58,8 @@ namespace fast_task {
 
         struct private_values {
             std::list<size_t> lock_check;
-            struct resume_task* begin;
-            struct resume_task* end;
+            struct resume_task* begin = nullptr;
+            struct resume_task* end = nullptr;
             fast_task::spin_lock no_race;
             fast_task::condition_variable_any native_notify;
             size_t allow_threshold = 1;

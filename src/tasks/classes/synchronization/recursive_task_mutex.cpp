@@ -121,6 +121,7 @@ namespace fast_task {
                     head = mutex.values.begin;
                     mutex.values.begin = nullptr;
                     mutex.values.end = nullptr;
+                    mutex.values.current_task = 0;
                 }
                 if (!head)
                     return;

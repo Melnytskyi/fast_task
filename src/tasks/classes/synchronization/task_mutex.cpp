@@ -40,7 +40,7 @@ namespace fast_task {
 
     task_mutex::~task_mutex() {
         FT_DEBUG_ONLY(unregister_object(this));
-        if (!values.begin) {
+        if (values.current_task) {
             assert(false && "Tried to destroy locked mutex");
             std::terminate();
         }
@@ -163,6 +163,7 @@ namespace fast_task {
             head = values.begin;
             values.begin = nullptr;
             values.end = nullptr;
+            values.current_task = 0;
         }
         if (!head)
             return;

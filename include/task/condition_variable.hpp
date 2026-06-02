@@ -18,8 +18,8 @@ namespace fast_task {
 
         struct FT_API_LOCAL private_values {
             fast_task::spin_lock no_race;
-            struct resume_task* begin;
-            struct resume_task* end;
+            struct resume_task* begin = nullptr;
+            struct resume_task* end = nullptr;
         } values;
 
         static void push_back(private_values& values, resume_task* node);

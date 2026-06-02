@@ -20,8 +20,8 @@ namespace fast_task {
 
         struct FT_API_LOCAL private_values {
             fast_task::spin_lock no_race;
-            struct resume_task* begin;
-            struct resume_task* end;
+            struct resume_task* begin = nullptr;
+            struct resume_task* end = nullptr;
             size_t current_task = 0;
         } values;
 
@@ -85,8 +85,8 @@ namespace fast_task {
 
         struct FT_API_LOCAL private_values {
             friend class task_recursive_mutex;
-            struct resume_task* begin;
-            struct resume_task* end;
+            struct resume_task* begin = nullptr;
+            struct resume_task* end = nullptr;
             std::list<size_t> readers;
             fast_task::spin_lock no_race;
             size_t current_writer_task = 0;
