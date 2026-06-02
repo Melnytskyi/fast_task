@@ -4,8 +4,8 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
-#ifndef FAST_TASK_TASK_FWD
-#define FAST_TASK_TASK_FWD
+#ifndef INCLUDE_TASK_TASK_FWD
+#define INCLUDE_TASK_TASK_FWD
 #pragma once
 #include <chrono>
 #include <coroutine>

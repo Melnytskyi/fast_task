@@ -12,9 +12,10 @@
 namespace fast_task {
     [[nodiscard]] inline auto async_wait(deadline_timer& timer) {
         struct awaiter {
+            enter_state state;
             deadline_timer& timer;
             std::chrono::high_resolution_clock::time_point timeout_time;
-            std::shared_ptr<task> task_obj;
+            task task_obj;
 
             bool await_ready() noexcept {
                 return timer.timed_out();
@@ -22,7 +23,7 @@ namespace fast_task {
 
             bool await_suspend(base_coro_handle h) {
                 task_obj = h.promise->task_object;
-                return !timer.enter_wait(task_obj, timeout_time);
+                return !timer.enter_wait(task_obj, state, timeout_time);
             }
 
             deadline_timer::status await_resume() noexcept {
@@ -32,15 +33,16 @@ namespace fast_task {
             }
         };
 
-        return awaiter{timer};
+        return awaiter{{}, timer};
     }
 
     [[nodiscard]] inline auto async_wait(deadline_timer& timer, fast_task::unique_lock<mutex_unify>& lock) {
         struct awaiter {
+            enter_state state;
             mutex_unify& mut;
             deadline_timer& timer;
             std::chrono::high_resolution_clock::time_point timeout_time;
-            std::shared_ptr<task> task_obj;
+            task task_obj;
 
             bool await_ready() noexcept {
                 return timer.timed_out();
@@ -48,7 +50,7 @@ namespace fast_task {
 
             bool await_suspend(base_coro_handle h) {
                 task_obj = h.promise->task_object;
-                return !timer.enter_wait(mut, task_obj, timeout_time);
+                return !timer.enter_wait(mut, task_obj, state, timeout_time);
             }
 
             deadline_timer::status await_resume() noexcept {
@@ -58,15 +60,16 @@ namespace fast_task {
             }
         };
 
-        return awaiter{*lock.mutex(), timer};
+        return awaiter{{}, *lock.mutex(), timer};
     }
 
     [[nodiscard]] inline auto async_wait(deadline_timer& timer, std::unique_lock<mutex_unify>& lock) {
         struct awaiter {
+            enter_state state;
             mutex_unify& mut;
             deadline_timer& timer;
             std::chrono::high_resolution_clock::time_point timeout_time;
-            std::shared_ptr<task> task_obj;
+            task task_obj;
 
             bool await_ready() noexcept {
                 return timer.timed_out();
@@ -74,7 +77,7 @@ namespace fast_task {
 
             bool await_suspend(base_coro_handle h) {
                 task_obj = h.promise->task_object;
-                return !timer.enter_wait(mut, task_obj, timeout_time);
+                return !timer.enter_wait(mut, task_obj, state, timeout_time);
             }
 
             deadline_timer::status await_resume() noexcept {
@@ -84,7 +87,7 @@ namespace fast_task {
             }
         };
 
-        return awaiter{*lock.mutex(), timer};
+        return awaiter{{}, *lock.mutex(), timer};
     }
 } // namespace fast_task
 #endif /* INCLUDE_COROUTINE_DEADLINE_TIMER */

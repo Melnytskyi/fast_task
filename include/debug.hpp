@@ -49,7 +49,7 @@ namespace fast_task::debug {
      * 
      * @return A tasks current stack trace if available
      */
-    std::optional<raw_stack_trace> FT_API request_task_stack_trace(const std::shared_ptr<task>&);
+    std::optional<raw_stack_trace> FT_API request_task_stack_trace(const task&);
 
     /**
      * @brief Gets the tasks initialization raw stack trace
@@ -62,7 +62,7 @@ namespace fast_task::debug {
      * 
      * @return A task initialization stack trace if available
      */
-    std::optional<raw_stack_trace> FT_API request_task_init_stack_trace(const std::shared_ptr<task>&);
+    std::optional<raw_stack_trace> FT_API request_task_init_stack_trace(const task&);
     void FT_API enable_init_stack_trace(bool enable = true);
     bool FT_API is_debug_enabled();
 

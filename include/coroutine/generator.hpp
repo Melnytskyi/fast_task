@@ -14,21 +14,21 @@ namespace fast_task {
     //}
     template <class T>
     class [[nodiscard]] task_generator {
-        struct shared_state {
+        struct enter_state {
             fast_task::spin_lock lock;
             std::queue<T> values;
             bool is_finished = false;
             std::exception_ptr ex;
-            std::shared_ptr<fast_task::task> suspended_consumer;
-            std::shared_ptr<fast_task::task> suspended_producer;
+            fast_task::task suspended_consumer;
+            fast_task::task suspended_producer;
         };
 
-        std::shared_ptr<shared_state> state;
-        std::shared_ptr<fast_task::task> task_handle;
+        std::shared_ptr<enter_state> state;
+        fast_task::task task_handle;
 
     public:
         struct promise_type : public fast_task::task_promise_base {
-            std::shared_ptr<shared_state> state = std::make_shared<shared_state>();
+            std::shared_ptr<enter_state> state = std::make_shared<enter_state>();
 
             task_generator get_return_object() {
                 auto h_promise = std::coroutine_handle<promise_type>::from_promise(*this);
@@ -43,7 +43,7 @@ namespace fast_task {
                     std::coroutine_handle<>::from_address(handle_addr).destroy();
                 };
 
-                task_object = std::make_shared<task>(
+                task_object = task(
                     h_frame.address(),
                     on_start,
                     [](void* handle_addr) {},
@@ -57,7 +57,7 @@ namespace fast_task {
 
             auto yield_value(T val) {
                 struct yield_awaiter {
-                    std::shared_ptr<shared_state> state;
+                    std::shared_ptr<enter_state> state;
                     T val;
 
                     bool await_ready() {
@@ -103,7 +103,7 @@ namespace fast_task {
             }
         };
 
-        task_generator(std::shared_ptr<shared_state> s, std::shared_ptr<task> t) : state(std::move(s)), task_handle(std::move(t)) {
+        task_generator(std::shared_ptr<enter_state> s, task t) : state(std::move(s)), task_handle(std::move(t)) {
             scheduler::start(task_handle);
         }
 
@@ -115,7 +115,7 @@ namespace fast_task {
 
         auto next() {
             struct next_awaiter {
-                std::shared_ptr<shared_state> state;
+                std::shared_ptr<enter_state> state;
 
                 bool await_ready() {
                     fast_task::lock_guard guard(state->lock);
@@ -135,7 +135,7 @@ namespace fast_task {
                             std::coroutine_handle<>::from_address(handle_addr).resume();
                         };
                         auto on_nop = [](void*) {};
-                        auto bridge_task = std::make_shared<fast_task::task>(
+                        auto bridge_task = fast_task::task(
                             h.address(),
                             on_start_resume,
                             on_nop,

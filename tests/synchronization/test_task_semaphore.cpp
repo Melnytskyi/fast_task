@@ -63,7 +63,7 @@ TEST_F(TaskSemaphoreTest, WaiterUnblocked) {
     std::atomic<bool> second_done{false};
     std::atomic<bool> holder_locked{false};
 
-    auto holder = std::make_shared<fast_task::task>([&] {
+    auto holder = fast_task::task::create([&] {
         sem.lock(); // fill the semaphore
         holder_locked = true;
         fast_task::this_task::sleep_for(std::chrono::milliseconds(20));
@@ -74,14 +74,14 @@ TEST_F(TaskSemaphoreTest, WaiterUnblocked) {
     while (!holder_locked.load())
         fast_task::this_thread::yield();
 
-    auto waiter = std::make_shared<fast_task::task>([&] {
+    auto waiter = fast_task::task::create([&] {
         sem.lock(); // should block until release
         second_done = true;
         sem.release();
     });
     fast_task::scheduler::start(waiter);
 
-    std::vector<std::shared_ptr<fast_task::task>> tasks{holder, waiter};
+    std::vector<fast_task::task> tasks{holder, waiter};
     fast_task::task::await_multiple(tasks, true);
 
     EXPECT_TRUE(second_done.load());
@@ -94,12 +94,12 @@ TEST_F(TaskSemaphoreTest, TryLockForTimeout) {
 
     run_task([&] {
         sem.lock();
-        auto t2 = std::make_shared<fast_task::task>([&] {
+        auto t2 = fast_task::task::create([&] {
             timed_out = !sem.try_lock_for(std::chrono::milliseconds(50));
         });
         fast_task::scheduler::start(t2);
         fast_task::this_task::sleep_for(std::chrono::milliseconds(100));
-        t2->await_task();
+        t2.await_task();
         sem.release();
     });
 

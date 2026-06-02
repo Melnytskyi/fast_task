@@ -7,17 +7,19 @@
 #ifndef INCLUDE_TASK_MUTEX_UNIFY
 #define INCLUDE_TASK_MUTEX_UNIFY
 
-#include "fwd.hpp"
 #include "../threading.hpp"
+#include "enter_state.hpp"
+#include "fwd.hpp"
 #include <cstdint>
 #include <initializer_list>
-#include <vector>
 #include <mutex>
+#include <vector>
 
 namespace fast_task {
 
     class FT_API mutex_unify {
         friend class multiply_mutex;
+        friend struct mutex_unify_relock_access;
         enum class mutex_unify_type : uint8_t {
             nothing,
             nmut,
@@ -35,7 +37,8 @@ namespace fast_task {
             mmut,
             uspin,
             sem,
-            lim
+            lim,
+            task_obj // internal: routes to task_object::lock()/unlock(); pointer kept in the union's raw slot
         };
 
         union FT_API_LOCAL {
@@ -122,8 +125,8 @@ namespace fast_task {
 
         operator bool();
 
-        bool enter_wait(const std::shared_ptr<task>& task); //for unsupported locks like std::mutex the function locks as is and returns true
-        bool enter_wait_until(const std::shared_ptr<task>& task, std::chrono::high_resolution_clock::time_point);
+        bool enter_wait(const task&, enter_state& task); //for unsupported locks like std::mutex the function locks as is and returns true
+        bool enter_wait_until(const task&, enter_state& task, std::chrono::high_resolution_clock::time_point);
 
         template <class Rep, class Period>
         bool try_lock_for(const std::chrono::duration<Rep, Period>& duration) {
@@ -147,8 +150,8 @@ namespace fast_task {
         void unlock();
 
 
-        bool enter_wait(const std::shared_ptr<task>& task);
-        bool enter_wait_until(const std::shared_ptr<task>& task, std::chrono::high_resolution_clock::time_point);
+        bool enter_wait(const task&, enter_state& task);
+        bool enter_wait_until(const task&, enter_state& task, std::chrono::high_resolution_clock::time_point);
 
         template <class Rep, class Period>
         bool try_lock_for(const std::chrono::duration<Rep, Period>& duration) {

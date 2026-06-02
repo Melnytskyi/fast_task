@@ -15,7 +15,7 @@ TEST_F(TaskQueryTest, AddAndWait) {
     std::atomic<int> done{0};
 
     auto make_task = [&] {
-        return std::make_shared<fast_task::task>([&] {
+        return fast_task::task::create([&] {
             fast_task::this_task::sleep_for(std::chrono::milliseconds(10));
             ++done;
         });
@@ -33,7 +33,7 @@ TEST_F(TaskQueryTest, AddAndWait) {
 TEST_F(TaskQueryTest, WaitFor) {
     fast_task::task_query q;
     q.enable();
-    auto t = std::make_shared<fast_task::task>([&] {
+    auto t = fast_task::task::create([&] {
         fast_task::this_task::sleep_for(std::chrono::milliseconds(100));
     });
     q.add(t);
@@ -45,7 +45,7 @@ TEST_F(TaskQueryTest, WaitFor) {
 
 TEST_F(TaskQueryTest, InQuery) {
     fast_task::task_query q;
-    auto t = std::make_shared<fast_task::task>([&] {
+    auto t = fast_task::task::create([&] {
         fast_task::this_task::sleep_for(std::chrono::milliseconds(50));
     });
     q.add(t);
@@ -65,7 +65,7 @@ TEST_F(TaskQueryTest, MaxAtExecution) {
     std::atomic<int> max_concurrent{0};
 
     auto make_worker = [&] {
-        return std::make_shared<fast_task::task>([&] {
+        return fast_task::task::create([&] {
             int val = ++concurrent;
             int exp = max_concurrent.load();
             while (exp < val && !max_concurrent.compare_exchange_weak(exp, val))
@@ -86,7 +86,7 @@ TEST_F(TaskQueryTest, MaxAtExecution) {
 TEST_F(TaskQueryTest, EnableDisable) {
     fast_task::task_query q;
     std::atomic<bool> ran{false};
-    auto t = std::make_shared<fast_task::task>([&] { ran = true; });
+    auto t = fast_task::task::create([&] { ran = true; });
     q.add(t);
 
     fast_task::this_thread::sleep_for(std::chrono::milliseconds(50));

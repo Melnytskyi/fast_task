@@ -12,7 +12,7 @@ class TaskCancellationTest : public SchedulerFixture {};
 TEST_F(TaskCancellationTest, CheckCancellationThrows) {
     std::atomic<bool> caught{false};
     std::atomic<bool> started{false};
-    auto t = std::make_shared<fast_task::task>([&] {
+    auto t = fast_task::task::create([&] {
         started = true;
         try {
             while (!fast_task::this_task::is_cancellation_requested())
@@ -22,19 +22,20 @@ TEST_F(TaskCancellationTest, CheckCancellationThrows) {
             caught = true;
             throw; // must re-throw so context_exec handles destructor cleanup
         }
-    }, nullptr);
+    },
+                                     nullptr);
     fast_task::scheduler::start(t);
     while (!started.load())
         fast_task::this_thread::sleep_for(std::chrono::milliseconds(1));
-    t->notify_cancel();
-    t->await_task();
+    t.notify_cancel();
+    t.await_task();
     EXPECT_TRUE(caught.load());
 }
 
 TEST_F(TaskCancellationTest, IsCancellationRequested) {
     std::atomic<bool> requested{false};
     std::atomic<bool> started{false};
-    auto t = std::make_shared<fast_task::task>([&] {
+    auto t = fast_task::task::create([&] {
         started = true;
         // spin until cancellation is requested from outside
         while (!fast_task::this_task::is_cancellation_requested())
@@ -44,8 +45,8 @@ TEST_F(TaskCancellationTest, IsCancellationRequested) {
     fast_task::scheduler::start(t);
     while (!started.load())
         fast_task::this_thread::sleep_for(std::chrono::milliseconds(1));
-    t->notify_cancel();
-    t->await_task();
+    t.notify_cancel();
+    t.await_task();
     EXPECT_TRUE(requested.load());
 }
 
@@ -61,12 +62,12 @@ TEST_F(TaskCancellationTest, SelfCancel) {
     // self_cancel() throws task_cancellation which is caught by the scheduler
     // (context_exec), not passed to ex_handle. Set a flag before throwing.
     std::atomic<bool> cancelled{false};
-    auto t = std::make_shared<fast_task::task>([&] {
+    auto t = fast_task::task::create([&] {
         cancelled = true;
         fast_task::this_task::self_cancel();
     });
     fast_task::scheduler::start(t);
-    t->await_task();
+    t.await_task();
     EXPECT_TRUE(cancelled.load());
 }
 
@@ -74,7 +75,7 @@ TEST_F(TaskCancellationTest, NotifyCancelFromOutside) {
     std::atomic<bool> was_cancelled{false};
     std::atomic<bool> started{false};
 
-    auto t = std::make_shared<fast_task::task>(
+    auto t = fast_task::task::create(
         [&] {
             started = true;
             try {
@@ -96,8 +97,8 @@ TEST_F(TaskCancellationTest, NotifyCancelFromOutside) {
     while (!started.load())
         fast_task::this_thread::sleep_for(std::chrono::milliseconds(1));
 
-    t->notify_cancel();
-    t->await_task();
+    t.notify_cancel();
+    t.await_task();
 
     EXPECT_TRUE(was_cancelled.load());
 }
@@ -105,7 +106,7 @@ TEST_F(TaskCancellationTest, NotifyCancelFromOutside) {
 TEST_F(TaskCancellationTest, AwaitNotifyCancelReturnsWhenCancelled) {
     std::atomic<bool> passed{false};
     std::atomic<bool> started{false};
-    auto t = std::make_shared<fast_task::task>([&] {
+    auto t = fast_task::task::create([&] {
         started = true;
         // spin until cancellation is requested from outside
         while (!fast_task::this_task::is_cancellation_requested())
@@ -116,11 +117,12 @@ TEST_F(TaskCancellationTest, AwaitNotifyCancelReturnsWhenCancelled) {
             passed = true;
             throw; // must re-throw so context_exec handles destructor cleanup
         }
-    }, nullptr);
+    },
+                                     nullptr);
     fast_task::scheduler::start(t);
     while (!started.load())
         fast_task::this_thread::sleep_for(std::chrono::milliseconds(1));
-    t->notify_cancel();
-    t->await_task();
+    t.notify_cancel();
+    t.await_task();
     EXPECT_TRUE(passed.load());
 }

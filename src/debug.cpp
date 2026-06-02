@@ -359,7 +359,7 @@ namespace fast_task::debug {
         return dump;
     }
 
-    std::optional<raw_stack_trace> request_task_stack_trace(const std::shared_ptr<task>& task) {
+    std::optional<raw_stack_trace> request_task_stack_trace(const task& task) {
         if (task) {
             std::optional<raw_stack_trace> res;
             scheduler::request_stw([&]() {
@@ -372,7 +372,7 @@ namespace fast_task::debug {
             return std::nullopt;
     }
 
-    std::optional<raw_stack_trace> request_task_init_stack_trace(const std::shared_ptr<task>& task) {
+    std::optional<raw_stack_trace> request_task_init_stack_trace(const task& task) {
         if (task)
             return dbg_registry().get([&task](auto& reg) -> std::optional<raw_stack_trace> {
                 if (auto it = reg.task_instances.find(task.get()); it != reg.task_instances.end())
@@ -562,11 +562,11 @@ namespace fast_task::debug {
         return false;
     }
 
-    std::optional<raw_stack_trace> request_task_stack_trace(const std::shared_ptr<task>&) {
+    std::optional<raw_stack_trace> request_task_stack_trace(const task&) {
         return std::nullopt;
     }
 
-    std::optional<raw_stack_trace> request_task_init_stack_trace(const std::shared_ptr<task>&) {
+    std::optional<raw_stack_trace> request_task_init_stack_trace(const task&) {
         return std::nullopt;
     }
 

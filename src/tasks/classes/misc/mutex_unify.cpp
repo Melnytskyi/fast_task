@@ -53,6 +53,9 @@ namespace fast_task {
         case mutex_unify_type::uspin:
             uspin->lock();
             break;
+        case mutex_unify_type::task_obj:
+            reinterpret_cast<task_object*>(nmut)->lock();
+            break;
         default:
             break;
         }
@@ -167,6 +170,9 @@ namespace fast_task {
             break;
         case mutex_unify_type::uspin:
             uspin->unlock();
+            break;
+        case mutex_unify_type::task_obj:
+            reinterpret_cast<task_object*>(nmut)->unlock();
             break;
         default:
             break;
@@ -415,7 +421,7 @@ namespace fast_task {
         return type != mutex_unify_type::nothing;
     }
 
-    bool mutex_unify::enter_wait(const std::shared_ptr<task>& task) {
+    bool mutex_unify::enter_wait(const task& task, enter_state& state) {
         switch (type) {
         case mutex_unify_type::std_nmut:
         case mutex_unify_type::std_ntimed:
@@ -428,25 +434,25 @@ namespace fast_task {
             lock();
             return true;
         case mutex_unify_type::umut:
-            return umut->enter_wait(task);
+            return umut->enter_wait(task, state);
         case mutex_unify_type::urmut:
-            return urmut->enter_wait(task);
+            return urmut->enter_wait(task, state);
         case mutex_unify_type::urwmut_r:
-            return urwmut->enter_read_wait(task);
+            return urwmut->enter_read_wait(task, state);
         case mutex_unify_type::urwmut_w:
-            return urwmut->enter_write_wait(task);
+            return urwmut->enter_write_wait(task, state);
         case mutex_unify_type::mmut:
-            return mmut->enter_wait(task);
+            return mmut->enter_wait(task, state);
         case mutex_unify_type::sem:
-            return sem->enter_wait(task);
+            return sem->enter_wait(task, state);
         case mutex_unify_type::lim:
-            return lim->enter_wait(task);
+            return lim->enter_wait(task, state);
         default:
             return true;
         }
     }
 
-    bool mutex_unify::enter_wait_until(const std::shared_ptr<task>& task, std::chrono::high_resolution_clock::time_point time_point) {
+    bool mutex_unify::enter_wait_until(const task& task, enter_state& state, std::chrono::high_resolution_clock::time_point time_point) {
         switch (type) {
         case mutex_unify_type::std_nmut:
         case mutex_unify_type::std_ntimed:
@@ -459,19 +465,19 @@ namespace fast_task {
             lock();
             return true;
         case mutex_unify_type::umut:
-            return umut->enter_wait_until(task, time_point);
+            return umut->enter_wait_until(task, state, time_point);
         case mutex_unify_type::urmut:
-            return urmut->enter_wait_until(task, time_point);
+            return urmut->enter_wait_until(task, state, time_point);
         case mutex_unify_type::urwmut_r:
-            return urwmut->enter_read_wait_until(task, time_point);
+            return urwmut->enter_read_wait_until(task, state, time_point);
         case mutex_unify_type::urwmut_w:
-            return urwmut->enter_write_wait_until(task, time_point);
+            return urwmut->enter_write_wait_until(task, state, time_point);
         case mutex_unify_type::mmut:
-            return mmut->enter_wait_until(task, time_point);
+            return mmut->enter_wait_until(task, state, time_point);
         case mutex_unify_type::sem:
-            return sem->enter_wait_until(task, time_point);
+            return sem->enter_wait_until(task, state, time_point);
         case mutex_unify_type::lim:
-            return lim->enter_wait_until(task, time_point);
+            return lim->enter_wait_until(task, state, time_point);
         default:
             return true;
         }
@@ -480,17 +486,17 @@ namespace fast_task {
     void mutex_unify::donate_ownership(fast_task::task* target_owner) {
         switch (type) {
         case mutex_unify_type::umut:
-            umut->values.current_task = target_owner;
+            umut->values.current_task = target_owner->get_id();
             break;
         case mutex_unify_type::urmut:
-            urmut->mutex.values.current_task = target_owner;
+            urmut->mutex.values.current_task = target_owner->get_id();
             break;
         case mutex_unify_type::urwmut_r:
-            urwmut->values.readers.remove(get_loc().curr_task.get());
-            urwmut->values.readers.push_back(target_owner);
+            urwmut->values.readers.remove(get_loc().curr_task.get_id());
+            urwmut->values.readers.push_back(target_owner->get_id());
             break;
         case mutex_unify_type::urwmut_w:
-            urwmut->values.current_writer_task = target_owner;
+            urwmut->values.current_writer_task = target_owner->get_id();
             break;
         case mutex_unify_type::mmut:
             mmut->donate_ownership(target_owner);

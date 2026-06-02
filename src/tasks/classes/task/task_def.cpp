@@ -10,435 +10,354 @@
 namespace fast_task {
     bool task::enable_task_naming = false;
 
-    task::data::callbacks_data::callbacks_data() : buf{.dat{.data{nullptr}, .on_await{nullptr}, .on_cancel{nullptr}}} {}
-
-    task::data::callbacks_data::callbacks_data(callbacks_data&& move) noexcept {
-        is_sbo = move.is_sbo;
-        on_move = move.on_move;
-        if (on_move) {
-            buf.dat.data = nullptr;
-            buf.dat.on_await = nullptr;
-            buf.dat.on_cancel = nullptr;
-            on_move(get_data(), move.get_data());
-        } else {
-            buf.dat.data = move.buf.dat.data;
-            buf.dat.on_await = move.buf.dat.on_await;
-            buf.dat.on_cancel = move.buf.dat.on_cancel;
-        }
-        on_start = move.on_start;
-        on_destruct = move.on_destruct;
-        move.on_destruct = nullptr;
+    void task::init_pointer(void* heap_state, task_vtable* vtable, bool is_restartable, bool is_on_scheduler) {
+        obj = task_object::alloc();
+        obj->vtable = vtable;
+        obj->status.store(task_object::status_e::created, std::memory_order_relaxed);
+        obj->bind_to_worker_id = (uint16_t)-1;
+        obj->set_is_restartable(is_restartable);
+        obj->set_is_on_scheduler(is_on_scheduler);
+        obj->set_is_sbo(false);
+        *reinterpret_cast<void**>(obj->sbo_buffer) = heap_state;
     }
 
-    task::data::callbacks_data::~callbacks_data() {
-        if (on_destruct)
-            on_destruct(get_data());
-        buf.dat.data = nullptr;
-        buf.dat.on_await = nullptr;
-        buf.dat.on_cancel = nullptr;
-        on_start = nullptr;
-        on_destruct = nullptr;
-        on_move = nullptr;
+    void* task::init_inplace(task_vtable* vtable, bool is_restartable, bool is_on_scheduler) {
+        obj = task_object::alloc();
+        obj->vtable = vtable;
+        obj->status.store(task_object::status_e::created, std::memory_order_relaxed);
+        obj->bind_to_worker_id = (uint16_t)-1;
+        obj->set_is_restartable(is_restartable);
+        obj->set_is_on_scheduler(is_on_scheduler);
+        obj->set_is_sbo(true);
+        return obj->sbo_buffer;
     }
 
-    task::task(void* data, void (*on_start)(void*), void (*on_await)(void*), void (*on_cancel)(void*), void (*on_destruct)(void*), bool is_restartable, bool is_on_scheduler)
-        : data_{
-              .callbacks{},
-              .result_notify{},
-              .no_race{},
-              .relock_0{},
-              .relock_1{},
-              .relock_2{},
-              .timeout = std::chrono::high_resolution_clock::time_point::min().time_since_epoch().count()
-          } {
-        data_.is_on_scheduler = is_on_scheduler;
-        data_.is_restartable = is_restartable;
-        data_.callbacks.is_sbo = false;
-        data_.callbacks.buf.dat.data = data;
-        data_.callbacks.buf.dat.on_await = on_await;
-        data_.callbacks.buf.dat.on_cancel = on_cancel;
-        data_.callbacks.on_start = on_start;
-        data_.callbacks.on_destruct = on_destruct;
-        FT_DEBUG_ONLY(register_object(this));
+    void* task::user_data() const noexcept {
+        return obj ? obj->user_data() : nullptr;
+    }
+
+    void task::end_of_life_notify() const {
+        if (obj)
+            obj->end_of_life_notify();
+    }
+
+    task::task(void* data, task_vtable* vtable, bool is_restartable, bool is_on_scheduler) {
+        init_pointer(data, vtable, is_restartable, is_on_scheduler);
+    }
+
+    task::task() noexcept {
+        obj = nullptr;
+    }
+
+    task::task(std::nullptr_t) noexcept {
+        obj = nullptr;
     }
 
     task::task(task&& mov) noexcept
-        : data_{
-              .callbacks = std::move(mov.data_.callbacks),
-              .result_notify{},
-              .no_race{},
-              .relock_0{},
-              .relock_1{},
-              .relock_2{},
-              .timeout = std::move(mov.data_.timeout)
-          } {
-        if (mov.data_.started)
-            assert(false && "Moving started tasks is not allowed");
-        data_.time_end_flag = mov.data_.time_end_flag;
-        data_.awaked = mov.data_.awaked;
-        data_.started = mov.data_.started;
-        data_.completed = mov.data_.completed;
-        FT_DEBUG_ONLY(register_object(this));
+        : obj(mov.obj) {
+        mov.obj = nullptr;
     }
 
-    void task::awaitEnd(fast_task::unique_lock<mutex_unify>& l) {
-        while (!data_.end_of_life)
-            data_.result_notify.wait(l);
-    }
-
-    bool task::awaitEnd(fast_task::unique_lock<mutex_unify>& l, std::chrono::high_resolution_clock::time_point time_point) {
-        while (!data_.end_of_life)
-            if (!data_.result_notify.wait_until(l, time_point))
-                return false;
-        return true;
+    task::task(const task& copy) noexcept : obj(task_object::use(copy.obj)) {
     }
 
     task::~task() {
-        FT_DEBUG_ONLY(unregister_object(this));
-        if (data_.exdata) {
-            delete data_.exdata;
-            data_.exdata = nullptr;
-        }
-        if (!data_.completed && data_.started) {
-            --glob.executing_tasks;
-            fast_task::shared_lock guard(glob.task_thread_safety);
-            glob.no_tasks_execute_notifier.notify_all_guarded();
-        }
-#ifdef FT_ENABLE_ABORT_IF_NEVER_STARTED
-        if (!data_.started && !data_.end_of_life) {
-            assert(false && "The task should always be started.");
-            std::abort();
-        }
-#endif
+        if (obj)
+            task_object::free(obj);
     }
 
-    void task::set_auto_bind_worker(bool enable) noexcept {
-        data_.auto_bind_worker = enable;
+    task& task::operator=(task&& mov) noexcept {
+        if (this != &mov) {
+            if (obj)
+                task_object::free(obj);
+            obj = mov.obj;
+            mov.obj = nullptr;
+        }
+        return *this;
+    }
+
+    task& task::operator=(const task& copy) noexcept {
+        if (this != &copy) {
+            if (obj)
+                task_object::free(obj);
+            obj = task_object::use(copy.obj);
+        }
+        return *this;
+    }
+
+    void task::reset() noexcept {
+        *this = task();
+    }
+
+    void task::set_auto_bind_worker(bool enable) const noexcept {
+        if (!obj)
+            return;
+        obj->set_auto_bind(enable);
         if (enable)
-            data_.bind_to_worker_id = (uint16_t)-1;
+            obj->bind_to_worker_id = (uint16_t)-1;
     }
 
-    void task::set_worker_id(uint16_t id) noexcept {
-        data_.bind_to_worker_id = id;
-        data_.auto_bind_worker = false;
+    void task::set_worker_id(uint16_t id) const noexcept {
+        if (!obj)
+            return;
+        obj->bind_to_worker_id = id;
+        obj->set_auto_bind(false);
     }
 
-    void task::set_priority([[maybe_unused]] task_priority p) noexcept {
+    void task::set_priority([[maybe_unused]] task_priority p) const noexcept {
+        if (!obj)
+            return;
 #ifdef FT_ENABLE_PREEMPTIVE_SCHEDULER
-        if (!data_.exdata)
-            data_.exdata = new execution_data();
-        data_.exdata->priority = p;
+        get_execution_data(*this).priority = p;
 #endif
     }
 
-    void task::set_timeout(std::chrono::high_resolution_clock::time_point timeout) noexcept {
-        data_.timeout = timeout.time_since_epoch().count();
+    void task::set_timeout(std::chrono::high_resolution_clock::time_point timeout) const noexcept {
+        if (!obj)
+            return;
+        if (!get_data(*this).exdata && timeout == std::chrono::high_resolution_clock::time_point::min())
+            return;
+        get_execution_data(*this).timeout = timeout.time_since_epoch().count();
     }
 
     task_priority task::get_priority() const noexcept {
+        if (!obj)
+            return task_priority::semi_realtime;
 #ifdef FT_ENABLE_PREEMPTIVE_SCHEDULER
-        return data_.exdata ? data_.exdata->priority : task_priority::high;
+        auto* ex = obj->exdata.load(std::memory_order_acquire);
+        return ex ? ex->priority : task_priority::high;
 #else
         return task_priority::semi_realtime;
 #endif
     }
 
     size_t task::get_counter_interrupt() const noexcept {
+        if (!obj)
+            return 0;
 #ifdef FT_ENABLE_PREEMPTIVE_SCHEDULER
-        return data_.data ? data_.data->interrupt_count : 0;
+        auto* ex = obj->exdata.load(std::memory_order_acquire);
+        return ex ? ex->interrupt_count : 0;
 #else
         return 0;
 #endif
     }
 
     size_t task::get_counter_context_switch() const noexcept {
-        return data_.exdata ? data_.exdata->context_switch_count : 0;
+        if (!obj)
+            return 0;
+        auto* ex = obj->exdata.load(std::memory_order_acquire);
+        return ex ? ex->context_switch_count : 0;
     }
 
     std::chrono::high_resolution_clock::time_point task::get_timeout() const noexcept {
-        return std::chrono::high_resolution_clock::time_point(std::chrono::high_resolution_clock::duration(data_.timeout));
+        if (!obj)
+            return std::chrono::high_resolution_clock::time_point::min();
+        auto* ex = obj->exdata.load(std::memory_order_acquire);
+        auto rep = ex ? ex->timeout : std::chrono::high_resolution_clock::time_point::min().time_since_epoch().count();
+        return std::chrono::high_resolution_clock::time_point(std::chrono::high_resolution_clock::duration(rep));
     }
 
     bool task::has_wait_timed_out() const noexcept {
-        fast_task::lock_guard lock(data_.no_race);
-        auto time_end_flag = data_.time_end_flag;
+        if (!obj)
+            return false;
+        obj->lock();
+        bool time_end_flag = obj->get_time_end();
         resetTimeWait();
+        obj->unlock();
         return time_end_flag;
     }
 
     bool task::is_cancellation_requested() const noexcept {
-        return data_.make_cancel;
+        if (!obj)
+            return false;
+        return obj->get_cancellation_requested();
     }
 
     bool task::is_ended() const noexcept {
-        return data_.end_of_life;
-    }
-
-    void task::await_task() {
-        if (!scheduler::total_executors())
-            scheduler::create_executor(1);
-
-        if (!data_.started && data_.callbacks.on_start)
-            scheduler::start(shared_from_this());
-        data_.callbacks.make_await();
-        if (!data_.callbacks.on_start)
-            return;
-
-        mutex_unify uni(data_.no_race);
-        fast_task::unique_lock l(uni);
-        if (!data_.started)
-            return;
-        awaitEnd(l);
-    }
-
-    void task::callback(const std::shared_ptr<task>& task) {
-        mutex_unify unify(data_.no_race);
-        fast_task::unique_lock lock(unify);
-        if (data_.end_of_life)
-            scheduler::start(task);
-        else
-            data_.result_notify.callback(lock, task);
-    }
-
-    void task::notify_cancel() {
-        data_.callbacks.make_cancel();
-        fast_task::lock_guard l(data_.no_race);
-        data_.make_cancel = true;
-
-        if (data_.suspended && !data_.end_of_life && !data_.time_end_flag) {
-            data_.time_end_flag = true;
-            data_.awaked = true;
-            fast_task::transfer_task(shared_from_this());
-        }
-    }
-
-    void task::await_notify_cancel() {
-        notify_cancel();
-
-        mutex_unify uni(data_.no_race);
-        fast_task::unique_lock l(uni);
-        data_.make_cancel = true;
-        awaitEnd(l);
-    }
-
-    void task::reset_awake() {
-        data_.time_end_flag = false;
-        data_.awaked = false;
-    }
-
-    bool task::enter_wait(const std::shared_ptr<task>& t) {
-        struct enter_data {
-            std::shared_ptr<task> wake;
-            std::weak_ptr<task> bridge;
-            std::shared_ptr<task> self;
-        };
-
-        mutex_unify unify(data_.no_race);
-        fast_task::unique_lock lock(unify);
-        if (!data_.started && data_.callbacks.on_start)
-            scheduler::start(shared_from_this());
-        if (data_.end_of_life)
-            return true;
-
-        auto ew_data = std::unique_ptr<enter_data>(new enter_data(t, {}, shared_from_this()));
-        auto bridge = std::make_shared<task>(
-            nullptr,
-            [](void* ptr) {
-                auto& data = *static_cast<enter_data*>(ptr);
-                mutex_unify unify(data.self->data_.no_race);
-                fast_task::unique_lock lock(unify, fast_task::adopt_lock);
-                while (true) {
-                    if (data.self->data_.end_of_life) {
-                        if (!fast_task::this_task::transfer_to(data.wake))
-                            fast_task::transfer_task(std::shared_ptr<fast_task::task>(data.wake));
-                        this_task::the_coroutine_ended(data.bridge.lock());
-                        break;
-                    } else if (!data.self->data_.result_notify.enter_wait(unify, data.bridge.lock())) {
-                        lock.release();
-                        break;
-                    }
-                }
-            },
-            [](void*) {},
-            [](void*) {},
-            [](void* ptr) { if(ptr) delete static_cast<enter_data*>(ptr); },
-            true,
-            true
-        );
-        bridge->data_.started = true;
-        ++glob.executing_tasks;
-
-        ew_data->bridge = bridge;
-        bridge->data_.callbacks.buf.dat.data = ew_data.release();
-        return data_.result_notify.enter_wait(unify, bridge);
-    }
-
-    bool task::enter_wait_until(const std::shared_ptr<task>& t, std::chrono::high_resolution_clock::time_point time_point) {
-        struct enter_data {
-            std::shared_ptr<task> wake;
-            std::weak_ptr<task> bridge;
-            std::shared_ptr<task> self;
-            std::chrono::high_resolution_clock::time_point time_point;
-        };
-
-        mutex_unify unify(data_.no_race);
-        fast_task::unique_lock lock(unify);
-        if (time_point <= std::chrono::high_resolution_clock::now()) {
-            t->data_.time_end_flag = true;
-            return true;
-        }
-        if (!data_.started && data_.callbacks.on_start)
-            scheduler::start(shared_from_this());
-        if (data_.end_of_life)
-            return true;
-
-        auto ew_data = std::unique_ptr<enter_data>(new enter_data(t, {}, shared_from_this(), time_point));
-        auto bridge = std::make_shared<task>(
-            nullptr,
-            [](void* ptr) {
-                auto& data = *static_cast<enter_data*>(ptr);
-                auto bridge = data.bridge.lock();
-                mutex_unify unify(data.self->data_.no_race);
-                fast_task::unique_lock lock(unify, fast_task::adopt_lock);
-                while (true) {
-                    if (bridge->data_.time_end_flag) {
-                        data.wake->data_.time_end_flag = true;
-                        if (!fast_task::this_task::transfer_to(data.wake))
-                            fast_task::transfer_task(std::shared_ptr<fast_task::task>(data.wake));
-                        this_task::the_coroutine_ended(bridge);
-                        break;
-                    } else if (data.self->data_.end_of_life) {
-                        if (!fast_task::this_task::transfer_to(data.wake))
-                            fast_task::transfer_task(std::shared_ptr<fast_task::task>(data.wake));
-                        this_task::the_coroutine_ended(bridge);
-                        break;
-                    } else {
-                        bridge->data_.time_end_flag = false;
-                        bridge->data_.awaked = false;
-                        if (!data.self->data_.result_notify.enter_wait_until(unify, bridge, data.time_point)) {
-                            lock.release();
-                            break;
-                        }
-                    }
-                }
-            },
-            [](void*) {},
-            [](void*) {},
-            [](void* ptr) { if(ptr) delete static_cast<enter_data*>(ptr); },
-            true,
-            true
-        );
-        bridge->data_.started = true;
-        ++glob.executing_tasks;
-
-        ew_data->bridge = bridge;
-        bridge->data_.callbacks.buf.dat.data = ew_data.release();
-        if (data_.result_notify.enter_wait_until(unify, bridge, time_point)) {
-            t->data_.time_end_flag = true;
-            return true;
-        } else
+        if (!obj)
             return false;
+        return obj->is_ended();
     }
 
-    bool task::enter_cancel(const std::shared_ptr<task>& t) {
+    void task::await_task() const {
+        if (!obj)
+            return;
+        if (!scheduler::total_executors())
+            scheduler::create_executor(1);
+
+        if (!obj->is_started() && obj->vtable && obj->vtable->on_start)
+            scheduler::start(*this);
+        if (obj->vtable && obj->vtable->on_await)
+            obj->vtable->on_await(obj->user_data());
+        if (!obj->vtable || !obj->vtable->on_start)
+            return;
+        if (!obj->is_started())
+            return;
+        obj->wait();
+    }
+
+    void task::callback(const task& cbtask) const {
+        if (!obj)
+            return;
+        obj->lock();
+        if (obj->is_ended()) {
+            obj->unlock();
+            scheduler::start(cbtask);
+            return;
+        }
+
+        auto& cd = get_data(cbtask);
+        {
+            fast_task::lock_guard guard(cd);
+            if (cd.is_running() || cd.is_ended()) {
+                obj->unlock();
+                throw std::runtime_error("Task is running or completed and cannot be registered");
+            }
+            if (cd.is_started() && (!cd.is_suspended() && cd.get_is_on_scheduler())) {
+                obj->unlock();
+                throw std::runtime_error("Task is already in the scheduler queue");
+            }
+            if (!cd.vtable || !cd.vtable->on_start) {
+                obj->unlock();
+                throw std::logic_error("task::callback requires the on_start callback to be set");
+            }
+        }
+
+        auto* node = new task_object::wait_item();
+        node->waiter = cbtask;
+        node->awake_check = cd.awake_check;
+        node->heap_allocated = true;
+        node->next = obj->on_wait.load(std::memory_order_relaxed);
+        obj->on_wait.store(node, std::memory_order_relaxed);
+
+        if (!cd.is_started())
+            ++glob.executing_tasks;
+        obj->unlock();
+    }
+
+    void task::notify_cancel() const {
+        if (!obj)
+            return;
+        if (obj->vtable && obj->vtable->on_cancel)
+            obj->vtable->on_cancel(obj->user_data());
+
+        obj->lock();
+        obj->set_cancellation_requested(true);
+        if (obj->is_suspended() && !obj->is_ended() && !obj->get_time_end()) {
+            obj->set_time_end(true);
+            obj->set_awaked(true);
+            obj->unlock();
+            fast_task::transfer_task(task(*this));
+            return;
+        }
+        obj->unlock();
+    }
+
+    void task::await_notify_cancel() const {
+        if (!obj)
+            return;
         notify_cancel();
-        return enter_wait(t);
+        obj->wait();
     }
 
-    std::shared_ptr<task> task::run(std::function<void()>&& func) {
-        auto r = std::make_shared<task>(std::move(func));
-        scheduler::start(r);
-        return r;
+    void task::reset_awake() const {
+        if (!obj)
+            return;
+        obj->set_time_end(false);
+        obj->set_awaked(false);
     }
 
-    std::shared_ptr<task> task::create(std::function<void()>&& func) {
-        return std::make_shared<task>(std::move(func));
+    void task::start() const {
+        if (!obj)
+            return;
+        if (!scheduler::total_executors())
+            scheduler::create_executor(1);
+        if (!obj->is_started())
+            scheduler::start(*this);
     }
 
-    void task::await_task(const std::shared_ptr<task>& lgr_task, bool make_start) {
+    bool task::enter_wait(const task& waiter, enter_state& st) const {
+        if (!obj)
+            return true;
+        if (!obj->is_started() && obj->vtable && obj->vtable->on_start)
+            scheduler::start(*this);
+        return obj->enter_wait(waiter, st);
+    }
+
+    bool task::enter_wait_until(const task& waiter, enter_state& st, std::chrono::high_resolution_clock::time_point time_point) const {
+        if (!obj)
+            return true;
+        if (!obj->is_started() && obj->vtable && obj->vtable->on_start)
+            scheduler::start(*this);
+        return obj->enter_wait_until(waiter, st, time_point);
+    }
+
+    bool task::enter_cancel(const task& waiter, enter_state& st) const {
+        if (!obj)
+            return true;
+        notify_cancel();
+        return enter_wait(waiter, st);
+    }
+
+    void task::await_task(const task& lgr_task, bool make_start) {
         if (!scheduler::total_executors())
             scheduler::create_executor(1);
 
-        if (!lgr_task->data_.started && make_start)
+        auto& d = get_data(lgr_task);
+        if (!d.is_started() && make_start)
             scheduler::start(lgr_task);
-        lgr_task->data_.callbacks.make_await();
-        if (!lgr_task->data_.callbacks.on_start)
+        if (d.vtable && d.vtable->on_await)
+            d.vtable->on_await(lgr_task.obj->user_data());
+        if (!d.vtable || !d.vtable->on_start)
             return;
-
-        mutex_unify uni(lgr_task->data_.no_race);
-        fast_task::unique_lock l(uni);
-        if (!(make_start || lgr_task->data_.started || lgr_task->data_.is_restartable))
+        if (!(make_start || d.is_started() || d.get_is_restartable()))
             return;
-        lgr_task->awaitEnd(l);
+        d.wait();
     }
 
-    bool task::await_task_until(std::chrono::high_resolution_clock::time_point time_point) {
+    bool task::await_task_until(std::chrono::high_resolution_clock::time_point time_point) const {
+        if (!obj)
+            return true;
         if (!scheduler::total_executors())
             scheduler::create_executor(1);
 
-        data_.callbacks.make_await();
-        if (!data_.callbacks.on_start)
+        if (obj->vtable && obj->vtable->on_await)
+            obj->vtable->on_await(obj->user_data());
+        if (!obj->vtable || !obj->vtable->on_start)
             return true;
-
-        mutex_unify uni(data_.no_race);
-        fast_task::unique_lock l(uni);
-        if (!data_.started && !data_.is_restartable)
+        if (!obj->is_started() && !obj->get_is_restartable())
             return true;
-        return awaitEnd(l, time_point);
+        obj->wait_until(time_point);
+        return obj->is_ended();
     }
 
-    void task::await_multiple(std::list<std::shared_ptr<task>>& tasks, bool pre_started, bool release) {
-        if (!pre_started) {
-            for (auto& it : tasks)
-                scheduler::start(it);
-        }
-        if (release) {
-            for (auto& it : tasks) {
-                await_task(it, false);
-                it = nullptr;
-            }
-        } else
-            for (auto& it : tasks)
-                await_task(it, false);
+    task task::callback_dummy(void* dummy_data, void (*on_start)(void*), void (*on_await)(void*), void (*on_cancel)(void*), void (*on_destruct)(void*), bool is_restartable, bool is_on_scheduler) {
+        auto* vtable = new task_vtable{};
+        vtable->on_await = on_await;
+        vtable->on_cancel = on_cancel;
+        vtable->on_start = on_start;
+        vtable->on_destruct = on_destruct;
+        vtable->heap_allocated = true;
+        return task(dummy_data, vtable, is_restartable, is_on_scheduler);
     }
 
-    void task::await_multiple(std::vector<std::shared_ptr<task>>& tasks, bool pre_started, bool release) {
-        if (!pre_started) {
-            for (auto& it : tasks)
-                scheduler::start(it);
-        }
-        if (release) {
-            for (auto& it : tasks) {
-                await_task(it, false);
-                it = nullptr;
-            }
-        } else
-            for (auto& it : tasks)
-                await_task(it, false);
+    task task::callback_dummy(void* dummy_data, void (*on_await)(void*), void (*on_cancel)(void*), void (*on_destruct)(void*), bool is_restartable, bool is_on_scheduler) {
+        return callback_dummy(dummy_data, nullptr, on_await, on_cancel, on_destruct, is_restartable, is_on_scheduler);
     }
 
-    void task::await_multiple(std::shared_ptr<task>* tasks, size_t len, bool pre_started, bool release) {
-        if (!pre_started) {
-            std::shared_ptr<task>* iter = tasks;
-            size_t count = len;
-            while (count--)
-                scheduler::start(*iter++);
-        }
-        if (release) {
-            while (len--) {
-                await_task(*tasks, false);
-                (*tasks++) = nullptr;
-            }
-        } else
-            while (len--)
-                await_task(*tasks, false);
+    task::operator bool() const noexcept {
+        return obj;
     }
 
-    std::shared_ptr<task> task::callback_dummy(void* dummy_data, void (*on_start)(void*), void (*on_await)(void*), void (*on_cancel)(void*), void (*on_destruct)(void*), bool is_restartable, bool is_on_scheduler) {
-        return std::make_shared<task>(dummy_data, on_start, on_await, on_cancel, on_destruct, is_restartable, is_on_scheduler);
+    bool task::operator==(const task& tsk) const noexcept {
+        return obj == tsk.obj;
     }
 
-    std::shared_ptr<task> task::callback_dummy(void* dummy_data, void (*on_await)(void*), void (*on_cancel)(void*), void (*on_destruct)(void*), bool is_restartable, bool is_on_scheduler) {
-        return std::make_shared<task>(dummy_data, nullptr, on_await, on_cancel, on_destruct, is_restartable, is_on_scheduler);
+    bool task::operator==(std::nullptr_t) const noexcept {
+        return obj == nullptr;
+    }
+
+    size_t task::get_id() const noexcept {
+        return reinterpret_cast<size_t>(obj) & ~native_thread_flag;
     }
 }

@@ -78,7 +78,7 @@ namespace fast_task::file {
         }
 
     public:
-        std::shared_ptr<task> awaiter;
+        task awaiter;
         uint32_t fullifed_bytes = 0;
         const uint32_t buffer_size;
         const uint64_t offset;
@@ -327,7 +327,7 @@ namespace fast_task::file {
         delete ((completion_struct*)it);
     }
 
-    std::pair<completion_struct*, std::shared_ptr<task>> create_dummy_handle(File_* file) {
+    std::pair<completion_struct*, task> create_dummy_handle(File_* file) {
         auto res = new completion_struct(file);
         return {res, task::callback_dummy(res, file_overlapped_on_await, file_overlapped_on_cancel, file_overlapped_on_destruct)};
     }
@@ -508,7 +508,7 @@ namespace fast_task::file {
             });
         }
 
-        std::shared_ptr<task> fmake_read(uint32_t size, bool require_all) {
+        task fmake_read(uint32_t size, bool require_all) {
             File_* file = File_::command_read(this, _handle, size, read_pointer, require_all);
             switch (pointer_mode) {
             case pointer_mode::separated:
@@ -529,7 +529,7 @@ namespace fast_task::file {
             return task_;
         }
 
-        std::shared_ptr<task> fmake_read_at(uint64_t offset, uint32_t size, bool require_all) {
+        task fmake_read_at(uint64_t offset, uint32_t size, bool require_all) {
             File_* file = File_::command_read(this, _handle, size, offset, require_all);
             auto [data, task_] = create_dummy_handle(file);
             try {
@@ -644,7 +644,7 @@ namespace fast_task::file {
             });
         }
 
-        std::shared_ptr<task> fmake_write(const uint8_t* data_, uint32_t size) {
+        task fmake_write(const uint8_t* data_, uint32_t size) {
             if (make_append)
                 return fmake_append(data_, size);
 
@@ -668,7 +668,7 @@ namespace fast_task::file {
             return task_;
         }
 
-        std::shared_ptr<task> fmake_write_at(uint64_t offset, const uint8_t* data_, uint32_t size) {
+        task fmake_write_at(uint64_t offset, const uint8_t* data_, uint32_t size) {
             if (make_append)
                 return fmake_append(data_, size);
 
@@ -750,7 +750,7 @@ namespace fast_task::file {
             });
         }
 
-        std::shared_ptr<task> fmake_append(const uint8_t* data_, uint32_t size) {
+        task fmake_append(const uint8_t* data_, uint32_t size) {
             File_* file = File_::command_write(this, _handle, (char*)data_, size, (uint64_t)-1);
             auto [data, task_] = create_dummy_handle(file);
             try {
@@ -962,14 +962,14 @@ namespace fast_task::file {
         return res.value_or(std::vector<uint8_t>{});
     }
 
-    bool io_operation<std::vector<uint8_t>>::enter_wait(const std::shared_ptr<task>& t) {
+    bool io_operation<std::vector<uint8_t>>::enter_wait(const task& t) {
         if (slot_)
             return slot_->enter_wait(t);
         else
             return true;
     }
 
-    bool io_operation<std::vector<uint8_t>>::enter_wait_until(const std::shared_ptr<task>& t, std::chrono::high_resolution_clock::time_point tp) {
+    bool io_operation<std::vector<uint8_t>>::enter_wait_until(const task& t, std::chrono::high_resolution_clock::time_point tp) {
         if (slot_)
             return slot_->enter_wait_until(t, tp);
         else
@@ -1009,15 +1009,15 @@ namespace fast_task::file {
         });
     }
 
-    bool io_operation<void>::enter_wait(const std::shared_ptr<task>& t) {
+    bool io_operation<void>::enter_wait(const task& t) {
         return slot_->enter_wait(t);
     }
 
-    bool io_operation<void>::enter_wait_until(const std::shared_ptr<task>& t, std::chrono::high_resolution_clock::time_point tp) {
+    bool io_operation<void>::enter_wait_until(const task& t, std::chrono::high_resolution_clock::time_point tp) {
         return slot_->enter_wait_until(t, tp);
     }
 
-    bool io_operation<void>::enter_cancel(const std::shared_ptr<task>& t) {
+    bool io_operation<void>::enter_cancel(const task& t) {
         return slot_->enter_cancel(t);
     }
 

@@ -39,10 +39,10 @@ TEST_F(CoroutineAwaitTest, CoAwaitInnerCoro) {
     EXPECT_TRUE(done.load());
 }
 
-// ---- co_await std::shared_ptr<task> ----
+// ---- co_await task ----
 
 fast_task::task_coro<void> await_task_ptr(std::atomic<int>& out) {
-    auto t = std::make_shared<fast_task::task>([&] { out = 55; });
+    auto t = fast_task::task::create([&] { out = 55; });
     fast_task::scheduler::start(t);
     co_await std::move(t);
     // value should be set after await

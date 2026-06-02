@@ -30,15 +30,15 @@ TEST_F(StackfullSleepTest, SleepUntil) {
 
 TEST_F(StackfullSleepTest, Yield) {
     // yield suspends and resumes, counter increases
-    std::shared_ptr<fast_task::task> t_ref;
-    auto t = std::make_shared<fast_task::task>([&] {
+    fast_task::task t_ref;
+    auto t = fast_task::task::create([&] {
         fast_task::this_task::yield();
         fast_task::this_task::yield();
     });
     t_ref = t;
     fast_task::scheduler::start(t);
-    t->await_task();
-    EXPECT_GE(t_ref->get_counter_context_switch(), 2u);
+    t.await_task();
+    EXPECT_GE(t_ref.get_counter_context_switch(), 2u);
 }
 
 TEST_F(StackfullSleepTest, SleepForZeroReturnsQuickly) {
@@ -52,17 +52,17 @@ TEST_F(StackfullSleepTest, SleepForZeroReturnsQuickly) {
 
 TEST_F(StackfullSleepTest, MultipleSleepsFairOrder) {
     std::atomic<int> counter{0};
-    auto t1 = std::make_shared<fast_task::task>([&] {
+    auto t1 = fast_task::task::create([&] {
         fast_task::this_task::sleep_for(std::chrono::milliseconds(20));
         counter.fetch_add(1);
     });
-    auto t2 = std::make_shared<fast_task::task>([&] {
+    auto t2 = fast_task::task::create([&] {
         fast_task::this_task::sleep_for(std::chrono::milliseconds(20));
         counter.fetch_add(1);
     });
     fast_task::scheduler::start(t1);
     fast_task::scheduler::start(t2);
-    std::vector<std::shared_ptr<fast_task::task>> tasks2{t1, t2};
+    std::vector<fast_task::task> tasks2{t1, t2};
     fast_task::task::await_multiple(tasks2, true);
     EXPECT_EQ(counter.load(), 2);
 }

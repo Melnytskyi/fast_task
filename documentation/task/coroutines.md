@@ -1,11 +1,11 @@
-`void this_task::the_coroutine_ended(const std::shared_ptr<task>&) noexcept;`
+`void this_task::the_coroutine_ended(const task&) noexcept;`
 > Should be called by the coroutine when it finishes its execution. It will modify the task flags so the scheduler would call required condition variables and callbacks, update the scheduler's state.
 >
 > It removes the flag is_restartable from the task and marks it completed.
 >
 > Automatically called by the scheduler when the task canceled.
 
-`bool this_task::transfer_to(const std::shared_ptr<task>& target);`
+`bool this_task::transfer_to(const task& target);`
 > Directly transfers the scheduler's current executing task to target after completion
 >
 > Both current task(c) and target(t) must:

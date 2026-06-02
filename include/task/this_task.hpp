@@ -6,6 +6,7 @@
 
 #ifndef INCLUDE_TASK_THIS_TASK
 #define INCLUDE_TASK_THIS_TASK
+#include "enter_state.hpp"
 #include "fwd.hpp"
 
 namespace fast_task::this_task {
@@ -22,11 +23,11 @@ namespace fast_task::this_task {
     bool FT_API is_cancellation_requested() noexcept;
     void FT_API self_cancel();
     bool FT_API is_task() noexcept;
-    void FT_API the_coroutine_ended(const std::shared_ptr<task>&) noexcept;
-    bool FT_API transfer_to(const std::shared_ptr<task>& target);
+    void FT_API the_coroutine_ended(const task&) noexcept;
+    bool FT_API transfer_to(const task& target);
 
 
-    bool FT_API enter_sleep_until(std::chrono::high_resolution_clock::time_point time_point);
-    bool FT_API enter_yield();
+    bool FT_API enter_sleep_until(enter_state&, std::chrono::high_resolution_clock::time_point time_point);
+    bool FT_API enter_yield(enter_state&);
 }
 #endif /* INCLUDE_TASK_THIS_TASK */

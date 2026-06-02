@@ -27,6 +27,7 @@ namespace fast_task {
             }
 
             struct awaiter {
+                enter_state state;
                 io_handle& self;
 
                 bool await_ready() noexcept {
@@ -34,7 +35,7 @@ namespace fast_task {
                 }
 
                 bool await_suspend(base_coro_handle h) {
-                    return !self.op.enter_wait(h.promise->task_object);
+                    return !self.op.enter_wait(h.promise->task_object, state);
                 }
 
                 T await_resume() {
@@ -43,10 +44,11 @@ namespace fast_task {
             };
 
             awaiter operator co_await() noexcept {
-                return awaiter{*this};
+                return awaiter{{}, *this};
             }
 
             struct cancel_awaiter {
+                enter_state state;
                 io_handle& self;
 
                 bool await_ready() noexcept {
@@ -54,14 +56,14 @@ namespace fast_task {
                 }
 
                 bool await_suspend(base_coro_handle h) {
-                    return !self.op.enter_cancel(h.promise->task_object);
+                    return !self.op.enter_cancel(h.promise->task_object, state);
                 }
 
                 void await_resume() {}
             };
 
             cancel_awaiter cancel() noexcept {
-                return cancel_awaiter{*this};
+                return cancel_awaiter{{}, *this};
             }
         };
 
@@ -85,6 +87,7 @@ namespace fast_task {
             }
 
             struct awaiter {
+                enter_state state;
                 io_handle& self;
 
                 bool await_ready() noexcept {
@@ -92,7 +95,7 @@ namespace fast_task {
                 }
 
                 bool await_suspend(base_coro_handle h) {
-                    return !self.op.enter_wait(h.promise->task_object);
+                    return !self.op.enter_wait(h.promise->task_object, state);
                 }
 
                 void await_resume() {
@@ -101,10 +104,11 @@ namespace fast_task {
             };
 
             awaiter operator co_await() noexcept {
-                return awaiter{*this};
+                return awaiter{{}, *this};
             }
 
             struct cancel_awaiter {
+                enter_state state;
                 io_handle& self;
 
                 bool await_ready() noexcept {
@@ -112,14 +116,14 @@ namespace fast_task {
                 }
 
                 bool await_suspend(base_coro_handle h) {
-                    return !self.op.enter_cancel(h.promise->task_object);
+                    return !self.op.enter_cancel(h.promise->task_object, state);
                 }
 
                 void await_resume() {}
             };
 
             cancel_awaiter cancel() noexcept {
-                return cancel_awaiter{*this};
+                return cancel_awaiter{{}, *this};
             }
         };
 
@@ -144,6 +148,7 @@ namespace fast_task {
             }
 
             struct awaiter {
+                enter_state state;
                 io_handle_until& self;
 
                 bool await_ready() noexcept {
@@ -151,7 +156,7 @@ namespace fast_task {
                 }
 
                 bool await_suspend(base_coro_handle h) {
-                    return !self.op.enter_wait_until(h.promise->task_object, self.tp);
+                    return !self.op.enter_wait_until(h.promise->task_object, state, self.tp);
                 }
 
                 std::optional<T> await_resume() {
@@ -162,10 +167,11 @@ namespace fast_task {
             };
 
             awaiter operator co_await() noexcept {
-                return awaiter{*this};
+                return awaiter{{}, *this};
             }
 
             struct cancel_awaiter {
+                enter_state state;
                 io_handle_until& self;
 
                 bool await_ready() noexcept {
@@ -173,14 +179,14 @@ namespace fast_task {
                 }
 
                 bool await_suspend(base_coro_handle h) {
-                    return !self.op.enter_cancel(h.promise->task_object);
+                    return !self.op.enter_cancel(h.promise->task_object, state);
                 }
 
                 void await_resume() {}
             };
 
             cancel_awaiter cancel() noexcept {
-                return cancel_awaiter{*this};
+                return cancel_awaiter{{}, *this};
             }
         };
 
@@ -205,6 +211,7 @@ namespace fast_task {
             }
 
             struct awaiter {
+                enter_state state;
                 io_handle_until& self;
 
                 bool await_ready() noexcept {
@@ -212,7 +219,7 @@ namespace fast_task {
                 }
 
                 bool await_suspend(base_coro_handle h) {
-                    return !self.op.enter_wait_until(h.promise->task_object, self.tp);
+                    return !self.op.enter_wait_until(h.promise->task_object, state, self.tp);
                 }
 
                 bool await_resume() {
@@ -225,10 +232,11 @@ namespace fast_task {
             };
 
             awaiter operator co_await() noexcept {
-                return awaiter{*this};
+                return awaiter{{}, *this};
             }
 
             struct cancel_awaiter {
+                enter_state state;
                 io_handle_until& self;
 
                 bool await_ready() noexcept {
@@ -236,14 +244,14 @@ namespace fast_task {
                 }
 
                 bool await_suspend(base_coro_handle h) {
-                    return !self.op.enter_cancel(h.promise->task_object);
+                    return !self.op.enter_cancel(h.promise->task_object, state);
                 }
 
                 void await_resume() {}
             };
 
             cancel_awaiter cancel() noexcept {
-                return cancel_awaiter{*this};
+                return cancel_awaiter{{}, *this};
             }
         };
 
@@ -267,6 +275,7 @@ namespace fast_task {
             }
 
             struct awaiter {
+                enter_state state;
                 safe_io_handle& self;
 
                 bool await_ready() noexcept {
@@ -274,7 +283,7 @@ namespace fast_task {
                 }
 
                 bool await_suspend(base_coro_handle h) {
-                    return !self.op.enter_wait(h.promise->task_object);
+                    return !self.op.enter_wait(h.promise->task_object, state);
                 }
 
                 polyfill::expected<T, file::io_errors> await_resume() {
@@ -285,10 +294,11 @@ namespace fast_task {
             };
 
             awaiter operator co_await() noexcept {
-                return awaiter{*this};
+                return awaiter{{}, *this};
             }
 
             struct cancel_awaiter {
+                enter_state state;
                 safe_io_handle& self;
 
                 bool await_ready() noexcept {
@@ -296,14 +306,14 @@ namespace fast_task {
                 }
 
                 bool await_suspend(base_coro_handle h) {
-                    return !self.op.enter_cancel(h.promise->task_object);
+                    return !self.op.enter_cancel(h.promise->task_object, state);
                 }
 
                 void await_resume() {}
             };
 
             cancel_awaiter cancel() noexcept {
-                return cancel_awaiter{*this};
+                return cancel_awaiter{{}, *this};
             }
         };
 
@@ -327,6 +337,7 @@ namespace fast_task {
             }
 
             struct awaiter {
+                enter_state state;
                 safe_io_handle& self;
 
                 bool await_ready() noexcept {
@@ -334,7 +345,7 @@ namespace fast_task {
                 }
 
                 bool await_suspend(base_coro_handle h) {
-                    return !self.op.enter_wait(h.promise->task_object);
+                    return !self.op.enter_wait(h.promise->task_object, state);
                 }
 
                 polyfill::expected<void, file::io_errors> await_resume() {
@@ -345,10 +356,11 @@ namespace fast_task {
             };
 
             awaiter operator co_await() noexcept {
-                return awaiter{*this};
+                return awaiter{{}, *this};
             }
 
             struct cancel_awaiter {
+                enter_state state;
                 safe_io_handle& self;
 
                 bool await_ready() noexcept {
@@ -356,14 +368,14 @@ namespace fast_task {
                 }
 
                 bool await_suspend(base_coro_handle h) {
-                    return !self.op.enter_cancel(h.promise->task_object);
+                    return !self.op.enter_cancel(h.promise->task_object, state);
                 }
 
                 void await_resume() {}
             };
 
             cancel_awaiter cancel() noexcept {
-                return cancel_awaiter{*this};
+                return cancel_awaiter{{}, *this};
             }
         };
 
@@ -388,6 +400,7 @@ namespace fast_task {
             }
 
             struct awaiter {
+                enter_state state;
                 safe_io_handle_until& self;
 
                 bool await_ready() noexcept {
@@ -395,7 +408,7 @@ namespace fast_task {
                 }
 
                 bool await_suspend(base_coro_handle h) {
-                    return !self.op.enter_wait_until(h.promise->task_object, self.tp);
+                    return !self.op.enter_wait_until(h.promise->task_object, state, self.tp);
                 }
 
                 std::optional<T> await_resume() {
@@ -406,10 +419,11 @@ namespace fast_task {
             };
 
             awaiter operator co_await() noexcept {
-                return awaiter{*this};
+                return awaiter{{}, *this};
             }
 
             struct cancel_awaiter {
+                enter_state state;
                 safe_io_handle_until& self;
 
                 bool await_ready() noexcept {
@@ -417,14 +431,14 @@ namespace fast_task {
                 }
 
                 bool await_suspend(base_coro_handle h) {
-                    return !self.op.enter_cancel(h.promise->task_object);
+                    return !self.op.enter_cancel(h.promise->task_object, state);
                 }
 
                 void await_resume() {}
             };
 
             cancel_awaiter cancel() noexcept {
-                return cancel_awaiter{*this};
+                return cancel_awaiter{{}, *this};
             }
         };
 
@@ -450,6 +464,7 @@ namespace fast_task {
             }
 
             struct awaiter {
+                enter_state state;
                 safe_io_handle_until& self;
 
                 bool await_ready() noexcept {
@@ -457,7 +472,7 @@ namespace fast_task {
                 }
 
                 bool await_suspend(base_coro_handle h) {
-                    return !self.op.enter_wait_until(h.promise->task_object, self.tp);
+                    return !self.op.enter_wait_until(h.promise->task_object, state, self.tp);
                 }
 
                 polyfill::expected<bool, file::io_errors> await_resume() {
@@ -468,10 +483,11 @@ namespace fast_task {
             };
 
             awaiter operator co_await() noexcept {
-                return awaiter{*this};
+                return awaiter{{}, *this};
             }
 
             struct cancel_awaiter {
+                enter_state state;
                 safe_io_handle_until& self;
 
                 bool await_ready() noexcept {
@@ -479,14 +495,14 @@ namespace fast_task {
                 }
 
                 bool await_suspend(base_coro_handle h) {
-                    return !self.op.enter_cancel(h.promise->task_object);
+                    return !self.op.enter_cancel(h.promise->task_object, state);
                 }
 
                 void await_resume() {}
             };
 
             cancel_awaiter cancel() noexcept {
-                return cancel_awaiter{*this};
+                return cancel_awaiter{{}, *this};
             }
         };
     }

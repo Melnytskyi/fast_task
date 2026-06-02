@@ -6,6 +6,7 @@
 
 #ifndef INCLUDE_TASK_QUERY
 #define INCLUDE_TASK_QUERY
+#include "enter_state.hpp"
 #include "task.hpp"
 
 namespace fast_task {
@@ -17,11 +18,11 @@ namespace fast_task {
     public:
         task_query(size_t at_execution_max = 1);
         ~task_query();
-        void add(std::shared_ptr<task>&);
-        void add(std::shared_ptr<task>&&);
+        void add(task&);
+        void add(task&&);
         void enable();
         void disable();
-        bool in_query(const std::shared_ptr<task>& task);
+        bool in_query(const task& task);
         void set_max_at_execution(size_t val);
         size_t get_max_at_execution();
         void wait();
@@ -32,8 +33,8 @@ namespace fast_task {
             return wait_until(std::chrono::high_resolution_clock::now() + duration);
         }
 
-        bool enter_wait(const std::shared_ptr<task>& task);
-        bool enter_wait_until(const std::shared_ptr<task>& task, std::chrono::high_resolution_clock::time_point);
+        bool enter_wait(const task&, enter_state& task);
+        bool enter_wait_until(const task&, enter_state& task, std::chrono::high_resolution_clock::time_point);
     };
 }
 

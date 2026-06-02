@@ -37,23 +37,23 @@ namespace fast_task {
             inline constexpr long long high_max_quantum_ns = 240 * 1000000;
         };
 
-        void FT_API schedule_until(std::shared_ptr<task>&& task, std::chrono::high_resolution_clock::time_point time_point);
-        void FT_API schedule_until(const std::shared_ptr<task>& task, std::chrono::high_resolution_clock::time_point time_point);
+        void FT_API schedule_until(task&& task, std::chrono::high_resolution_clock::time_point time_point);
+        void FT_API schedule_until(const task& task, std::chrono::high_resolution_clock::time_point time_point);
 
         template <class Dur_resolution, class Dur_type>
-        void schedule(std::shared_ptr<task>&& task, std::chrono::duration<Dur_resolution, Dur_type> duration) {
+        void schedule(task&& task, std::chrono::duration<Dur_resolution, Dur_type> duration) {
             schedule_until(std::move(task), std::chrono::high_resolution_clock::now() + duration);
         }
 
         template <class Dur_resolution, class Dur_type>
-        void schedule(const std::shared_ptr<task>& task, std::chrono::duration<Dur_resolution, Dur_type> duration) {
+        void schedule(const task& task, std::chrono::duration<Dur_resolution, Dur_type> duration) {
             schedule_until(task, std::chrono::high_resolution_clock::now() + duration);
         }
 
-        void FT_API start(std::shared_ptr<task>&& lgr_task);
-        void FT_API start(std::list<std::shared_ptr<task>>& lgr_task);
-        void FT_API start(std::vector<std::shared_ptr<task>>& lgr_task);
-        void FT_API start(const std::shared_ptr<task>& lgr_task);
+        void FT_API start(task&& lgr_task);
+        void FT_API start(std::list<task>& lgr_task);
+        void FT_API start(std::vector<task>& lgr_task);
+        void FT_API start(const task& lgr_task);
 
         uint16_t FT_API create_bind_only_executor(uint16_t fixed_count, bool allow_implicit_start, executor_policy policy = executor_policy::default_policy);
         void FT_API assign_bind_only_executor(uint16_t id, uint16_t fixed_count, bool allow_implicit_start, executor_policy policy = executor_policy::default_policy);
@@ -70,7 +70,7 @@ namespace fast_task {
         void FT_API explicit_start_timer();
         void FT_API shut_down();
 
-        const std::shared_ptr<task>& FT_API current_context_task();
+        const task& FT_API current_context_task();
 
 
         /**

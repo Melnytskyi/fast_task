@@ -46,13 +46,13 @@ TEST_F(TaskRwMutexTest, MultipleReaders) {
     };
 
     run_task([&] {
-        auto t1 = std::make_shared<fast_task::task>([&] { reader(); });
-        auto t2 = std::make_shared<fast_task::task>([&] { reader(); });
-        auto t3 = std::make_shared<fast_task::task>([&] { reader(); });
+        auto t1 = fast_task::task::create([&] { reader(); });
+        auto t2 = fast_task::task::create([&] { reader(); });
+        auto t3 = fast_task::task::create([&] { reader(); });
         fast_task::scheduler::start(t1);
         fast_task::scheduler::start(t2);
         fast_task::scheduler::start(t3);
-        std::vector<std::shared_ptr<fast_task::task>> tasks3{t1, t2, t3};
+        std::vector<fast_task::task> tasks3{t1, t2, t3};
         fast_task::task::await_multiple(tasks3, true);
     });
 
@@ -67,7 +67,7 @@ TEST_F(TaskRwMutexTest, WriterExcludesReaders) {
     run_task([&] {
         m.write_lock();
 
-        auto reader = std::make_shared<fast_task::task>([&] {
+        auto reader = fast_task::task::create([&] {
             m.read_lock();
             reader_saw_write_incomplete = !writer_done.load();
             m.read_unlock();
@@ -78,7 +78,7 @@ TEST_F(TaskRwMutexTest, WriterExcludesReaders) {
         writer_done = true;
         m.write_unlock();
 
-        reader->await_task();
+        reader.await_task();
     });
 
     EXPECT_FALSE(reader_saw_write_incomplete.load());

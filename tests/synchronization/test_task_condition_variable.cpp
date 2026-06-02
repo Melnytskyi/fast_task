@@ -15,7 +15,7 @@ TEST_F(TaskCvTest, WaitAndNotifyOne) {
     bool ready = false;
 
     run_task([&] {
-        auto waiter = std::make_shared<fast_task::task>([&] {
+        auto waiter = fast_task::task::create([&] {
             fast_task::mutex_unify um(m);
             fast_task::unique_lock<fast_task::mutex_unify> lock(um);
             while (!ready)
@@ -30,7 +30,7 @@ TEST_F(TaskCvTest, WaitAndNotifyOne) {
         }
         cv.notify_one();
 
-        waiter->await_task();
+        waiter.await_task();
     });
 
     EXPECT_TRUE(ready);
@@ -51,9 +51,9 @@ TEST_F(TaskCvTest, NotifyAll) {
     };
 
     run_task([&] {
-        auto t1 = std::make_shared<fast_task::task>([&] { waiter_fn(); });
-        auto t2 = std::make_shared<fast_task::task>([&] { waiter_fn(); });
-        auto t3 = std::make_shared<fast_task::task>([&] { waiter_fn(); });
+        auto t1 = fast_task::task::create([&] { waiter_fn(); });
+        auto t2 = fast_task::task::create([&] { waiter_fn(); });
+        auto t3 = fast_task::task::create([&] { waiter_fn(); });
         fast_task::scheduler::start(t1);
         fast_task::scheduler::start(t2);
         fast_task::scheduler::start(t3);
@@ -65,7 +65,7 @@ TEST_F(TaskCvTest, NotifyAll) {
         }
         cv.notify_all();
 
-        std::vector<std::shared_ptr<fast_task::task>> tasks3{t1, t2, t3};
+        std::vector<fast_task::task> tasks3{t1, t2, t3};
         fast_task::task::await_multiple(tasks3, true);
     });
 
@@ -93,7 +93,7 @@ TEST_F(TaskCvTest, HasWaiters) {
     bool notify = false;
 
     run_task([&] {
-        auto waiter = std::make_shared<fast_task::task>([&] {
+        auto waiter = fast_task::task::create([&] {
             fast_task::mutex_unify um(m);
             fast_task::unique_lock<fast_task::mutex_unify> lock(um);
             waiter_in = true;
@@ -113,7 +113,7 @@ TEST_F(TaskCvTest, HasWaiters) {
             notify = true;
         }
         cv.notify_one();
-        waiter->await_task();
+        waiter.await_task();
     });
 
     EXPECT_FALSE(cv.has_waiters());

@@ -13,6 +13,7 @@
 namespace fast_task {
     [[nodiscard]] inline auto async_wait(task_query& query) {
         struct awaiter {
+            enter_state state;
             task_query& query;
 
             bool await_ready() noexcept {
@@ -20,20 +21,21 @@ namespace fast_task {
             }
 
             bool await_suspend(base_coro_handle h) {
-                return !query.enter_wait(h.promise->task_object);
+                return !query.enter_wait(h.promise->task_object, state);
             }
 
             void await_resume() noexcept {}
         };
 
-        return awaiter{query};
+        return awaiter{{}, query};
     }
 
     [[nodiscard]] inline auto async_wait_until(task_query& query, std::chrono::high_resolution_clock::time_point time_point) {
         struct awaiter {
+            enter_state state;
             task_query& query;
             std::chrono::high_resolution_clock::time_point time_point;
-            std::shared_ptr<fast_task::task> task_obj;
+            fast_task::task task_obj;
             bool successful = false;
 
             bool await_ready() noexcept {
@@ -43,18 +45,18 @@ namespace fast_task {
 
             bool await_suspend(base_coro_handle h) {
                 task_obj = h.promise->task_object;
-                return !query.enter_wait_until(h.promise->task_object, time_point);
+                return !query.enter_wait_until(h.promise->task_object, state, time_point);
             }
 
             bool await_resume() noexcept {
                 if (successful)
                     return true;
-                successful = !task_obj->has_wait_timed_out();
+                successful = !task_obj.has_wait_timed_out();
                 return successful;
             }
         };
 
-        return awaiter{query, time_point};
+        return awaiter{{}, query, time_point};
     }
 
     template <class Rep, class Period>

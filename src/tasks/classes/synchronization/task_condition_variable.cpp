@@ -9,6 +9,31 @@
 #include <variant>
 
 namespace fast_task {
+    void task_condition_variable::push_back(private_values& values, resume_task* node) {
+        node->next = nullptr;
+        node->prev = values.end;
+        if (values.end) {
+            values.end->next = node;
+        } else
+            values.begin = node;
+
+        values.end = node;
+    }
+
+    void task_condition_variable::erase(private_values& values, resume_task* node) {
+        if (node->prev) {
+            node->prev->next = node->next;
+        } else
+            values.begin = node->next;
+
+        if (node->next) {
+            node->next->prev = node->prev;
+        } else
+            values.end = node->prev;
+
+        node->next = nullptr;
+        node->prev = nullptr;
+    }
 
     task_condition_variable::task_condition_variable() {
         FT_DEBUG_ONLY(register_object(this));
@@ -16,22 +41,33 @@ namespace fast_task {
 
     task_condition_variable::~task_condition_variable() {
         FT_DEBUG_ONLY(unregister_object(this));
-        if (!values.resume_task.empty()) {
+        if (values.begin) {
             assert(false && "Condition_variable destroyed while waited");
             std::terminate();
         }
     }
 
     void task_condition_variable::wait(fast_task::unique_lock<mutex_unify>& mut) {
+        resume_task node;
         if (get_loc().is_task_thread) {
-            fast_task::lock_guard guard(values.no_race);
-            values.resume_task.emplace_back(get_loc().curr_task, get_data(get_loc().curr_task).awake_check);
+            node.task = get_loc().curr_task;
+            node.awake_check = get_data(get_loc().curr_task).awake_check;
+            {
+                fast_task::lock_guard guard(values.no_race);
+                push_back(values, &node);
+            }
             swapCtxRelock(*mut.mutex(), values.no_race);
         } else {
             fast_task::condition_variable_any cd;
             bool has_res = false;
+            node.task = nullptr;
+            node.awake_check = 0;
+            node.native_cv = &cd;
+            node.native_check = &has_res;
+
             fast_task::unique_lock no_race_guard(values.no_race);
-            values.resume_task.emplace_back(nullptr, (uint16_t)0, &cd, &has_res);
+            push_back(values, &node);
+
             relock_guard relock(mut);
             while (!has_res) //-V654
                 cd.wait(no_race_guard);
@@ -40,34 +76,41 @@ namespace fast_task {
     }
 
     bool task_condition_variable::wait_until(fast_task::unique_lock<mutex_unify>& mut, std::chrono::high_resolution_clock::time_point time_point) {
+        resume_task node;
         if (get_loc().is_task_thread) {
-            fast_task::lock_guard guard(glob.task_timer_safety);
-            makeTimeWait_unsafe(time_point);
+            node.task = get_loc().curr_task;
+            node.awake_check = get_data(get_loc().curr_task).awake_check;
             {
-                fast_task::lock_guard _guard(values.no_race);
-                values.resume_task.emplace_back(get_loc().curr_task, get_data(get_loc().curr_task).awake_check);
+                fast_task::lock_guard guard(glob.task_timer_safety);
+                makeTimeWait_unsafe(time_point);
+                {
+                    fast_task::lock_guard _guard(values.no_race);
+                    push_back(values, &node);
+                }
+                swapCtxRelock(*mut.mutex(), glob.task_timer_safety);
             }
-            swapCtxRelock(*mut.mutex(), glob.task_timer_safety);
-            auto time_end_flag = get_data(get_loc().curr_task).time_end_flag;
+            auto timed = get_data(get_loc().curr_task).get_time_end();
             resetTimeWait();
-            if (time_end_flag) {
+            if (timed) {
                 fast_task::lock_guard _guard(values.no_race);
-                auto it = std::find_if(values.resume_task.begin(), values.resume_task.end(), [](const auto& a) { return a.task == get_loc().curr_task; });
-                if (it != values.resume_task.end())
-                    values.resume_task.erase(it);
+                erase(values, &node);
                 return false;
             }
         } else {
             fast_task::condition_variable_any cd;
             bool has_res = false;
+            node.task = nullptr;
+            node.awake_check = 0;
+            node.native_cv = &cd;
+            node.native_check = &has_res;
+
             fast_task::unique_lock no_race_guard(values.no_race);
-            values.resume_task.emplace_back(nullptr, (uint16_t)0, &cd, &has_res);
+            push_back(values, &node);
+
             relock_guard relock(mut);
             while (!has_res) { //-V654
                 if (cd.wait_until(no_race_guard, time_point) == cv_status::timeout) {
-                    auto it = std::find_if(values.resume_task.begin(), values.resume_task.end(), [&](const auto& a) { return a.native_cv == &cd; });
-                    if (it != values.resume_task.end())
-                        values.resume_task.erase(it);
+                    erase(values, &node);
                     no_race_guard.unlock();
                     return false;
                 }
@@ -78,15 +121,26 @@ namespace fast_task {
     }
 
     void task_condition_variable::wait(std::unique_lock<mutex_unify>& mut) {
+        resume_task node;
         if (get_loc().is_task_thread) {
-            fast_task::lock_guard guard(values.no_race);
-            values.resume_task.emplace_back(get_loc().curr_task, get_data(get_loc().curr_task).awake_check);
+            node.task = get_loc().curr_task;
+            node.awake_check = get_data(get_loc().curr_task).awake_check;
+            {
+                fast_task::lock_guard guard(values.no_race);
+                push_back(values, &node);
+            }
             swapCtxRelock(*mut.mutex(), values.no_race);
         } else {
             fast_task::condition_variable_any cd;
             bool has_res = false;
+            node.task = nullptr;
+            node.awake_check = 0;
+            node.native_cv = &cd;
+            node.native_check = &has_res;
+
             fast_task::unique_lock no_race_guard(values.no_race);
-            values.resume_task.emplace_back(nullptr, (uint16_t)0, &cd, &has_res);
+            push_back(values, &node);
+
             relock_guard relock(mut);
             while (!has_res) //-V654
                 cd.wait(no_race_guard);
@@ -96,33 +150,41 @@ namespace fast_task {
 
     bool task_condition_variable::wait_until(std::unique_lock<mutex_unify>& mut, std::chrono::high_resolution_clock::time_point time_point) {
         if (get_loc().is_task_thread) {
-            fast_task::lock_guard guard(glob.task_timer_safety);
-            makeTimeWait_unsafe(time_point);
+            resume_task node;
+            node.task = get_loc().curr_task;
+            node.awake_check = get_data(get_loc().curr_task).awake_check;
             {
-                fast_task::lock_guard _guard(values.no_race);
-                values.resume_task.emplace_back(get_loc().curr_task, get_data(get_loc().curr_task).awake_check);
+                fast_task::lock_guard guard(glob.task_timer_safety);
+                makeTimeWait_unsafe(time_point);
+                {
+                    fast_task::lock_guard _guard(values.no_race);
+                    push_back(values, &node);
+                }
+                swapCtxRelock(*mut.mutex(), glob.task_timer_safety);
             }
-            swapCtxRelock(*mut.mutex(), glob.task_timer_safety);
-            auto time_end_flag = get_data(get_loc().curr_task).time_end_flag;
+            auto timed = get_data(get_loc().curr_task).get_time_end();
             resetTimeWait();
-            if (time_end_flag) {
+            if (timed) {
                 fast_task::lock_guard _guard(values.no_race);
-                auto it = std::find_if(values.resume_task.begin(), values.resume_task.end(), [](const auto& a) { return a.task == get_loc().curr_task; });
-                if (it != values.resume_task.end())
-                    values.resume_task.erase(it);
+                erase(values, &node);
                 return false;
             }
         } else {
             fast_task::condition_variable_any cd;
             bool has_res = false;
+            resume_task node;
+            node.task = nullptr;
+            node.awake_check = 0;
+            node.native_cv = &cd;
+            node.native_check = &has_res;
+
             fast_task::unique_lock no_race_guard(values.no_race);
-            values.resume_task.emplace_back(nullptr, (uint16_t)0, &cd, &has_res);
+            push_back(values, &node);
+
             relock_guard relock(mut);
             while (!has_res) { //-V654
                 if (cd.wait_until(no_race_guard, time_point) == cv_status::timeout) {
-                    auto it = std::find_if(values.resume_task.begin(), values.resume_task.end(), [&](const auto& a) { return a.native_cv == &cd; });
-                    if (it != values.resume_task.end())
-                        values.resume_task.erase(it);
+                    erase(values, &node);
                     no_race_guard.unlock();
                     return false;
                 }
@@ -133,34 +195,43 @@ namespace fast_task {
     }
 
     void task_condition_variable::notify_all() {
-        fast_task::unique_lock no_race_guard(values.no_race);
-        std::list<struct resume_task> revive_tasks(std::move(values.resume_task));
-        no_race_guard.unlock();
-        if (revive_tasks.empty())
+        resume_task* head = nullptr;
+        {
+            fast_task::unique_lock no_race_guard(values.no_race);
+            head = values.begin;
+            values.begin = nullptr;
+            values.end = nullptr;
+        }
+        if (!head)
             return;
         bool to_yield = false;
         {
             fast_task::shared_lock guard(glob.task_thread_safety);
-            for (auto& [it, awake_check, native_cv, native_flag] : revive_tasks) {
-                if (it == nullptr) {
-                    if (native_cv != nullptr) {
-                        *native_flag = true;
-                        native_cv->notify_all();
+            resume_task* curr = head;
+            while (curr) {
+                resume_task* next = curr->next;
+                if (curr->task == nullptr) {
+                    if (curr->native_cv != nullptr) {
+                        *curr->native_check = true;
+                        curr->native_cv->notify_all();
                     }
-                    continue;
+                } else {
+                    fast_task::lock_guard guard_loc(get_data(curr->task));
+                    if (get_data(curr->task).awake_check == curr->awake_check) {
+                        if (!get_data(curr->task).get_time_end()) {
+                            get_data(curr->task).set_awaked(true);
+                            fast_task::relock_guard guard_relock(guard);
+                            transfer_task(std::move(curr->task));
+                        }
+                    }
                 }
-                fast_task::lock_guard guard_loc(get_data(it).no_race);
-                if (get_data(it).awake_check != awake_check)
-                    continue;
-                if (!get_data(it).time_end_flag) {
-                    get_data(it).awaked = true;
-                    fast_task::relock_guard guard_relock(guard);
-                    transfer_task(std::move(it));
-                }
+                if (curr->heap_allocated)
+                    delete curr;
+                curr = next;
             }
             glob.tasks_notifier.notify_one();
             if (task::max_running_tasks && get_loc().is_task_thread) {
-                if (can_be_scheduled_task_to_hot() && get_loc().curr_task && !get_data(get_loc().curr_task).end_of_life)
+                if (can_be_scheduled_task_to_hot() && get_loc().curr_task && !get_data(get_loc().curr_task).is_ended())
                     to_yield = true;
             }
         }
@@ -169,33 +240,40 @@ namespace fast_task {
     }
 
     void task_condition_variable::notify_all_guarded() {
-        std::list<struct resume_task> revive_tasks;
+        resume_task* head = nullptr;
         {
             fast_task::unique_lock no_race_guard(values.no_race);
-            revive_tasks = std::move(values.resume_task);
+            head = values.begin;
+            values.begin = nullptr;
+            values.end = nullptr;
         }
-        if (revive_tasks.empty())
+        if (!head)
             return;
         bool to_yield = false;
-        for (auto& [it, awake_check, native_cv, native_flag] : revive_tasks) {
-            if (it == nullptr) {
-                if (native_cv != nullptr) {
-                    *native_flag = true;
-                    native_cv->notify_all();
+        resume_task* curr = head;
+        while (curr) {
+            resume_task* next = curr->next;
+            if (curr->task == nullptr) {
+                if (curr->native_cv != nullptr) {
+                    *curr->native_check = true;
+                    curr->native_cv->notify_all();
                 }
-                continue;
+            } else {
+                fast_task::lock_guard guard_loc(get_data(curr->task));
+                if (get_data(curr->task).awake_check == curr->awake_check) {
+                    if (!get_data(curr->task).get_time_end()) {
+                        get_data(curr->task).set_awaked(true);
+                        transfer_task(std::move(curr->task), reinterpret_cast<enter_state*>(curr));
+                    }
+                }
             }
-            fast_task::lock_guard guard_loc(get_data(it).no_race);
-            if (get_data(it).awake_check != awake_check)
-                continue;
-            if (!get_data(it).time_end_flag) {
-                get_data(it).awaked = true;
-                transfer_task(std::move(it));
-            }
+            if (curr->heap_allocated)
+                delete curr;
+            curr = next;
         }
         glob.tasks_notifier.notify_one();
         if (task::max_running_tasks && get_loc().is_task_thread) {
-            if (can_be_scheduled_task_to_hot() && get_loc().curr_task && !get_data(get_loc().curr_task).end_of_life)
+            if (can_be_scheduled_task_to_hot() && get_loc().curr_task && !get_data(get_loc().curr_task).is_ended())
                 to_yield = true;
         }
         if (to_yield)
@@ -203,45 +281,50 @@ namespace fast_task {
     }
 
     void task_condition_variable::notify_one() {
-        std::shared_ptr<task> tsk;
+        task tsk;
+        resume_task* popped_node = nullptr;
         {
             fast_task::lock_guard guard(values.no_race);
-            while (values.resume_task.size()) {
-                auto& [cur, awake_check, native_cv, native_flag] = values.resume_task.back();
-                if (cur == nullptr) {
-                    if (native_cv != nullptr) {
-                        *native_flag = true;
-                        native_cv->notify_all();
-                        values.resume_task.pop_back();
+            while (values.end) {
+                resume_task* cur_node = values.end;
+                if (cur_node->task == nullptr) {
+                    if (cur_node->native_cv != nullptr) {
+                        *cur_node->native_check = true;
+                        cur_node->native_cv->notify_all();
+
+                        erase(values, cur_node);
+                        if (cur_node->heap_allocated)
+                            delete cur_node;
+
                         return;
                     }
-                    values.resume_task.pop_back();
+                    erase(values, cur_node);
+                    if (cur_node->heap_allocated)
+                        delete cur_node;
                     continue;
                 }
-                fast_task::unique_lock ul(get_data(cur).no_race);
-                if (get_data(cur).time_end_flag || get_data(cur).awake_check != awake_check) {
-                    ul.unlock();
-                    values.resume_task.pop_back();
-                } else {
-                    tsk = cur;
-                    values.resume_task.pop_back();
-                    break;
-                }
+
+                tsk = cur_node->task;
+                erase(values, cur_node);
+                popped_node = cur_node;
+                break;
             }
             if (!tsk)
                 return;
         }
         bool to_yield = false;
-        fast_task::lock_guard guard_loc(get_data(tsk).no_race, fast_task::adopt_lock);
+        fast_task::lock_guard guard_loc(get_data(tsk), fast_task::adopt_lock);
         {
-            get_data(tsk).awaked = true;
+            get_data(tsk).set_awaked(true);
             fast_task::shared_lock guard(glob.task_thread_safety);
             if (task::max_running_tasks && get_loc().is_task_thread) {
-                if (can_be_scheduled_task_to_hot() && get_loc().curr_task && !get_data(get_loc().curr_task).end_of_life)
+                if (can_be_scheduled_task_to_hot() && get_loc().curr_task && !get_data(get_loc().curr_task).is_ended())
                     to_yield = true;
             }
             guard.unlock();
-            transfer_task(std::move(tsk));
+            transfer_task(std::move(tsk), reinterpret_cast<enter_state*>(popped_node));
+            if (popped_node && popped_node->heap_allocated)
+                delete popped_node;
         }
         if (to_yield)
             this_task::yield();
@@ -249,69 +332,84 @@ namespace fast_task {
 
     bool task_condition_variable::has_waiters() {
         fast_task::lock_guard guard(values.no_race);
-        return !values.resume_task.empty();
+        return values.begin != nullptr;
     }
 
-    void task_condition_variable::callback(fast_task::unique_lock<mutex_unify>& mut, const std::shared_ptr<task>& task) {
+    void task_condition_variable::callback(fast_task::unique_lock<mutex_unify>& mut, const task& task) {
         {
-            fast_task::lock_guard guard(get_data(task).no_race);
-            if (get_data(task).running || get_data(task).end_of_life)
+            fast_task::lock_guard guard(get_data(task));
+            if (get_data(task).is_running() || get_data(task).is_ended())
                 throw std::runtime_error("Task is running or completed and cannot be registered");
-            if (get_data(task).started && (!get_data(task).suspended && get_data(task).is_on_scheduler))
+            if (get_data(task).is_started() && (!get_data(task).is_suspended() && get_data(task).get_is_on_scheduler()))
                 throw std::runtime_error("Task is already in the scheduler queue");
-            if (!get_data(task).callbacks.on_start)
+            if (!get_data(task).vtable || !get_data(task).vtable->on_start)
                 throw std::logic_error("task_condition_variable::callback requires the on_start callback to be set");
         }
+        auto* node = new resume_task();
+        node->task = task;
+        node->awake_check = get_data(task).awake_check;
+        node->heap_allocated = true;
+
         if (*mut.mutex() == values.no_race) {
-            values.resume_task.emplace_back(task, get_data(task).awake_check);
+            push_back(values, node);
         } else {
             fast_task::lock_guard guard(values.no_race);
-            values.resume_task.emplace_back(task, get_data(task).awake_check);
+            push_back(values, node);
         }
-        if (!get_data(task).started) {
-            get_data(task).started = true;
+        if (!get_data(task).is_started())
             ++glob.executing_tasks;
-        } else if (get_data(task).suspended)
-            get_data(task).suspended = false;
+
+        get_data(task).set_status(task_object::status_e::running);
     }
 
-    void task_condition_variable::callback(std::unique_lock<mutex_unify>& mut, const std::shared_ptr<task>& task) {
+    void task_condition_variable::callback(std::unique_lock<mutex_unify>& mut, const task& task) {
         {
-            fast_task::lock_guard guard(get_data(task).no_race);
-            if (get_data(task).running || get_data(task).end_of_life)
+            fast_task::lock_guard guard(get_data(task));
+            if (get_data(task).is_running() || get_data(task).is_ended())
                 throw std::runtime_error("Task is running or completed and cannot be registered");
-            if (get_data(task).started && (!get_data(task).suspended && get_data(task).is_on_scheduler))
+            if (get_data(task).is_started() && (!get_data(task).is_suspended() && get_data(task).get_is_on_scheduler()))
                 throw std::runtime_error("Task is already in the scheduler queue");
-            if (!get_data(task).callbacks.on_start)
+            if (!get_data(task).vtable || !get_data(task).vtable->on_start)
                 throw std::logic_error("task_condition_variable::callback requires the on_start callback to be set");
         }
+        auto* node = new resume_task();
+        node->task = task;
+        node->awake_check = get_data(task).awake_check;
+        node->heap_allocated = true;
+
         if (*mut.mutex() == values.no_race) {
-            values.resume_task.emplace_back(task, get_data(task).awake_check);
+            push_back(values, node);
         } else {
             fast_task::lock_guard guard(values.no_race);
-            values.resume_task.emplace_back(task, get_data(task).awake_check);
+            push_back(values, node);
         }
-        if (!get_data(task).started) {
-            get_data(task).started = true;
+        if (!get_data(task).is_started())
             ++glob.executing_tasks;
-        } else if (get_data(task).suspended)
-            get_data(task).suspended = false;
+
+        get_data(task).set_status(task_object::status_e::running);
     }
 
-    bool task_condition_variable::enter_wait(mutex_unify& mut, const std::shared_ptr<task>& task) {
+    bool task_condition_variable::enter_wait(mutex_unify& mut, const task& task, enter_state& st) {
         fast_task::lock_guard l(values.no_race);
-        get_data(task).relock_0 = mut;
-        values.resume_task.push_back({task, get_data(task).awake_check, nullptr, nullptr});
+        get_data(task).set_relock_0(mut);
+        auto node = st.template use<resume_task>();
+        node->task = task;
+        node->awake_check = get_data(task).awake_check;
+        push_back(values, node);
         return false;
     }
 
-    bool task_condition_variable::enter_wait_until(mutex_unify& mut, const std::shared_ptr<task>& task, std::chrono::high_resolution_clock::time_point time_point) {
+    bool task_condition_variable::enter_wait_until(mutex_unify& mut, const task& task, enter_state& st, std::chrono::high_resolution_clock::time_point time_point) {
         if (std::chrono::high_resolution_clock::now() >= time_point)
             return true;
         fast_task::lock_guard l(values.no_race);
-        get_data(task).relock_0 = mut;
-        values.resume_task.push_back({task, get_data(task).awake_check, nullptr, nullptr});
+        get_data(task).set_relock_0(mut);
+        auto node = st.template use<resume_task>();
+        node->task = task;
+        node->awake_check = get_data(task).awake_check;
+        push_back(values, node);
         fast_task::makeTimeWait_extern(task, time_point);
         return false;
     }
 }
+

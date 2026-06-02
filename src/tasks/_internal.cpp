@@ -20,6 +20,7 @@ namespace fast_task {
         static thread_local executors_local loc;
         return loc;
     }
+
     executor_global glob;
 
     std::chrono::nanoseconds next_quantum(task_priority priority, std::chrono::nanoseconds& current_available_quantum) {
@@ -67,8 +68,8 @@ namespace fast_task {
     void executors_local::reset() {
         local_tasks.reset();
         ex_ptr = nullptr;
-        curr_task.reset();
-        transfer_state.pending.reset();
+        curr_task = task();
+        transfer_state.pending = task();
     }
 
 #if PLATFORM_WINDOWS
@@ -168,4 +169,368 @@ namespace fast_task {
         return false;
     }
 #endif
+    bool task_object::get_time_end() const noexcept {
+        return (state.load(std::memory_order_acquire) & (state_f::time_end)) != 0;
+    }
+
+    bool task_object::get_awaked() const noexcept {
+        return (state.load(std::memory_order_acquire) & (state_f::awaked)) != 0;
+    }
+
+    bool task_object::get_auto_bind() const noexcept {
+        return (state.load(std::memory_order_acquire) & (state_f::auto_bind)) != 0;
+    }
+
+    bool task_object::get_is_restartable() const noexcept {
+        return (state.load(std::memory_order_acquire) & (state_f::is_restartable)) != 0;
+    }
+
+    bool task_object::get_is_on_scheduler() const noexcept {
+        return (state.load(std::memory_order_acquire) & (state_f::is_on_scheduler)) != 0;
+    }
+
+    bool task_object::get_is_sbo() const noexcept {
+        return (state.load(std::memory_order_acquire) & (state_f::is_sbo)) != 0;
+    }
+
+    bool task_object::get_cancellation_requested() const noexcept {
+        return (state.load(std::memory_order_acquire) & (state_f::cancellation_requested)) != 0;
+    }
+
+    bool task_object::get_invalid_switch_caught() const noexcept {
+        return (state.load(std::memory_order_acquire) & (state_f::invalid_switch_caught)) != 0;
+    }
+
+    bool task_object::get_completed() const noexcept {
+        return (state.load(std::memory_order_acquire) & (state_f::completed)) != 0;
+    }
+
+    template <fast_task::task_object::state_f::f flag>
+    void set_flag(std::atomic<fast_task::task_object::state_f::f>& state, bool on) noexcept {
+        task_object::state_f::f cur = state.load(std::memory_order_relaxed), next;
+        do {
+            next = on ? task_object::state_f::f(cur | (flag)) : task_object::state_f::f(cur & ~(flag));
+        } while (!state.compare_exchange_weak(cur, next, std::memory_order_acq_rel, std::memory_order_relaxed));
+    }
+
+    void task_object::set_time_end(bool on) noexcept {
+        set_flag<state_f::time_end>(state, on);
+    }
+
+    void task_object::set_awaked(bool on) noexcept {
+        set_flag<state_f::awaked>(state, on);
+    }
+
+    void task_object::set_auto_bind(bool on) noexcept {
+        set_flag<state_f::auto_bind>(state, on);
+    }
+
+    void task_object::set_is_restartable(bool on) noexcept {
+        set_flag<state_f::is_restartable>(state, on);
+    }
+
+    void task_object::set_is_on_scheduler(bool on) noexcept {
+        set_flag<state_f::is_on_scheduler>(state, on);
+    }
+
+    void task_object::set_is_sbo(bool on) noexcept {
+        set_flag<state_f::is_sbo>(state, on);
+    }
+
+    void task_object::set_cancellation_requested(bool on) noexcept {
+        set_flag<state_f::cancellation_requested>(state, on);
+    }
+
+    void task_object::set_invalid_switch_caught(bool on) noexcept {
+        set_flag<state_f::invalid_switch_caught>(state, on);
+    }
+
+    void task_object::set_completed(bool on) noexcept {
+        set_flag<state_f::completed>(state, on);
+    }
+
+    void task_object::lock() noexcept {
+        state_f::f cur = state.load(std::memory_order_relaxed);
+        for (;;) {
+            cur = state_f::f(cur & ~state_f::spin_lock_locked);
+            if (state.compare_exchange_weak(cur, state_f::f(cur | state_f::spin_lock_locked), std::memory_order_acquire, std::memory_order_relaxed))
+                return;
+        }
+    }
+
+    void task_object::unlock() noexcept {
+        state_f::f cur = state.load(std::memory_order_relaxed), next;
+        do {
+            next = state_f::f(cur & ~state_f::spin_lock_locked);
+        } while (!state.compare_exchange_weak(cur, next, std::memory_order_release, std::memory_order_relaxed));
+    }
+
+    void task_object::set_status(status_e s) noexcept {
+        status.store(s, std::memory_order_release);
+    }
+
+    bool task_object::is_started() const noexcept {
+        return status.load(std::memory_order_acquire) != status_e::created;
+    }
+
+    bool task_object::is_running() const noexcept {
+        return status.load(std::memory_order_acquire) == status_e::running;
+    }
+
+    bool task_object::is_suspended() const noexcept {
+        return status.load(std::memory_order_acquire) == status_e::suspended;
+    }
+
+    bool task_object::is_ended() const noexcept {
+        return status.load(std::memory_order_acquire) == status_e::ended;
+    }
+
+    void* task_object::user_data() const noexcept {
+        if ((state.load(std::memory_order_acquire) & state_f::is_sbo) != 0)
+            return const_cast<std::byte*>(sbo_buffer);
+        return *reinterpret_cast<void* const*>(sbo_buffer);
+    }
+
+    void task_object::end_of_life_notify() {
+        lock();
+        status.store(task_object::status_e::ended, std::memory_order_release);
+        task_object::wait_item* head = on_wait.exchange(nullptr, std::memory_order_acq_rel);
+        unlock();
+        if (!head)
+            return;
+
+        fast_task::shared_lock guard(glob.task_thread_safety);
+        size_t to_wake = 0;
+        while (head) {
+            auto* next = head->next;
+            if (head->waiter) {
+                auto& wd = get_data(head->waiter);
+                fast_task::lock_guard guard_loc(wd);
+                if (wd.awake_check == head->awake_check && !wd.get_time_end()) {
+                    wd.set_awaked(true);
+                    fast_task::relock_guard guard_relock(guard);
+                    transfer_task(std::move(head->waiter));
+                    ++to_wake;
+                }
+            } else if (head->native_cv) {
+                *head->native_check = true;
+                head->native_cv->notify_all();
+            }
+            if (head->heap_allocated)
+                delete head;
+            head = next;
+        }
+        to_wake = std::min<size_t>(to_wake, glob.executors);
+        for (size_t i = 0; i < to_wake; i++)
+            glob.tasks_notifier.notify_one();
+    }
+
+    void task_object::wait() {
+        mutex_unify self = mutex_unify_relock_access::from_task_object(*this);
+        if (get_loc().is_task_thread) {
+            lock();
+            if (is_ended()) {
+                unlock();
+                return;
+            }
+            wait_item node;
+            node.waiter = get_loc().curr_task;
+            node.awake_check = get_data(get_loc().curr_task).awake_check;
+            node.next = on_wait.load(std::memory_order_relaxed);
+            on_wait.store(&node, std::memory_order_relaxed);
+            swapCtxRelock(self);
+            unlock();
+        } else {
+            fast_task::condition_variable_any cd;
+            bool done = false;
+            fast_task::unique_lock<mutex_unify> g(self);
+            if (is_ended())
+                return;
+            wait_item node;
+            node.native_cv = &cd;
+            node.native_check = &done;
+            node.next = on_wait.load(std::memory_order_relaxed);
+            on_wait.store(&node, std::memory_order_relaxed);
+            while (!done) //-V654
+                cd.wait(g);
+        }
+    }
+
+    void task_object::wait_until(std::chrono::high_resolution_clock::time_point time_point) {
+        mutex_unify self = mutex_unify_relock_access::from_task_object(*this);
+        if (get_loc().is_task_thread) {
+            lock();
+            if (is_ended()) {
+                unlock();
+                return;
+            }
+            wait_item node;
+            node.waiter = get_loc().curr_task;
+            node.awake_check = get_data(get_loc().curr_task).awake_check;
+            node.next = on_wait.load(std::memory_order_relaxed);
+            on_wait.store(&node, std::memory_order_relaxed);
+            {
+                fast_task::lock_guard guard(glob.task_timer_safety);
+                makeTimeWait_unsafe(time_point);
+                swapCtxRelock(self, glob.task_timer_safety);
+            }
+            bool timed = get_data(get_loc().curr_task).get_time_end();
+            resetTimeWait();
+            if (timed)
+                mutex_unify_relock_access::unlink_wait(on_wait, &node);
+            unlock();
+        } else {
+            fast_task::condition_variable_any cd;
+            bool done = false;
+            fast_task::unique_lock<mutex_unify> g(self);
+            if (is_ended())
+                return;
+            wait_item node;
+            node.native_cv = &cd;
+            node.native_check = &done;
+            node.next = on_wait.load(std::memory_order_relaxed);
+            on_wait.store(&node, std::memory_order_relaxed);
+            while (!done) { //-V654
+                if (cd.wait_until(g, time_point) == cv_status::timeout) {
+                    mutex_unify_relock_access::unlink_wait(on_wait, &node);
+                    return;
+                }
+            }
+        }
+    }
+
+    void task_object::cancel() {
+        set_cancellation_requested(true);
+    }
+
+    bool task_object::enter_wait(const task& waiter, enter_state& st) {
+        lock();
+        if (is_ended()) {
+            unlock();
+            return true;
+        }
+        auto node = st.template use<wait_item>();
+        node->waiter = waiter;
+        node->awake_check = get_data(waiter).awake_check;
+        node->next = on_wait.load(std::memory_order_relaxed);
+        on_wait.store(node, std::memory_order_relaxed);
+        unlock();
+        return false;
+    }
+
+    bool task_object::enter_wait_until(const task& waiter, enter_state& st, std::chrono::high_resolution_clock::time_point time_point) {
+        if (std::chrono::high_resolution_clock::now() >= time_point)
+            return true;
+        lock();
+        if (is_ended()) {
+            unlock();
+            return true;
+        }
+        auto node = st.template use<wait_item>();
+        node->waiter = waiter;
+        node->awake_check = get_data(waiter).awake_check;
+        node->next = on_wait.load(std::memory_order_relaxed);
+        on_wait.store(node, std::memory_order_relaxed);
+        unlock();
+        fast_task::makeTimeWait_extern(waiter, time_point);
+        return false;
+    }
+
+    bool task_object::enter_cancel(const task& waiter, enter_state& st) {
+        cancel();
+        return enter_wait(waiter, st);
+    }
+
+    mutex_unify task_object::get_relock_0() const noexcept {
+        return mutex_unify_relock_access::from_raw(relock0, relock0_type);
+    }
+
+    mutex_unify task_object::get_relock_1() const noexcept {
+        return mutex_unify_relock_access::from_raw(relock1, relock1_type);
+    }
+
+    void task_object::set_relock_0(mutex_unify mut) noexcept {
+        relock0 = mutex_unify_relock_access::raw_ptr(mut);
+        relock0_type = mutex_unify_relock_access::raw_type(mut);
+    }
+
+    void task_object::set_relock_1(mutex_unify mut) noexcept {
+        relock1 = mutex_unify_relock_access::raw_ptr(mut);
+        relock1_type = mutex_unify_relock_access::raw_type(mut);
+    }
+
+    task_object* task_object::alloc() {
+        task_object* obj = new task_object();
+        obj->tls_data.store(nullptr, std::memory_order_relaxed);
+        obj->on_wait.store(nullptr, std::memory_order_relaxed);
+        obj->exdata.store(nullptr, std::memory_order_relaxed);
+        obj->vtable = nullptr;
+        obj->relock0 = nullptr;
+        obj->relock1 = nullptr;
+        obj->relock0_type = 0;
+        obj->relock1_type = 0;
+        obj->status.store(task_object::status_e::created, std::memory_order_relaxed);
+        obj->state.store(task_object::state_f::f(0), std::memory_order_relaxed);
+        obj->bind_to_worker_id = (uint16_t)-1;
+        obj->awake_check = 0;
+        obj->tls_capacity = 0;
+        obj->reserved0 = 0;
+        obj->link_counter.store(1, std::memory_order_relaxed);
+        obj->on_start_override = nullptr;
+        obj->on_start_override_data = nullptr;
+        FT_DEBUG_ONLY(register_object(obj));
+        return obj;
+    }
+
+    task_object* task_object::use(task_object* obj) noexcept {
+        if (obj) {
+            uint32_t old_counter = obj->link_counter.fetch_add(1, std::memory_order_relaxed);
+            if (old_counter == 0) {
+                obj->link_counter.fetch_sub(1, std::memory_order_relaxed);
+                return nullptr;
+            }
+        }
+        return obj;
+    }
+
+    void task_object::free(task_object* obj) {
+        if (obj->link_counter.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+            FT_DEBUG_ONLY(unregister_object(obj));
+            if (!obj)
+                return;
+
+            const bool started = obj->is_started();
+            const bool ended = obj->is_ended();
+
+            if (obj->vtable && obj->vtable->on_destruct)
+                obj->vtable->on_destruct(obj->user_data());
+
+            if (auto* ex = obj->exdata.load(std::memory_order_acquire)) {
+                delete ex;
+                obj->exdata.store(nullptr, std::memory_order_relaxed);
+            }
+
+            if (!ended && started) {
+                --glob.executing_tasks;
+                fast_task::shared_lock guard(glob.task_thread_safety);
+                glob.no_tasks_execute_notifier.notify_all_guarded();
+            }
+
+#ifdef FT_ENABLE_ABORT_IF_NEVER_STARTED
+            if (!started && !ended) {
+                assert(false && "The task should always be started.");
+                std::abort();
+            }
+#endif
+
+            FT_DEBUG_ONLY(unregister_object(obj));
+            if (obj->vtable && obj->vtable->heap_allocated)
+                delete const_cast<task_vtable*>(obj->vtable);
+            delete obj;
+        }
+    }
+
+    mutex_unify task_object::get_self_unify() noexcept {
+        return mutex_unify_relock_access::from_task_object(*this);
+    }
 }

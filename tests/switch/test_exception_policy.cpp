@@ -22,7 +22,7 @@ TEST_F(ExceptionPolicyTest, NormalTaskCompletes) {
 
 TEST_F(ExceptionPolicyTest, ExceptionReachesExHandle) {
     bool caught = false;
-    auto t = std::make_shared<fast_task::task>(
+    auto t = fast_task::task::create(
         [] { throw std::runtime_error("policy_test"); },
         [&](const std::exception_ptr& ep) {
             try {
@@ -33,7 +33,7 @@ TEST_F(ExceptionPolicyTest, ExceptionReachesExHandle) {
         }
     );
     fast_task::scheduler::start(t);
-    t->await_task();
+    t.await_task();
     EXPECT_TRUE(caught);
 }
 
@@ -47,12 +47,12 @@ TEST_F(ExceptionPolicyTest, RunTaskHelperRethrows) {
 TEST_F(ExceptionPolicyTest, NestedExceptionFromChildTask) {
     std::atomic<bool> child_threw{false};
     run_task([&] {
-        auto child = std::make_shared<fast_task::task>(
+        auto child = fast_task::task::create(
             [] { throw std::invalid_argument("child"); },
             [&](const std::exception_ptr&) { child_threw = true; }
         );
         fast_task::scheduler::start(child);
-        child->await_task();
+        child.await_task();
     });
     EXPECT_TRUE(child_threw.load());
 }

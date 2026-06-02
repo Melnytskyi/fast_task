@@ -25,10 +25,10 @@ TEST_F(TaskPriorityTest, AllPrioritiesRun) {
 
     for (auto prio : priorities) {
         std::atomic<bool> ran{false};
-        auto t = std::make_shared<fast_task::task>([&] { ran = true; });
-        t->set_priority(prio);
+        auto t = fast_task::task::create([&] { ran = true; });
+        t.set_priority(prio);
         fast_task::scheduler::start(t);
-        t->await_task();
+        t.await_task();
         EXPECT_TRUE(ran.load()) << "Priority " << static_cast<int>(prio) << " task did not run";
     }
 }
@@ -41,22 +41,22 @@ TEST_F(TaskPriorityTest, HighPriorityRunsBeforeBackground) {
     std::atomic<int> seq{0};
 
     // background: sleep then record order
-    auto bg = std::make_shared<fast_task::task>([&] {
+    auto bg = fast_task::task::create([&] {
         fast_task::this_task::sleep_for(std::chrono::milliseconds(50));
         order_bg = ++seq;
     });
-    bg->set_priority(fast_task::task_priority::background);
+    bg.set_priority(fast_task::task_priority::background);
 
     // high: just record order (no sleep)
-    auto hi = std::make_shared<fast_task::task>([&] {
+    auto hi = fast_task::task::create([&] {
         order_hi = ++seq;
     });
-    hi->set_priority(fast_task::task_priority::high);
+    hi.set_priority(fast_task::task_priority::high);
 
     fast_task::scheduler::start(bg);
     fast_task::scheduler::start(hi);
 
-    std::vector<std::shared_ptr<fast_task::task>> tasks{bg, hi};
+    std::vector<fast_task::task> tasks{bg, hi};
     fast_task::task::await_multiple(tasks, true);
 
     EXPECT_LT(order_hi.load(), order_bg.load());

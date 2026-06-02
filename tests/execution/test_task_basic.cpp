@@ -11,18 +11,18 @@ class TaskBasicTest : public SchedulerFixture {};
 
 TEST_F(TaskBasicTest, RunAndAwait) {
     std::atomic<bool> ran{false};
-    auto t = std::make_shared<fast_task::task>([&] { ran = true; });
+    auto t = fast_task::task::create([&] { ran = true; });
     fast_task::scheduler::start(t);
-    t->await_task();
+    t.await_task();
     EXPECT_TRUE(ran.load());
 }
 
 TEST_F(TaskBasicTest, IsEndedAfterCompletion) {
-    auto t = std::make_shared<fast_task::task>([] {});
-    EXPECT_FALSE(t->is_ended());
+    auto t = fast_task::task::create([] {});
+    EXPECT_FALSE(t.is_ended());
     fast_task::scheduler::start(t);
-    t->await_task();
-    EXPECT_TRUE(t->is_ended());
+    t.await_task();
+    EXPECT_TRUE(t.is_ended());
 }
 
 TEST_F(TaskBasicTest, ReturnValueViaCapture) {
@@ -51,19 +51,19 @@ TEST_F(TaskBasicTest, TaskRun) {
     // static run() helper
     std::atomic<bool> ran{false};
     auto t = fast_task::task::run([&] { ran = true; });
-    t->await_task();
+    t.await_task();
     EXPECT_TRUE(ran.load());
 }
 
 TEST_F(TaskBasicTest, MultipleTasksAwaitMultiple) {
     std::atomic<int> done{0};
-    auto t1 = std::make_shared<fast_task::task>([&] { ++done; });
-    auto t2 = std::make_shared<fast_task::task>([&] { ++done; });
-    auto t3 = std::make_shared<fast_task::task>([&] { ++done; });
+    auto t1 = fast_task::task::create([&] { ++done; });
+    auto t2 = fast_task::task::create([&] { ++done; });
+    auto t3 = fast_task::task::create([&] { ++done; });
     fast_task::scheduler::start(t1);
     fast_task::scheduler::start(t2);
     fast_task::scheduler::start(t3);
-    std::vector<std::shared_ptr<fast_task::task>> tasks{t1, t2, t3};
+    std::vector<fast_task::task> tasks{t1, t2, t3};
     fast_task::task::await_multiple(tasks, true);
     EXPECT_EQ(done.load(), 3);
 }
@@ -71,7 +71,7 @@ TEST_F(TaskBasicTest, MultipleTasksAwaitMultiple) {
 TEST_F(TaskBasicTest, ScheduleDelayed) {
     fast_task::scheduler::explicit_start_timer();
     std::atomic<bool> ran{false};
-    auto t = std::make_shared<fast_task::task>([&] { ran = true; });
+    auto t = fast_task::task::create([&] { ran = true; });
     fast_task::scheduler::schedule(t, std::chrono::milliseconds(30));
     fast_task::this_thread::sleep_for(std::chrono::milliseconds(100));
     EXPECT_TRUE(ran.load());

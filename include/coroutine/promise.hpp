@@ -6,14 +6,14 @@
 
 namespace fast_task {
     struct FT_API task_promise_base {
-        std::shared_ptr<task> task_object;
+        task task_object;
         std::suspend_always initial_suspend() noexcept {
             return {};
         }
 
         auto final_suspend() noexcept {
             struct final_awaiter {
-                std::shared_ptr<fast_task::task> t;
+                fast_task::task t;
 
                 bool await_ready() noexcept {
                     return false;
@@ -29,7 +29,7 @@ namespace fast_task {
                 void await_resume() noexcept {}
             };
 
-            return final_awaiter{std::move(task_object)};
+            return final_awaiter{task_object};
         }
     };
 

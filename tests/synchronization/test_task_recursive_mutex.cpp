@@ -55,11 +55,11 @@ TEST_F(TaskRecursiveMutexTest, ContentionFromDifferentTask) {
     };
 
     run_task([&] {
-        auto t1 = std::make_shared<fast_task::task>([&] { worker(); });
-        auto t2 = std::make_shared<fast_task::task>([&] { worker(); });
+        auto t1 = fast_task::task::create([&] { worker(); });
+        auto t2 = fast_task::task::create([&] { worker(); });
         fast_task::scheduler::start(t1);
         fast_task::scheduler::start(t2);
-        std::vector<std::shared_ptr<fast_task::task>> tasks2{t1, t2};
+        std::vector<fast_task::task> tasks2{t1, t2};
         fast_task::task::await_multiple(tasks2, true);
     });
 

@@ -31,11 +31,12 @@ namespace fast_task {
         auto curr_task = get_loc().curr_task;
         if (!curr_task)
             return false;
-        if (get_data(curr_task).make_cancel)
+        if (get_data(curr_task).get_cancellation_requested())
             return true;
-        if (get_data(curr_task).timeout != std::chrono::high_resolution_clock::time_point::min().time_since_epoch().count())
-            if (get_data(curr_task).timeout <= std::chrono::high_resolution_clock::now().time_since_epoch().count())
-                return true;
+        if (get_data(curr_task).exdata)
+            if (get_execution_data(curr_task).timeout != std::chrono::high_resolution_clock::time_point::min().time_since_epoch().count())
+                if (get_execution_data(curr_task).timeout <= std::chrono::high_resolution_clock::now().time_since_epoch().count())
+                    return true;
         return false;
     }
 }

@@ -29,7 +29,7 @@ TEST_F(TcpTest, ConnectSendRecv) {
 
         const std::string msg = "hello tcp";
 
-        auto client = std::make_shared<ft::task>([&] {
+        auto client = ft::task::create([&] {
             auto sock = tcp_socket::connect(address("127.0.0.1", port));
             ASSERT_TRUE(sock.has_value());
             int32_t sent = sock->send(
@@ -49,7 +49,7 @@ TEST_F(TcpTest, ConnectSendRecv) {
 
         conn->close();
         listener->close();
-        client->await_task();
+        client.await_task();
     });
 }
 
@@ -68,7 +68,7 @@ TEST_F(TcpTest, LargeTransfer) {
         ASSERT_TRUE(listener.has_value());
         uint16_t port = listener->local_address().port();
 
-        auto sender = std::make_shared<ft::task>([&] {
+        auto sender = ft::task::create([&] {
             auto sock = tcp_socket::connect(address("127.0.0.1", port));
             ASSERT_TRUE(sock.has_value());
             size_t sent_total = 0;
@@ -96,7 +96,7 @@ TEST_F(TcpTest, LargeTransfer) {
             recv_data.insert(recv_data.end(), tmp.begin(), tmp.begin() + n);
         }
         conn->close();
-        sender->await_task();
+        sender.await_task();
 
         ASSERT_EQ(recv_data.size(), DATA_SIZE);
         EXPECT_EQ(recv_data, send_data);
@@ -113,7 +113,7 @@ TEST_F(TcpTest, VectoredSendRecv) {
         ASSERT_TRUE(listener.has_value());
         uint16_t port = listener->local_address().port();
 
-        auto client = std::make_shared<ft::task>([&] {
+        auto client = ft::task::create([&] {
             auto sock = tcp_socket::connect(address("127.0.0.1", port));
             ASSERT_TRUE(sock.has_value());
 
@@ -143,7 +143,7 @@ TEST_F(TcpTest, VectoredSendRecv) {
 
         conn->close();
         listener->close();
-        client->await_task();
+        client.await_task();
     });
 }
 
@@ -158,11 +158,11 @@ TEST_F(TcpTest, MultipleAccepts) {
         uint16_t port = listener->local_address().port();
 
         constexpr int N = 4;
-        std::vector<std::shared_ptr<ft::task>> clients;
+        std::vector<ft::task> clients;
         clients.reserve(N);
 
         for (int i = 0; i < N; ++i) {
-            auto t = std::make_shared<ft::task>([&, i] {
+            auto t = ft::task::create([&, i] {
                 auto sock = tcp_socket::connect(address("127.0.0.1", port));
                 ASSERT_TRUE(sock.has_value());
                 auto val = static_cast<uint8_t>(i + 1);
@@ -185,7 +185,7 @@ TEST_F(TcpTest, MultipleAccepts) {
         listener->close();
 
         for (auto& t : clients)
-            t->await_task();
+            t.await_task();
 
         EXPECT_EQ(total, 1 + 2 + 3 + 4);
     });
@@ -201,7 +201,7 @@ TEST_F(TcpTest, ShutdownWrite) {
         ASSERT_TRUE(listener.has_value());
         uint16_t port = listener->local_address().port();
 
-        auto client = std::make_shared<ft::task>([&] {
+        auto client = ft::task::create([&] {
             auto sock = tcp_socket::connect(address("127.0.0.1", port));
             ASSERT_TRUE(sock.has_value());
             const uint8_t data[] = {'X', 'Y', 'Z'};
@@ -223,7 +223,7 @@ TEST_F(TcpTest, ShutdownWrite) {
         }
         conn->close();
         listener->close();
-        client->await_task();
+        client.await_task();
 
         ASSERT_EQ(all.size(), 3u);
         EXPECT_EQ(all[0], 'X');
@@ -244,7 +244,7 @@ TEST_F(TcpTest, LocalAndRemoteAddress) {
         EXPECT_GT(listen_port, 0u);
 
         std::atomic<uint16_t> client_local_port{0};
-        auto client = std::make_shared<ft::task>([&] {
+        auto client = ft::task::create([&] {
             auto sock = tcp_socket::connect(address("127.0.0.1", listen_port));
             ASSERT_TRUE(sock.has_value());
             client_local_port = sock->local_address().port();
@@ -259,7 +259,7 @@ TEST_F(TcpTest, LocalAndRemoteAddress) {
 
         conn->close();
         listener->close();
-        client->await_task();
+        client.await_task();
         EXPECT_GT(client_local_port.load(), 0u);
     });
 }

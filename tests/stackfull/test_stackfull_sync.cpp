@@ -22,13 +22,13 @@ TEST_F(StackfullSyncTest, TaskMutexMutualExclusion) {
         value = v + 1;
     };
 
-    auto t1 = std::make_shared<fast_task::task>(worker);
-    auto t2 = std::make_shared<fast_task::task>(worker);
-    auto t3 = std::make_shared<fast_task::task>(worker);
+    auto t1 = fast_task::task::create(worker);
+    auto t2 = fast_task::task::create(worker);
+    auto t3 = fast_task::task::create(worker);
     fast_task::scheduler::start(t1);
     fast_task::scheduler::start(t2);
     fast_task::scheduler::start(t3);
-    std::vector<std::shared_ptr<fast_task::task>> tasks3{t1, t2, t3};
+    std::vector<fast_task::task> tasks3{t1, t2, t3};
     fast_task::task::await_multiple(tasks3, true);
 
     EXPECT_EQ(value, 3);
@@ -41,14 +41,14 @@ TEST_F(StackfullSyncTest, TaskCVWakesSleeper) {
     fast_task::task_condition_variable cv;
     bool ready = false;
 
-    auto waiter = std::make_shared<fast_task::task>([&] {
+    auto waiter = fast_task::task::create([&] {
         fast_task::mutex_unify mu(mtx);
         fast_task::unique_lock<fast_task::mutex_unify> lk(mu);
         while (!ready)
             cv.wait(lk);
     });
 
-    auto notifier = std::make_shared<fast_task::task>([&] {
+    auto notifier = fast_task::task::create([&] {
         fast_task::this_task::sleep_for(std::chrono::milliseconds(20));
         {
             fast_task::lock_guard<fast_task::task_mutex> lk(mtx);
@@ -59,7 +59,7 @@ TEST_F(StackfullSyncTest, TaskCVWakesSleeper) {
 
     fast_task::scheduler::start(waiter);
     fast_task::scheduler::start(notifier);
-    std::vector<std::shared_ptr<fast_task::task>> wn{waiter, notifier};
+    std::vector<fast_task::task> wn{waiter, notifier};
     fast_task::task::await_multiple(wn, true);
 
     EXPECT_TRUE(ready);
@@ -84,9 +84,9 @@ TEST_F(StackfullSyncTest, TaskSemaphoreThrottles) {
         sem.release();
     };
 
-    std::vector<std::shared_ptr<fast_task::task>> tasks;
+    std::vector<fast_task::task> tasks;
     for (int i = 0; i < 5; ++i) {
-        tasks.push_back(std::make_shared<fast_task::task>(worker));
+        tasks.push_back(fast_task::task::create(worker));
         fast_task::scheduler::start(tasks.back());
     }
     fast_task::task::await_multiple(tasks, true);

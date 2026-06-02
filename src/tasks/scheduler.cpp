@@ -67,17 +67,14 @@ namespace fast_task {
         ++glob.interrupts;
         auto curr_task = get_loc().curr_task;
         ++get_execution_data(curr_task).interrupt_count;
-        auto old_relock_0 = get_data(curr_task).relock_0;
-        auto old_relock_1 = get_data(curr_task).relock_1;
-        auto old_relock_2 = get_data(curr_task).relock_2;
-        get_data(curr_task).relock_0 = nullptr;
-        get_data(curr_task).relock_1 = nullptr;
-        get_data(curr_task).relock_2 = nullptr;
+        auto old_relock_0 = get_data(curr_task).get_relock_0();
+        auto old_relock_1 = get_data(curr_task).get_relock_1();
+        get_data(curr_task).set_relock_0(nullptr);
+        get_data(curr_task).set_relock_1(nullptr);
         get_loc().yield_request = true;
         swapCtx();
-        get_data(curr_task).relock_0 = old_relock_0;
-        get_data(curr_task).relock_1 = old_relock_1;
-        get_data(curr_task).relock_2 = old_relock_2;
+        get_data(curr_task).set_relock_0(old_relock_0);
+        get_data(curr_task).set_relock_1(old_relock_1);
     }
 
     void set_interruptTask() {
@@ -114,14 +111,14 @@ namespace fast_task {
         auto& pre_switch_loc = get_loc();
         if (pre_switch_loc.is_task_thread) {
             stop_timer();
-            if (get_data(pre_switch_loc.curr_task).is_on_scheduler)
+            if (get_data(pre_switch_loc.curr_task).get_is_on_scheduler())
                 throw invalid_context();
             pre_switch_loc.context_in_swap = true;
             ++glob.tasks_in_swap;
             ++get_execution_data(pre_switch_loc.curr_task).context_switch_count;
             preserve_interrupt_data;
 
-            std::shared_ptr<task> my_task = pre_switch_loc.curr_task;
+            task my_task = pre_switch_loc.curr_task;
 #ifdef FT_EXCEPTION_POLICY_CHECK
             if (std::uncaught_exceptions()) {
                 assert(false && "Unexpected exception during context switch");
@@ -143,17 +140,18 @@ namespace fast_task {
                 post_switch_loc.curr_task = my_task;
                 post_switch_loc.context_in_swap = true;
 
-                auto relock_state_0 = get_data(my_task).relock_0;
-                auto relock_state_1 = get_data(my_task).relock_1;
-                auto relock_state_2 = get_data(my_task).relock_2;
-                get_data(my_task).relock_0 = nullptr;
-                get_data(my_task).relock_1 = nullptr;
-                get_data(my_task).relock_2 = nullptr;
+                auto relock_state_0 = get_data(my_task).get_relock_0();
+                auto relock_state_1 = get_data(my_task).get_relock_1();
+                get_data(my_task).set_relock_0(nullptr);
+                get_data(my_task).set_relock_1(nullptr);
+                auto old_time_end_flag = get_data(post_switch_loc.curr_task).get_time_end();
+                auto old_awaked = get_data(post_switch_loc.curr_task).get_awaked();
 
                 relock_state_0.relock_end();
                 relock_state_1.relock_end();
-                relock_state_2.relock_end();
                 auto& post_relock_loc = get_loc();
+                get_data(post_relock_loc.curr_task).set_time_end(old_time_end_flag);
+                get_data(post_relock_loc.curr_task).set_awaked(old_awaked);
 
                 post_relock_loc.curr_task = old_curr_task;
                 post_relock_loc.context_in_swap = old_context_in_swap;
@@ -167,28 +165,26 @@ namespace fast_task {
             preserve_interrupt_data;
             --glob.tasks_in_swap;
             post_switch_loc.context_in_swap = true;
-            auto relock_state_0 = get_data(post_switch_loc.curr_task).relock_0;
-            auto relock_state_1 = get_data(post_switch_loc.curr_task).relock_1;
-            auto relock_state_2 = get_data(post_switch_loc.curr_task).relock_2;
-            get_data(post_switch_loc.curr_task).relock_0 = nullptr;
-            get_data(post_switch_loc.curr_task).relock_1 = nullptr;
-            get_data(post_switch_loc.curr_task).relock_2 = nullptr;
-            auto old_time_end_flag = get_data(post_switch_loc.curr_task).time_end_flag;
-            auto old_awaked = get_data(post_switch_loc.curr_task).awaked;
+            auto relock_state_0 = get_data(my_task).get_relock_0();
+            auto relock_state_1 = get_data(my_task).get_relock_1();
+            get_data(my_task).set_relock_0(nullptr);
+            get_data(my_task).set_relock_1(nullptr);
+            auto old_time_end_flag = get_data(post_switch_loc.curr_task).get_time_end();
+            auto old_awaked = get_data(post_switch_loc.curr_task).get_awaked();
             relock_state_0.relock_end();
             relock_state_1.relock_end();
-            relock_state_2.relock_end();
+
             auto& post_relock_loc = get_loc();
             get_data(post_relock_loc.curr_task).awake_check++;
-            get_data(post_relock_loc.curr_task).time_end_flag = old_time_end_flag;
-            get_data(post_relock_loc.curr_task).awaked = old_awaked;
+            get_data(post_relock_loc.curr_task).set_time_end(old_time_end_flag);
+            get_data(post_relock_loc.curr_task).set_awaked(old_awaked);
             post_relock_loc.context_in_swap = false;
-            if (get_data(post_relock_loc.curr_task).invalid_switch_caught) {
-                get_data(post_relock_loc.curr_task).invalid_switch_caught = false;
+            if (get_data(post_relock_loc.curr_task).get_invalid_switch_caught()) {
+                get_data(post_relock_loc.curr_task).set_invalid_switch_caught(false);
                 throw invalid_switch();
             }
-            if (get_data(post_relock_loc.curr_task).timeout != std::chrono::high_resolution_clock::time_point::min().time_since_epoch().count())
-                if (get_data(post_relock_loc.curr_task).timeout <= std::chrono::high_resolution_clock::now().time_since_epoch().count())
+            if (get_execution_data(post_relock_loc.curr_task).timeout != std::chrono::high_resolution_clock::time_point::min().time_since_epoch().count())
+                if (get_execution_data(post_relock_loc.curr_task).timeout <= std::chrono::high_resolution_clock::now().time_since_epoch().count())
                     throw task_cancellation();
             timer_reinit();
         } else
@@ -196,22 +192,14 @@ namespace fast_task {
     }
 
     void swapCtxRelock(const mutex_unify& mut0) {
-        get_data(get_loc().curr_task).relock_0 = mut0;
-        swapCtx();
-    }
-
-    void swapCtxRelock(const mutex_unify& mut0, const mutex_unify& mut1, const mutex_unify& mut2) {
-        auto& curr_task = get_loc().curr_task;
-        get_data(curr_task).relock_0 = mut0;
-        get_data(curr_task).relock_1 = mut1;
-        get_data(curr_task).relock_2 = mut2;
+        get_data(get_loc().curr_task).set_relock_0(mut0);
         swapCtx();
     }
 
     void swapCtxRelock(const mutex_unify& mut0, const mutex_unify& mut1) {
         auto& curr_task = get_loc().curr_task;
-        get_data(curr_task).relock_0 = mut0;
-        get_data(curr_task).relock_1 = mut1;
+        get_data(curr_task).set_relock_0(mut0);
+        get_data(curr_task).set_relock_1(mut1);
         swapCtx();
     }
 
@@ -221,10 +209,12 @@ namespace fast_task {
             if (!checkCancellation()) {
                 flush_interrupt_data;
                 timer_reinit();
-                if (get_data(get_loc().curr_task).callbacks.on_start_override)
-                    get_data(get_loc().curr_task).callbacks.on_start_override(get_data(get_loc().curr_task).callbacks);
-                else if (get_data(get_loc().curr_task).callbacks.on_start)
-                    get_data(get_loc().curr_task).callbacks.on_start(get_data(get_loc().curr_task).callbacks.get_data());
+                auto& loc = get_loc();
+                auto vtable = get_data(loc.curr_task).vtable;
+                if (get_data(get_loc().curr_task).on_start_override)
+                    get_data(get_loc().curr_task).on_start_override(&get_data(loc.curr_task));
+                else if (vtable && vtable->on_start)
+                    vtable->on_start(get_data(get_loc().curr_task).user_data());
             } else
                 this_task::the_coroutine_ended(get_loc().curr_task);
         } catch (const task_cancellation& cancel) {
@@ -238,16 +228,16 @@ namespace fast_task {
         stop_timer();
         flush_interrupt_data;
         auto& loc = get_loc();
-        fast_task::lock_guard l(get_data(loc.curr_task).no_race);
-        --glob.in_run_tasks;
-        if (get_data(loc.curr_task).is_restartable) {
-            return std::move(*loc.stack_current_context);
+        {
+            fast_task::lock_guard l(get_data(loc.curr_task));
+            --glob.in_run_tasks;
+            if (get_data(loc.curr_task).get_is_restartable()) {
+                return std::move(*loc.stack_current_context);
+            }
         }
+        if (!loc.ex_ptr)
+            get_data(loc.curr_task).end_of_life_notify();
 
-        if (!loc.ex_ptr) {
-            get_data(loc.curr_task).end_of_life = true;
-            get_data(loc.curr_task).result_notify.notify_all();
-        }
         return std::move(*loc.stack_current_context);
     }
 
@@ -257,8 +247,10 @@ namespace fast_task {
             if (!checkCancellation()) {
                 flush_interrupt_data;
                 timer_reinit();
-                if (get_data(get_loc().curr_task).callbacks.on_exception)
-                    get_data(get_loc().curr_task).callbacks.on_exception(get_data(get_loc().curr_task).callbacks.get_data(), get_loc().ex_ptr);
+                auto& loc = get_loc();
+                auto vtable = get_data(loc.curr_task).vtable;
+                if (vtable && vtable->on_exception)
+                    vtable->on_exception(get_data(loc.curr_task).user_data(), loc.ex_ptr);
             } else
                 this_task::the_coroutine_ended(get_loc().curr_task);
         } catch (task_cancellation& cancel) {
@@ -272,9 +264,7 @@ namespace fast_task {
         stop_timer();
         flush_interrupt_data;
         auto& loc = get_loc();
-        fast_task::unique_lock l(get_data(loc.curr_task).no_race);
-        get_data(loc.curr_task).end_of_life = true;
-        get_data(loc.curr_task).result_notify.notify_all();
+        get_data(loc.curr_task).end_of_life_notify();
         --glob.in_run_tasks;
         return std::move(*loc.stack_current_context);
     }
@@ -289,13 +279,12 @@ namespace fast_task {
                 if constexpr (FT_TASK_TRANSFERS_LIMIT > 0)
                     loc.transfer_state.transfers = 0;
                 while (true) {
-                    if (data->callbacks.on_start_override)
-                        data->callbacks.on_start_override(data->callbacks);
-                    else if (data->callbacks.on_start)
-                        data->callbacks.on_start(data->callbacks.get_data());
-                    data->relock_0.relock_start();
-                    data->relock_1.relock_start();
-                    data->relock_2.relock_start();
+                    if (data->on_start_override)
+                        data->on_start_override(data);
+                    else if (data->vtable && data->vtable->on_start)
+                        data->vtable->on_start(data->user_data());
+                    data->get_relock_0().relock_start();
+                    data->get_relock_1().relock_start();
                     if (loc.transfer_state.pending == nullptr)
                         break;
 #if FT_TASK_TRANSFERS_LIMIT > 0
@@ -315,26 +304,20 @@ namespace fast_task {
                     loc.transfer_state.transfers = 0;
             } else
                 this_task::the_coroutine_ended(loc.curr_task);
-            {
-                fast_task::lock_guard guard(data->no_race);
-                if (data->is_restartable) {
-                } else {
-                    data->end_of_life = true;
-                    data->result_notify.notify_all();
-                }
-            }
+
+            if (data->get_is_restartable()) {
+            } else
+                data->end_of_life_notify();
         } catch (const task_cancellation& cancel) {
             forceCancelCancellation(cancel);
-            fast_task::lock_guard guard(data->no_race);
-            data->end_of_life = true;
-            data->result_notify.notify_all();
+            data->end_of_life_notify();
         } catch (...) {
             loc.ex_ptr = std::current_exception();
         }
         if (loc.ex_ptr) {
-            if (data->callbacks.on_exception) {
+            if (data->vtable && data->vtable->on_exception) {
                 try {
-                    data->callbacks.on_exception(data->callbacks.get_data(), loc.ex_ptr);
+                    data->vtable->on_exception(data->user_data(), loc.ex_ptr);
                     loc.ex_ptr = nullptr;
                 } catch (const task_cancellation& cancel) {
                     forceCancelCancellation(cancel);
@@ -343,27 +326,24 @@ namespace fast_task {
                     loc.ex_ptr = std::current_exception();
                 }
             }
-            fast_task::lock_guard guard(data->no_race);
-            data->end_of_life = true;
-            data->result_notify.notify_all();
+            data->end_of_life_notify();
         }
         --glob.in_run_tasks;
     }
 
-    void transfer_task(std::shared_ptr<task>&& task) {
-        if (get_data(task).is_on_scheduler && get_data(task).relock_0) {
-            auto mut = std::move(get_data(task).relock_0);
+    void transfer_task(task&& task, enter_state* stat) {
+        if (get_data(task).get_is_on_scheduler() && get_data(task).get_relock_0() && stat) {
+            auto mut = get_data(task).get_relock_0();
 
-            get_data(task).relock_0 = nullptr;
-            get_data(task).relock_1 = nullptr;
-            get_data(task).relock_2 = nullptr;
+            get_data(task).set_relock_0(nullptr);
+            get_data(task).set_relock_1(nullptr);
 
-            if (!mut.enter_wait(task))
+            if (!mut.enter_wait(task, *stat))
                 return;
         }
 
         if (get_data(task).bind_to_worker_id == (uint16_t)-1) {
-            if (get_data(task).auto_bind_worker) {
+            if (get_data(task).get_auto_bind()) {
                 fast_task::shared_lock global_guard(glob.binded_workers_safety);
                 for (auto& [id, context] : glob.binded_workers) {
                     if (context.allow_implicit_start) {
@@ -427,7 +407,7 @@ namespace fast_task {
         }
 
         constexpr size_t BATCH_SIZE = 32;
-        std::shared_ptr<task> temp_tasks[BATCH_SIZE];
+        task temp_tasks[BATCH_SIZE];
         {
             size_t count = glob.tasks.try_dequeue_bulk(temp_tasks, BATCH_SIZE);
 
@@ -499,26 +479,21 @@ namespace fast_task {
         auto& pre_exec_loc = get_loc();
         if (!pre_exec_loc.curr_task)
             return false;
-        if (get_data(pre_exec_loc.curr_task).callbacks.on_start == nullptr && get_data(pre_exec_loc.curr_task).callbacks.on_destruct == nullptr) {
-            {
-                fast_task::lock_guard guard(get_data(pre_exec_loc.curr_task).no_race);
-                get_data(pre_exec_loc.curr_task).end_of_life = true;
-            }
+        auto& vtable = get_data(pre_exec_loc.curr_task).vtable;
+        if (vtable && vtable->on_start == nullptr && vtable->on_destruct == nullptr) {
+            get_data(pre_exec_loc.curr_task).end_of_life_notify();
             pre_exec_loc.curr_task = nullptr;
             return true;
-        } else if (!get_data(pre_exec_loc.curr_task).callbacks.on_start) {
-            fast_task::lock_guard guard(get_data(pre_exec_loc.curr_task).no_race);
-            get_data(pre_exec_loc.curr_task).end_of_life = true;
-            get_data(pre_exec_loc.curr_task).result_notify.notify_all();
+        } else if (!vtable->on_start) {
+            get_data(pre_exec_loc.curr_task).end_of_life_notify();
             goto end_task;
         }
         {
-            fast_task::lock_guard guard(get_data(pre_exec_loc.curr_task).no_race);
-            if (get_data(pre_exec_loc.curr_task).end_of_life)
+            fast_task::lock_guard guard(get_data(pre_exec_loc.curr_task));
+            if (get_data(pre_exec_loc.curr_task).is_ended())
                 goto end_task;
 
-            get_data(pre_exec_loc.curr_task).running = true;
-            get_data(pre_exec_loc.curr_task).suspended = false;
+            get_data(pre_exec_loc.curr_task).set_status(task_object::status_e::running);
         }
 
         pre_exec_loc.is_task_thread = true;
@@ -526,10 +501,9 @@ namespace fast_task {
         worker_mode_desk(old_name, "process task - ", this_task::get_id());
         if (*get_loc().stack_current_context) {
             *get_loc().stack_current_context = std::move(*get_loc().stack_current_context).resume();
-            get_data(get_loc().curr_task).relock_0.relock_start();
-            get_data(get_loc().curr_task).relock_1.relock_start();
-            get_data(get_loc().curr_task).relock_2.relock_start();
-        } else if (get_data(get_loc().curr_task).is_on_scheduler) {
+            get_data(get_loc().curr_task).get_relock_0().relock_start();
+            get_data(get_loc().curr_task).get_relock_1().relock_start();
+        } else if (get_data(get_loc().curr_task).get_is_on_scheduler()) {
             in_place_run();
         } else {
             light_stack stack_alloc(1048576 /*1 mb*/);
@@ -540,9 +514,8 @@ namespace fast_task {
 #endif
             ++glob.in_run_tasks;
             *get_loc().stack_current_context = boost::context::callcc(std::allocator_arg, boost::context::preallocated(ss.sp, ss.size, ss), stack_alloc, context_exec);
-            get_data(get_loc().curr_task).relock_0.relock_start();
-            get_data(get_loc().curr_task).relock_1.relock_start();
-            get_data(get_loc().curr_task).relock_2.relock_start();
+            get_data(get_loc().curr_task).get_relock_0().relock_start();
+            get_data(get_loc().curr_task).get_relock_1().relock_start();
         }
         if (get_loc().ex_ptr) {
             light_stack stack_alloc(1048576 /*1 mb*/);
@@ -553,9 +526,8 @@ namespace fast_task {
 #endif
             ++glob.in_run_tasks;
             *get_loc().stack_current_context = boost::context::callcc(std::allocator_arg, boost::context::preallocated(ss.sp, ss.size, ss), stack_alloc, context_ex_handle);
-            get_data(get_loc().curr_task).relock_0.relock_start();
-            get_data(get_loc().curr_task).relock_1.relock_start();
-            get_data(get_loc().curr_task).relock_2.relock_start();
+            get_data(get_loc().curr_task).get_relock_0().relock_start();
+            get_data(get_loc().curr_task).get_relock_1().relock_start();
             get_loc().ex_ptr = nullptr;
         }
     end_task:
@@ -567,20 +539,19 @@ namespace fast_task {
         bool do_yield_transfer = loc.yield_request;
         bool do_invalid_transfer = false;
         {
-            fast_task::lock_guard guard(get_data(loc.curr_task).no_race);
-            get_data(loc.curr_task).running = false;
-            end_of_life = get_data(loc.curr_task).end_of_life;
+            fast_task::lock_guard guard(get_data(loc.curr_task));
+            end_of_life = get_data(loc.curr_task).is_ended();
 
             if (!end_of_life) {
-                if (!do_yield_transfer && loc.curr_task.use_count() == 1) {
+                if (!do_yield_transfer && get_data(loc.curr_task).link_counter == 1) {
                     do_invalid_transfer = true;
-                    get_data(loc.curr_task).invalid_switch_caught = true;
+                    get_data(loc.curr_task).set_invalid_switch_caught(true);
                 }
 
                 if (!do_yield_transfer && !do_invalid_transfer)
-                    get_data(loc.curr_task).suspended = true;
+                    get_data(pre_exec_loc.curr_task).set_status(task_object::status_e::suspended);
                 else
-                    get_data(loc.curr_task).suspended = false;
+                    get_data(pre_exec_loc.curr_task).set_status(task_object::status_e::running);
             }
         }
         if (do_invalid_transfer || do_yield_transfer) {
@@ -589,9 +560,9 @@ namespace fast_task {
         } else if (end_of_life) {
             bool should_decrement = false;
             {
-                fast_task::lock_guard guard(get_data(loc.curr_task).no_race);
-                if (!get_data(loc.curr_task).completed) {
-                    get_data(loc.curr_task).completed = true;
+                fast_task::lock_guard guard(get_data(loc.curr_task));
+                if (!get_data(loc.curr_task).get_completed()) {
+                    get_data(loc.curr_task).set_completed(true);
                     should_decrement = true;
                 }
             }
@@ -622,8 +593,8 @@ namespace fast_task {
         {
             fast_task::unique_lock lock(glob.task_thread_safety);
             auto old_queues_ptr = glob.executors_queues.load();
-            auto new_queues = old_queues_ptr ? std::make_shared<std::vector<std::shared_ptr<work_stealing_deque<std::shared_ptr<task>>>>>(*old_queues_ptr)
-                                             : std::make_shared<std::vector<std::shared_ptr<work_stealing_deque<std::shared_ptr<task>>>>>();
+            auto new_queues = old_queues_ptr ? std::make_shared<std::vector<std::shared_ptr<work_stealing_deque<task>>>>(*old_queues_ptr)
+                                             : std::make_shared<std::vector<std::shared_ptr<work_stealing_deque<task>>>>();
             new_queues->push_back(loc.local_tasks);
             glob.executors_queues.store(new_queues);
         }
@@ -667,7 +638,7 @@ namespace fast_task {
         fast_task::unique_lock lock(glob.task_thread_safety);
 
         auto old_queues_ptr = glob.executors_queues.load();
-        auto new_queues = std::make_shared<std::vector<std::shared_ptr<work_stealing_deque<std::shared_ptr<task>>>>>();
+        auto new_queues = std::make_shared<std::vector<std::shared_ptr<work_stealing_deque<task>>>>();
         new_queues->reserve(old_queues_ptr->size());
 
         for (const auto& q_ptr : *old_queues_ptr) {
@@ -699,7 +670,7 @@ namespace fast_task {
             }
 
             constexpr size_t BATCH_SIZE = 8;
-            std::shared_ptr<task> temp_tasks[BATCH_SIZE];
+            task temp_tasks[BATCH_SIZE];
             size_t count = context.tasks.try_dequeue_bulk(temp_tasks, BATCH_SIZE);
 
             if (count > 0) {
@@ -779,8 +750,8 @@ namespace fast_task {
         {
             fast_task::unique_lock lock(context.no_race);
             auto old_queues_ptr = context.executors_queues.load();
-            auto new_queues = old_queues_ptr ? std::make_shared<std::vector<std::shared_ptr<work_stealing_deque<std::shared_ptr<task>>>>>(*old_queues_ptr)
-                                             : std::make_shared<std::vector<std::shared_ptr<work_stealing_deque<std::shared_ptr<task>>>>>();
+            auto new_queues = old_queues_ptr ? std::make_shared<std::vector<std::shared_ptr<work_stealing_deque<task>>>>(*old_queues_ptr)
+                                             : std::make_shared<std::vector<std::shared_ptr<work_stealing_deque<task>>>>();
             new_queues->push_back(loc.local_tasks);
             context.executors_queues.store(new_queues);
         }
@@ -807,7 +778,7 @@ namespace fast_task {
             fast_task::unique_lock guard(context.no_race);
             context.completions.erase(completions_remove);
             auto old_queues_ptr = context.executors_queues.load();
-            auto new_queues = std::make_shared<std::vector<std::shared_ptr<work_stealing_deque<std::shared_ptr<task>>>>>();
+            auto new_queues = std::make_shared<std::vector<std::shared_ptr<work_stealing_deque<task>>>>();
             new_queues->reserve(old_queues_ptr->size());
 
             for (const auto& q_ptr : *old_queues_ptr) {
@@ -825,14 +796,13 @@ namespace fast_task {
                             if (context.abort_tasks_on_close) {
                                 bool should_decrement = false;
                                 {
-                                    fast_task::lock_guard task_guard(get_data(loc.curr_task).no_race);
-                                    if (!get_data(loc.curr_task).completed) {
-                                        get_data(loc.curr_task).completed = true;
-                                        get_data(loc.curr_task).end_of_life = true;
+                                    fast_task::lock_guard guard(get_data(loc.curr_task));
+                                    if (!get_data(loc.curr_task).get_completed()) {
+                                        get_data(loc.curr_task).set_completed(true);
                                         should_decrement = true;
                                     }
-                                    get_data(loc.curr_task).result_notify.notify_all();
                                 }
+                                get_data(loc.curr_task).end_of_life_notify();
                                 if (should_decrement) {
                                     --glob.executing_tasks;
                                     fast_task::shared_lock notify_guard(glob.task_thread_safety);
@@ -860,20 +830,20 @@ namespace fast_task {
 
 #pragma endregion
 
-    void taskTimer() {
+    void taskTimer() { //TODO Hashed Hierarchical Timing Wheel
         _set_name_thread_dbg("task time controller");
 
         fast_task::unique_lock guard(glob.task_timer_safety);
-        std::list<std::shared_ptr<task>> cached_wake_ups;
-        std::list<std::shared_ptr<task>> cached_cold;
+        std::list<task> cached_wake_ups;
+        std::list<task> cached_cold;
         while (glob.time_control_enabled) {
             if (glob.shutdown_requested.load(std::memory_order_acquire)) {
                 while (!glob.timed_tasks.empty()) {
                     timing& tmng = glob.timed_tasks.front();
                     if (tmng.check_id == get_data(tmng.awake_task).awake_check) {
-                        fast_task::lock_guard task_guard(get_data(tmng.awake_task).no_race);
-                        if (!get_data(tmng.awake_task).awaked) {
-                            get_data(tmng.awake_task).time_end_flag = true;
+                        fast_task::lock_guard task_guard(get_data(tmng.awake_task));
+                        if (!get_data(tmng.awake_task).get_awaked()) {
+                            get_data(tmng.awake_task).set_time_end(true);
                             cached_wake_ups.push_back(std::move(tmng.awake_task));
                         }
                     }
@@ -882,9 +852,9 @@ namespace fast_task {
                 while (!glob.cold_timed_tasks.empty()) {
                     timing& tmng = glob.cold_timed_tasks.front();
                     if (tmng.check_id == get_data(tmng.awake_task).awake_check) {
-                        fast_task::lock_guard task_guard(get_data(tmng.awake_task).no_race);
-                        if (!get_data(tmng.awake_task).awaked) {
-                            get_data(tmng.awake_task).time_end_flag = true;
+                        fast_task::lock_guard task_guard(get_data(tmng.awake_task));
+                        if (!get_data(tmng.awake_task).get_awaked()) {
+                            get_data(tmng.awake_task).set_time_end(true);
                             cached_cold.push_back(std::move(tmng.awake_task));
                         }
                     }
@@ -901,11 +871,11 @@ namespace fast_task {
                         else
                             continue;
                     }
-                    fast_task::lock_guard task_guard(get_data(tmng.awake_task).no_race);
-                    if (get_data(tmng.awake_task).awaked) {
+                    fast_task::lock_guard task_guard(get_data(tmng.awake_task));
+                    if (get_data(tmng.awake_task).get_awaked()) {
                         glob.timed_tasks.pop_front();
                     } else {
-                        get_data(tmng.awake_task).time_end_flag = true;
+                        get_data(tmng.awake_task).set_time_end(true);
                         cached_wake_ups.push_back(std::move(tmng.awake_task));
                         glob.timed_tasks.pop_front();
                     }
@@ -994,7 +964,7 @@ namespace fast_task {
         fast_task::thread(taskTimer).detach();
     }
 
-    void unsafe_put_task_to_timed_queue(std::deque<timing>& queue, std::chrono::high_resolution_clock::time_point t, std::shared_ptr<task>& task) {
+    void unsafe_put_task_to_timed_queue(std::deque<timing>& queue, std::chrono::high_resolution_clock::time_point t, task& task) {
         size_t i = 0;
         auto it = queue.begin();
         auto end = queue.end();
@@ -1010,12 +980,12 @@ namespace fast_task {
             queue.emplace_back(timing(t, task, get_data(task).awake_check));
     }
 
-    void makeTimeWait_extern(std::shared_ptr<task> _task, std::chrono::high_resolution_clock::time_point time_point) {
+    void makeTimeWait_extern(task _task, std::chrono::high_resolution_clock::time_point time_point) {
         if (!glob.time_control_enabled)
             startTimeController();
         auto& loc = get_loc();
-        get_data(loc.curr_task).awaked = false;
-        get_data(loc.curr_task).time_end_flag = false;
+        get_data(loc.curr_task).set_awaked(false);
+        get_data(loc.curr_task).set_time_end(false);
         fast_task::lock_guard guard(glob.task_timer_safety);
         if (can_be_scheduled_task_to_hot())
             unsafe_put_task_to_timed_queue(glob.timed_tasks, time_point, _task);
@@ -1028,8 +998,8 @@ namespace fast_task {
         if (!glob.time_control_enabled)
             startTimeController();
         auto& loc = get_loc();
-        get_data(loc.curr_task).awaked = false;
-        get_data(loc.curr_task).time_end_flag = false;
+        get_data(loc.curr_task).set_awaked(false);
+        get_data(loc.curr_task).set_time_end(false);
 
         fast_task::lock_guard guard(glob.task_timer_safety);
         unsafe_put_task_to_timed_queue(glob.timed_tasks, t, loc.curr_task);
@@ -1040,8 +1010,8 @@ namespace fast_task {
         if (!glob.time_control_enabled)
             startTimeController_unsafe();
         auto& loc = get_loc();
-        get_data(loc.curr_task).awaked = false;
-        get_data(loc.curr_task).time_end_flag = false;
+        get_data(loc.curr_task).set_awaked(false);
+        get_data(loc.curr_task).set_time_end(false);
 
         unsafe_put_task_to_timed_queue(glob.timed_tasks, t, loc.curr_task);
         glob.time_notifier.notify_one();
@@ -1049,7 +1019,7 @@ namespace fast_task {
 
     void resetTimeWait() {
         auto& loc = get_loc();
-        get_data(loc.curr_task).awaked = false;
-        get_data(loc.curr_task).time_end_flag = false;
+        get_data(loc.curr_task).set_awaked(false);
+        get_data(loc.curr_task).set_time_end(false);
     }
 }

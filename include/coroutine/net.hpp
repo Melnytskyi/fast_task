@@ -97,7 +97,7 @@ namespace fast_task::net {
 
     inline auto async_resolve(std::string_view host, std::string_view service, address::family preferred_family = address::family::none) {
         return detail::make_value_awaiter<address>(
-            [host, service, preferred_family](const std::shared_ptr<task>& t, opaque_network_state& st, address& r) {
+            [host, service, preferred_family](const task& t, opaque_network_state& st, address& r) {
                 return address::enter_resolve(t, st, r, host, service, preferred_family);
             }
         );
@@ -105,7 +105,7 @@ namespace fast_task::net {
 
     inline auto async_resolve(std::string_view host, std::string_view service, uint16_t port, address::family preferred_family = address::family::none) {
         return detail::make_value_awaiter<address>(
-            [host, service, port, preferred_family](const std::shared_ptr<task>& t, opaque_network_state& st, address& r) {
+            [host, service, port, preferred_family](const task& t, opaque_network_state& st, address& r) {
                 return address::enter_resolve(t, st, r, host, service, port, preferred_family);
             }
         );
@@ -113,7 +113,7 @@ namespace fast_task::net {
 
     inline auto async_resolve_multiple(std::string_view host, std::string_view service, address::family preferred_family = address::family::none) {
         return detail::make_value_awaiter<std::vector<address>>(
-            [host, service, preferred_family](const std::shared_ptr<task>& t, opaque_network_state& st, std::vector<address>& r) {
+            [host, service, preferred_family](const task& t, opaque_network_state& st, std::vector<address>& r) {
                 return address::enter_resolve_multiple(t, st, r, host, service, preferred_family);
             }
         );
@@ -121,7 +121,7 @@ namespace fast_task::net {
 
     inline auto async_resolve_multiple(std::string_view host, std::string_view service, uint16_t port, address::family preferred_family = address::family::none) {
         return detail::make_value_awaiter<std::vector<address>>(
-            [host, service, port, preferred_family](const std::shared_ptr<task>& t, opaque_network_state& st, std::vector<address>& r) {
+            [host, service, port, preferred_family](const task& t, opaque_network_state& st, std::vector<address>& r) {
                 return address::enter_resolve_multiple(t, st, r, host, service, port, preferred_family);
             }
         );
@@ -129,7 +129,7 @@ namespace fast_task::net {
 
     inline auto safe_async_resolve(std::string_view host, std::string_view service, address::family preferred_family = address::family::none) {
         return detail::make_safe_value_awaiter<address>(
-            [host, service, preferred_family](const std::shared_ptr<task>& t, opaque_network_state& st, address& r) {
+            [host, service, preferred_family](const task& t, opaque_network_state& st, address& r) {
                 return address::enter_resolve(t, st, r, host, service, preferred_family);
             }
         );
@@ -137,7 +137,7 @@ namespace fast_task::net {
 
     inline auto safe_async_resolve(std::string_view host, std::string_view service, uint16_t port, address::family preferred_family = address::family::none) {
         return detail::make_safe_value_awaiter<address>(
-            [host, service, port, preferred_family](const std::shared_ptr<task>& t, opaque_network_state& st, address& r) {
+            [host, service, port, preferred_family](const task& t, opaque_network_state& st, address& r) {
                 return address::enter_resolve(t, st, r, host, service, port, preferred_family);
             }
         );
@@ -145,7 +145,7 @@ namespace fast_task::net {
 
     inline auto safe_async_resolve_multiple(std::string_view host, std::string_view service, address::family preferred_family = address::family::none) {
         return detail::make_safe_value_awaiter<std::vector<address>>(
-            [host, service, preferred_family](const std::shared_ptr<task>& t, opaque_network_state& st, std::vector<address>& r) {
+            [host, service, preferred_family](const task& t, opaque_network_state& st, std::vector<address>& r) {
                 return address::enter_resolve_multiple(t, st, r, host, service, preferred_family);
             }
         );
@@ -153,7 +153,7 @@ namespace fast_task::net {
 
     inline auto safe_async_resolve_multiple(std::string_view host, std::string_view service, uint16_t port, address::family preferred_family = address::family::none) {
         return detail::make_safe_value_awaiter<std::vector<address>>(
-            [host, service, port, preferred_family](const std::shared_ptr<task>& t, opaque_network_state& st, std::vector<address>& r) {
+            [host, service, port, preferred_family](const task& t, opaque_network_state& st, std::vector<address>& r) {
                 return address::enter_resolve_multiple(t, st, r, host, service, port, preferred_family);
             }
         );
@@ -165,7 +165,7 @@ namespace fast_task::net {
 
     inline auto async_connect(const address& ip_port, const tcp_configuration& config = {}) {
         return detail::make_value_awaiter<std::optional<tcp_socket>>(
-            [ip_port, config](const std::shared_ptr<task>& t, opaque_network_state& st, std::optional<tcp_socket>& r) {
+            [ip_port, config](const task& t, opaque_network_state& st, std::optional<tcp_socket>& r) {
                 return tcp_socket::enter_connect(t, st, r, ip_port, config);
             }
         );
@@ -173,7 +173,7 @@ namespace fast_task::net {
 
     inline auto async_connect(const address& ip_port, uint8_t* data, int32_t& size, const tcp_configuration& config = {}) {
         return detail::make_value_awaiter<std::optional<tcp_socket>>(
-            [ip_port, data, &size, config](const std::shared_ptr<task>& t, opaque_network_state& st, std::optional<tcp_socket>& r) {
+            [ip_port, data, &size, config](const task& t, opaque_network_state& st, std::optional<tcp_socket>& r) {
                 return tcp_socket::enter_connect(t, st, r, ip_port, data, size, config);
             }
         );
@@ -181,7 +181,7 @@ namespace fast_task::net {
 
     inline auto async_recv(tcp_socket& sock, std::span<uint8_t> data) {
         return detail::make_value_awaiter<int32_t>(
-            [&sock, data](const std::shared_ptr<task>& t, opaque_network_state& st, int32_t& r) {
+            [&sock, data](const task& t, opaque_network_state& st, int32_t& r) {
                 return sock.enter_recv(t, st, r, data);
             }
         );
@@ -189,7 +189,7 @@ namespace fast_task::net {
 
     inline auto async_recvv(tcp_socket& sock, std::span<std::span<uint8_t>> data) {
         return detail::make_value_awaiter<int32_t>(
-            [&sock, data](const std::shared_ptr<task>& t, opaque_network_state& st, int32_t& r) {
+            [&sock, data](const task& t, opaque_network_state& st, int32_t& r) {
                 return sock.enter_recvv(t, st, r, data);
             }
         );
@@ -197,7 +197,7 @@ namespace fast_task::net {
 
     inline auto async_send(tcp_socket& sock, std::span<const uint8_t> data) {
         return detail::make_value_awaiter<int32_t>(
-            [&sock, data](const std::shared_ptr<task>& t, opaque_network_state& st, int32_t& r) {
+            [&sock, data](const task& t, opaque_network_state& st, int32_t& r) {
                 return sock.enter_send(t, st, r, data);
             }
         );
@@ -205,7 +205,7 @@ namespace fast_task::net {
 
     inline auto async_sendv(tcp_socket& sock, std::span<const std::span<const uint8_t>> data) {
         return detail::make_value_awaiter<int32_t>(
-            [&sock, data](const std::shared_ptr<task>& t, opaque_network_state& st, int32_t& r) {
+            [&sock, data](const task& t, opaque_network_state& st, int32_t& r) {
                 return sock.enter_sendv(t, st, r, data);
             }
         );
@@ -213,7 +213,7 @@ namespace fast_task::net {
 
     inline auto async_send_file(tcp_socket& sock, const char* file_path, size_t file_path_len, uint32_t data_len, uint64_t offset, uint32_t chunks_size) {
         return detail::make_value_awaiter<int32_t>(
-            [&sock, file_path, file_path_len, data_len, offset, chunks_size](const std::shared_ptr<task>& t, opaque_network_state& st, int32_t& r) {
+            [&sock, file_path, file_path_len, data_len, offset, chunks_size](const task& t, opaque_network_state& st, int32_t& r) {
                 return sock.enter_send_file(t, st, r, file_path, file_path_len, data_len, offset, chunks_size);
             }
         );
@@ -221,7 +221,7 @@ namespace fast_task::net {
 
     inline auto async_send_file(tcp_socket& sock, file::file_handle& file, uint32_t data_len, uint64_t offset, uint32_t chunks_size) {
         return detail::make_value_awaiter<int32_t>(
-            [&sock, &file, data_len, offset, chunks_size](const std::shared_ptr<task>& t, opaque_network_state& st, int32_t& r) {
+            [&sock, &file, data_len, offset, chunks_size](const task& t, opaque_network_state& st, int32_t& r) {
                 return sock.enter_send_file(t, st, r, file, data_len, offset, chunks_size);
             }
         );
@@ -229,7 +229,7 @@ namespace fast_task::net {
 
     inline auto async_sendv_file(tcp_socket& sock, std::span<const uint8_t> prefix, std::span<const uint8_t> postfix, const char* file_path, size_t file_path_len, uint32_t data_len, uint64_t offset, uint32_t chunks_size) {
         return detail::make_value_awaiter<int32_t>(
-            [&sock, prefix, postfix, file_path, file_path_len, data_len, offset, chunks_size](const std::shared_ptr<task>& t, opaque_network_state& st, int32_t& r) {
+            [&sock, prefix, postfix, file_path, file_path_len, data_len, offset, chunks_size](const task& t, opaque_network_state& st, int32_t& r) {
                 return sock.enter_sendv_file(t, st, r, prefix, postfix, file_path, file_path_len, data_len, offset, chunks_size);
             }
         );
@@ -237,7 +237,7 @@ namespace fast_task::net {
 
     inline auto async_sendv_file(tcp_socket& sock, std::span<const uint8_t> prefix, std::span<const uint8_t> postfix, file::file_handle& file, uint32_t data_len, uint64_t offset, uint32_t chunks_size) {
         return detail::make_value_awaiter<int32_t>(
-            [&sock, prefix, postfix, &file, data_len, offset, chunks_size](const std::shared_ptr<task>& t, opaque_network_state& st, int32_t& r) {
+            [&sock, prefix, postfix, &file, data_len, offset, chunks_size](const task& t, opaque_network_state& st, int32_t& r) {
                 return sock.enter_sendv_file(t, st, r, prefix, postfix, file, data_len, offset, chunks_size);
             }
         );
@@ -245,7 +245,7 @@ namespace fast_task::net {
 
     inline auto async_shutdown(tcp_socket& sock, shutdown_mode mode) {
         return detail::make_void_awaiter(
-            [&sock, mode](const std::shared_ptr<task>& t, opaque_network_state& st) {
+            [&sock, mode](const task& t, opaque_network_state& st) {
                 return sock.enter_shutdown(t, st, mode);
             }
         );
@@ -253,7 +253,7 @@ namespace fast_task::net {
 
     inline auto async_reset(tcp_socket& sock) {
         return detail::make_void_awaiter(
-            [&sock](const std::shared_ptr<task>& t, opaque_network_state& st) {
+            [&sock](const task& t, opaque_network_state& st) {
                 return sock.enter_reset(t, st);
             }
         );
@@ -261,7 +261,7 @@ namespace fast_task::net {
 
     inline auto async_close(tcp_socket& sock) {
         return detail::make_void_awaiter(
-            [&sock](const std::shared_ptr<task>& t, opaque_network_state& st) {
+            [&sock](const task& t, opaque_network_state& st) {
                 return sock.enter_close(t, st);
             }
         );
@@ -269,7 +269,7 @@ namespace fast_task::net {
 
     inline auto safe_async_recv(tcp_socket& sock, std::span<uint8_t> data) {
         return detail::make_safe_value_awaiter<int32_t>(
-            [&sock, data](const std::shared_ptr<task>& t, opaque_network_state& st, int32_t& r) {
+            [&sock, data](const task& t, opaque_network_state& st, int32_t& r) {
                 return sock.enter_recv(t, st, r, data);
             }
         );
@@ -277,7 +277,7 @@ namespace fast_task::net {
 
     inline auto safe_async_recvv(tcp_socket& sock, std::span<std::span<uint8_t>> data) {
         return detail::make_safe_value_awaiter<int32_t>(
-            [&sock, data](const std::shared_ptr<task>& t, opaque_network_state& st, int32_t& r) {
+            [&sock, data](const task& t, opaque_network_state& st, int32_t& r) {
                 return sock.enter_recvv(t, st, r, data);
             }
         );
@@ -285,7 +285,7 @@ namespace fast_task::net {
 
     inline auto safe_async_send(tcp_socket& sock, std::span<const uint8_t> data) {
         return detail::make_safe_value_awaiter<int32_t>(
-            [&sock, data](const std::shared_ptr<task>& t, opaque_network_state& st, int32_t& r) {
+            [&sock, data](const task& t, opaque_network_state& st, int32_t& r) {
                 return sock.enter_send(t, st, r, data);
             }
         );
@@ -293,7 +293,7 @@ namespace fast_task::net {
 
     inline auto safe_async_sendv(tcp_socket& sock, std::span<const std::span<const uint8_t>> data) {
         return detail::make_safe_value_awaiter<int32_t>(
-            [&sock, data](const std::shared_ptr<task>& t, opaque_network_state& st, int32_t& r) {
+            [&sock, data](const task& t, opaque_network_state& st, int32_t& r) {
                 return sock.enter_sendv(t, st, r, data);
             }
         );
@@ -305,7 +305,7 @@ namespace fast_task::net {
 
     inline auto async_accept(tcp_listener& listener) {
         return detail::make_value_awaiter<std::optional<tcp_socket>>(
-            [&listener](const std::shared_ptr<task>& t, opaque_network_state& st, std::optional<tcp_socket>& r) {
+            [&listener](const task& t, opaque_network_state& st, std::optional<tcp_socket>& r) {
                 return listener.enter_accept(t, st, r);
             }
         );
@@ -313,7 +313,7 @@ namespace fast_task::net {
 
     inline auto async_close(tcp_listener& listener) {
         return detail::make_void_awaiter(
-            [&listener](const std::shared_ptr<task>& t, opaque_network_state& st) {
+            [&listener](const task& t, opaque_network_state& st) {
                 return listener.enter_close(t, st);
             }
         );
@@ -325,7 +325,7 @@ namespace fast_task::net {
 
     inline auto async_recv(udp_socket& sock, std::span<uint8_t> data, address& sender) {
         return detail::make_value_awaiter<uint32_t>(
-            [&sock, data, &sender](const std::shared_ptr<task>& t, opaque_network_state& st, uint32_t& r) {
+            [&sock, data, &sender](const task& t, opaque_network_state& st, uint32_t& r) {
                 return sock.enter_recv(t, st, r, data, sender);
             }
         );
@@ -333,7 +333,7 @@ namespace fast_task::net {
 
     inline auto async_send(udp_socket& sock, std::span<const uint8_t> data, const address& to) {
         return detail::make_value_awaiter<uint32_t>(
-            [&sock, data, to](const std::shared_ptr<task>& t, opaque_network_state& st, uint32_t& r) {
+            [&sock, data, to](const task& t, opaque_network_state& st, uint32_t& r) {
                 return sock.enter_send(t, st, r, data, to);
             }
         );
@@ -341,7 +341,7 @@ namespace fast_task::net {
 
     inline auto async_recvv(udp_socket& sock, std::span<std::span<uint8_t>> buffers, address& sender) {
         return detail::make_value_awaiter<uint32_t>(
-            [&sock, buffers, &sender](const std::shared_ptr<task>& t, opaque_network_state& st, uint32_t& r) {
+            [&sock, buffers, &sender](const task& t, opaque_network_state& st, uint32_t& r) {
                 return sock.enter_recvv(t, st, r, buffers, sender);
             }
         );
@@ -349,7 +349,7 @@ namespace fast_task::net {
 
     inline auto async_sendv(udp_socket& sock, std::span<const std::span<const uint8_t>> data, const address& to) {
         return detail::make_value_awaiter<uint32_t>(
-            [&sock, data, to](const std::shared_ptr<task>& t, opaque_network_state& st, uint32_t& r) {
+            [&sock, data, to](const task& t, opaque_network_state& st, uint32_t& r) {
                 return sock.enter_sendv(t, st, r, data, to);
             }
         );
@@ -357,7 +357,7 @@ namespace fast_task::net {
 
     inline auto async_close(udp_socket& sock) {
         return detail::make_void_awaiter(
-            [&sock](const std::shared_ptr<task>& t, opaque_network_state& st) {
+            [&sock](const task& t, opaque_network_state& st) {
                 return sock.enter_close(t, st);
             }
         );
@@ -365,7 +365,7 @@ namespace fast_task::net {
 
     inline auto safe_async_recv(udp_socket& sock, std::span<uint8_t> data, address& sender) {
         return detail::make_safe_value_awaiter<uint32_t>(
-            [&sock, data, &sender](const std::shared_ptr<task>& t, opaque_network_state& st, uint32_t& r) {
+            [&sock, data, &sender](const task& t, opaque_network_state& st, uint32_t& r) {
                 return sock.enter_recv(t, st, r, data, sender);
             }
         );
@@ -373,7 +373,7 @@ namespace fast_task::net {
 
     inline auto safe_async_send(udp_socket& sock, std::span<const uint8_t> data, const address& to) {
         return detail::make_safe_value_awaiter<uint32_t>(
-            [&sock, data, to](const std::shared_ptr<task>& t, opaque_network_state& st, uint32_t& r) {
+            [&sock, data, to](const task& t, opaque_network_state& st, uint32_t& r) {
                 return sock.enter_send(t, st, r, data, to);
             }
         );
@@ -381,7 +381,7 @@ namespace fast_task::net {
 
     inline auto safe_async_recvv(udp_socket& sock, std::span<std::span<uint8_t>> buffers, address& sender) {
         return detail::make_safe_value_awaiter<uint32_t>(
-            [&sock, buffers, &sender](const std::shared_ptr<task>& t, opaque_network_state& st, uint32_t& r) {
+            [&sock, buffers, &sender](const task& t, opaque_network_state& st, uint32_t& r) {
                 return sock.enter_recvv(t, st, r, buffers, sender);
             }
         );
@@ -389,7 +389,7 @@ namespace fast_task::net {
 
     inline auto safe_async_sendv(udp_socket& sock, std::span<const std::span<const uint8_t>> data, const address& to) {
         return detail::make_safe_value_awaiter<uint32_t>(
-            [&sock, data, to](const std::shared_ptr<task>& t, opaque_network_state& st, uint32_t& r) {
+            [&sock, data, to](const task& t, opaque_network_state& st, uint32_t& r) {
                 return sock.enter_sendv(t, st, r, data, to);
             }
         );
@@ -401,7 +401,7 @@ namespace fast_task::net {
 
     inline auto async_recv(udp_peer& peer, std::span<uint8_t> data) {
         return detail::make_value_awaiter<uint32_t>(
-            [&peer, data](const std::shared_ptr<task>& t, opaque_network_state& st, uint32_t& r) {
+            [&peer, data](const task& t, opaque_network_state& st, uint32_t& r) {
                 return peer.enter_recv(t, st, r, data);
             }
         );
@@ -409,7 +409,7 @@ namespace fast_task::net {
 
     inline auto async_send(udp_peer& peer, std::span<const uint8_t> data) {
         return detail::make_value_awaiter<uint32_t>(
-            [&peer, data](const std::shared_ptr<task>& t, opaque_network_state& st, uint32_t& r) {
+            [&peer, data](const task& t, opaque_network_state& st, uint32_t& r) {
                 return peer.enter_send(t, st, r, data);
             }
         );
@@ -417,7 +417,7 @@ namespace fast_task::net {
 
     inline auto async_recvv(udp_peer& peer, std::span<std::span<uint8_t>> buffers) {
         return detail::make_value_awaiter<uint32_t>(
-            [&peer, buffers](const std::shared_ptr<task>& t, opaque_network_state& st, uint32_t& r) {
+            [&peer, buffers](const task& t, opaque_network_state& st, uint32_t& r) {
                 return peer.enter_recvv(t, st, r, buffers);
             }
         );
@@ -425,7 +425,7 @@ namespace fast_task::net {
 
     inline auto async_sendv(udp_peer& peer, std::span<const std::span<const uint8_t>> data) {
         return detail::make_value_awaiter<uint32_t>(
-            [&peer, data](const std::shared_ptr<task>& t, opaque_network_state& st, uint32_t& r) {
+            [&peer, data](const task& t, opaque_network_state& st, uint32_t& r) {
                 return peer.enter_sendv(t, st, r, data);
             }
         );
@@ -433,7 +433,7 @@ namespace fast_task::net {
 
     inline auto async_close(udp_peer& peer) {
         return detail::make_void_awaiter(
-            [&peer](const std::shared_ptr<task>& t, opaque_network_state& st) {
+            [&peer](const task& t, opaque_network_state& st) {
                 return peer.enter_close(t, st);
             }
         );
@@ -441,7 +441,7 @@ namespace fast_task::net {
 
     inline auto safe_async_recv(udp_peer& peer, std::span<uint8_t> data) {
         return detail::make_safe_value_awaiter<uint32_t>(
-            [&peer, data](const std::shared_ptr<task>& t, opaque_network_state& st, uint32_t& r) {
+            [&peer, data](const task& t, opaque_network_state& st, uint32_t& r) {
                 return peer.enter_recv(t, st, r, data);
             }
         );
@@ -449,7 +449,7 @@ namespace fast_task::net {
 
     inline auto safe_async_send(udp_peer& peer, std::span<const uint8_t> data) {
         return detail::make_safe_value_awaiter<uint32_t>(
-            [&peer, data](const std::shared_ptr<task>& t, opaque_network_state& st, uint32_t& r) {
+            [&peer, data](const task& t, opaque_network_state& st, uint32_t& r) {
                 return peer.enter_send(t, st, r, data);
             }
         );
@@ -457,7 +457,7 @@ namespace fast_task::net {
 
     inline auto safe_async_recvv(udp_peer& peer, std::span<std::span<uint8_t>> buffers) {
         return detail::make_safe_value_awaiter<uint32_t>(
-            [&peer, buffers](const std::shared_ptr<task>& t, opaque_network_state& st, uint32_t& r) {
+            [&peer, buffers](const task& t, opaque_network_state& st, uint32_t& r) {
                 return peer.enter_recvv(t, st, r, buffers);
             }
         );
@@ -465,7 +465,7 @@ namespace fast_task::net {
 
     inline auto safe_async_sendv(udp_peer& peer, std::span<const std::span<const uint8_t>> data) {
         return detail::make_safe_value_awaiter<uint32_t>(
-            [&peer, data](const std::shared_ptr<task>& t, opaque_network_state& st, uint32_t& r) {
+            [&peer, data](const task& t, opaque_network_state& st, uint32_t& r) {
                 return peer.enter_sendv(t, st, r, data);
             }
         );

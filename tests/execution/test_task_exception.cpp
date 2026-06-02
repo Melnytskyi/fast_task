@@ -14,7 +14,7 @@ TEST_F(TaskExceptionTest, ExHandleReceivesException) {
     std::atomic<bool> handler_called{false};
     std::string message;
 
-    auto t = std::make_shared<fast_task::task>(
+    auto t = fast_task::task::create(
         [] { throw std::runtime_error("oops"); },
         [&](const std::exception_ptr& ep) {
             handler_called = true;
@@ -27,18 +27,18 @@ TEST_F(TaskExceptionTest, ExHandleReceivesException) {
     );
 
     fast_task::scheduler::start(t);
-    t->await_task();
+    t.await_task();
 
     EXPECT_TRUE(handler_called.load());
     EXPECT_EQ(message, "oops");
 }
 
 TEST_F(TaskExceptionTest, NoExHandlerTaskStillCompletes) {
-    auto t = std::make_shared<fast_task::task>(
+    auto t = fast_task::task::create(
         [] { throw std::runtime_error("silent"); }
     );
     fast_task::scheduler::start(t);
-    t->await_task();
+    t.await_task();
     SUCCEED();
 }
 
@@ -49,14 +49,14 @@ TEST_F(TaskExceptionTest, ContextSwitchCounterIncreases) {
         fast_task::this_task::yield();
     });
 
-    std::shared_ptr<fast_task::task> t_ref;
-    auto t = std::make_shared<fast_task::task>([&] {
+    fast_task::task t_ref;
+    auto t = fast_task::task::create([&] {
         fast_task::this_task::yield();
     });
     t_ref = t;
     fast_task::scheduler::start(t);
-    t->await_task();
-    EXPECT_GE(t_ref->get_counter_context_switch(), 1u);
+    t.await_task();
+    EXPECT_GE(t_ref.get_counter_context_switch(), 1u);
 }
 
 TEST_F(TaskExceptionTest, RunTaskHelperRethrows) {

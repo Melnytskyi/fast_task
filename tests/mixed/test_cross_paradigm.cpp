@@ -75,7 +75,7 @@ TEST_F(CrossParadigmTest, NativeThreadWaitsOnFutureStartedByCoroutine) {
 // ---- coroutine starting a stackful task and awaiting it ----
 
 fast_task::task_coro<void> coro_spawns_task(std::atomic<bool>& ran) {
-    auto t = std::make_shared<fast_task::task>([&] { ran = true; });
+    auto t = fast_task::task::create([&] { ran = true; });
     fast_task::scheduler::start(t);
     co_await t;
 }

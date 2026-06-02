@@ -5,8 +5,8 @@
 // http://www.boost.org/LICENSE_1_0.txt)
 
 #pragma once
-#ifndef FAST_TASK_FUTURE
-    #define FAST_TASK_FUTURE
+#ifndef INCLUDE_TASK_FUTURE
+    #define INCLUDE_TASK_FUTURE
     #include "fwd.hpp"
     #include "query.hpp"
     #include "scheduler.hpp"
@@ -16,7 +16,7 @@
 namespace fast_task {
     template <class T>
     class future : public std::enable_shared_from_this<future<T>> {
-        std::shared_ptr<task> task_;
+        task task_;
         std::optional<T> result;
         std::exception_ptr ex_ptr;
 
@@ -29,7 +29,7 @@ namespace fast_task {
             requires std::is_same_v<std::invoke_result_t<FN>, T>
         {
             std::shared_ptr<future> future_ = std::make_shared<future>();
-            future_->task_ = std::make_shared<task>(
+            future_->task_ = task::create(
                 [fn = std::move(fn), future_]() mutable {
                     future_->result = std::make_optional<T>(fn());
                 },
@@ -38,7 +38,7 @@ namespace fast_task {
                 }
             );
             if (bind_id != (uint16_t)-1)
-                future_->task_->set_worker_id(bind_id);
+                future_->task_.set_worker_id(bind_id);
             scheduler::start(future_->task_);
             return future_;
         }
@@ -48,7 +48,7 @@ namespace fast_task {
             requires std::is_same_v<std::invoke_result_t<FN>, T>
         {
             std::shared_ptr<future> future_ = std::make_shared<future>();
-            future_->task_ = std::make_shared<task>(
+            future_->task_ = task::create(
                 [fn = std::move(fn), future_]() mutable {
                     future_->result = std::make_optional<T>(fn());
                 },
@@ -57,7 +57,7 @@ namespace fast_task {
                 }
             );
             if (bind_id != (uint16_t)-1)
-                future_->task_->set_worker_id(bind_id);
+                future_->task_.set_worker_id(bind_id);
             query.add(future_->task_);
             return future_;
         }
@@ -71,7 +71,7 @@ namespace fast_task {
         static std::shared_ptr<future> make_ready(const T& value) {
             std::shared_ptr<future> future_ = std::make_shared<future>();
             future_->task_ = task::callback_dummy(nullptr, nullptr, nullptr, nullptr, nullptr);
-            future_->task_->end_dummy([](auto) {});
+            future_->task_.end_dummy([](auto) {});
             future_->result = std::make_optional<T>(value);
             return future_;
         }
@@ -79,27 +79,27 @@ namespace fast_task {
         static std::shared_ptr<future> make_ready(T&& value) {
             std::shared_ptr<future> future_ = std::make_shared<future>();
             future_->task_ = task::callback_dummy(nullptr, nullptr, nullptr, nullptr, nullptr);
-            future_->task_->end_dummy([](auto) {});
+            future_->task_.end_dummy([](auto) {});
             future_->result = std::make_optional<T>(std::move(value));
             return future_;
         }
 
         T get() {
-            if (!task_->is_ended())
-                task_->await_task();
+            if (!task_.is_ended())
+                task_.await_task();
             if (ex_ptr)
                 std::rethrow_exception(ex_ptr);
-            if (task_->is_cancellation_requested())
+            if (task_.is_cancellation_requested())
                 throw std::runtime_error("Task has been canceled. Can not receive result.");
             return *result;
         }
 
         T take() {
-            if (!task_->is_ended())
-                task_->await_task();
+            if (!task_.is_ended())
+                task_.await_task();
             if (ex_ptr)
                 std::rethrow_exception(ex_ptr);
-            if (task_->is_cancellation_requested())
+            if (task_.is_cancellation_requested())
                 throw std::runtime_error("Task has been canceled. Can not receive result.");
             return std::move(*result);
         }
@@ -108,10 +108,10 @@ namespace fast_task {
         void when_ready(FN&& fn)
             requires std::is_same_v<std::invoke_result_t<FN, future&>, void>
         {
-            if (task_->is_ended())
+            if (task_.is_ended())
                 fn(*this);
             else
-                task_->callback(std::make_shared<task>([this, fn = std::move(fn)]() mutable {
+                task_.callback(task::create([this, fn = std::move(fn)]() mutable {
                     fn(*this);
                 }));
         }
@@ -120,28 +120,28 @@ namespace fast_task {
         void when_ready(FN&& fn)
             requires std::is_invocable_v<FN>
         {
-            if (task_->is_ended())
+            if (task_.is_ended())
                 fn();
             else
-                task_->callback(std::make_shared<task>([fn = std::move(fn)]() mutable {
+                task_.callback(task::create([fn = std::move(fn)]() mutable {
                     fn();
                 }));
         }
 
-        void callback(const std::shared_ptr<task>& task) {
-            task_->callback(task);
+        void callback(const task& task) {
+            task_.callback(task);
         }
 
         bool is_ready() {
-            return task_->is_ended();
+            return task_.is_ended();
         }
 
         void wait() {
-            if (!task_->is_ended())
-                task_->await_task();
+            if (!task_.is_ended())
+                task_.await_task();
             if (ex_ptr)
                 std::rethrow_exception(ex_ptr);
-            if (task_->is_cancellation_requested())
+            if (task_.is_cancellation_requested())
                 throw std::runtime_error("Task has been canceled. Can not receive result.");
         }
 
@@ -151,19 +151,19 @@ namespace fast_task {
         }
 
         bool wait_until(std::chrono::time_point<std::chrono::high_resolution_clock> time) {
-            if (!task_->is_ended())
-                if (!task_->await_task_until(time))
+            if (!task_.is_ended())
+                if (!task_.await_task_until(time))
                     return false;
             if (ex_ptr)
                 std::rethrow_exception(ex_ptr);
-            if (task_->is_cancellation_requested())
+            if (task_.is_cancellation_requested())
                 throw std::runtime_error("Task has been canceled. Can not receive result.");
             return true;
         }
 
         void wait_no_except() {
-            if (!task_->is_ended())
-                task_->await_task();
+            if (!task_.is_ended())
+                task_.await_task();
         }
 
         template <class Dur_resolution, class Dur_type>
@@ -172,8 +172,8 @@ namespace fast_task {
         }
 
         bool wait_until_no_except(std::chrono::time_point<std::chrono::high_resolution_clock> time) {
-            if (!task_->is_ended())
-                if (!task_->await_task_until(time))
+            if (!task_.is_ended())
+                if (!task_.await_task_until(time))
                     return false;
             return true;
         }
@@ -183,25 +183,25 @@ namespace fast_task {
         }
 
         bool is_canceled() const {
-            return task_->is_cancellation_requested();
+            return task_.is_cancellation_requested();
         }
 
         void cancel() {
-            task_->await_notify_cancel();
+            task_.await_notify_cancel();
         }
 
-        bool enter_wait(const std::shared_ptr<task>& t) {
-            return task_->enter_wait(t);
+        bool enter_wait(const task& t, enter_state& state) {
+            return task_.enter_wait(t, state);
         }
 
-        bool enter_wait_until(const std::shared_ptr<task>& t, std::chrono::high_resolution_clock::time_point time) {
-            return task_->enter_wait_until(t, time);
+        bool enter_wait_until(const task& t, enter_state& state, std::chrono::high_resolution_clock::time_point time) {
+            return task_.enter_wait_until(t, state, time);
         }
     };
 
     template <>
     class FT_API future<void> : public std::enable_shared_from_this<future<void>> {
-        std::shared_ptr<task> task_;
+        task task_;
         std::exception_ptr ex_ptr;
         bool has_result = false;
 
@@ -214,7 +214,7 @@ namespace fast_task {
             requires std::is_same_v<std::invoke_result_t<FN>, void>
         {
             std::shared_ptr<future> future_ = std::make_shared<future>();
-            future_->task_ = std::make_shared<task>(
+            future_->task_ = task::create(
                 [fn = std::move(fn), future_]() mutable {
                     fn();
                     future_->has_result = true;
@@ -224,7 +224,7 @@ namespace fast_task {
                 }
             );
             if (bind_id != (uint16_t)-1)
-                future_->task_->set_worker_id(bind_id);
+                future_->task_.set_worker_id(bind_id);
             scheduler::start(future_->task_);
             return future_;
         }
@@ -234,7 +234,7 @@ namespace fast_task {
             requires std::is_same_v<std::invoke_result_t<FN>, void>
         {
             std::shared_ptr<future> future_ = std::make_shared<future>();
-            future_->task_ = std::make_shared<task>(
+            future_->task_ = task::create(
                 [fn = std::move(fn), future_]() mutable {
                     fn();
                     future_->has_result = true;
@@ -244,7 +244,7 @@ namespace fast_task {
                 }
             );
             if (bind_id != (uint16_t)-1)
-                future_->task_->set_worker_id(bind_id);
+                future_->task_.set_worker_id(bind_id);
             query.add(future_->task_);
             return future_;
         }
@@ -263,10 +263,10 @@ namespace fast_task {
         void when_ready(FN&& fn)
             requires std::is_same_v<std::invoke_result_t<FN, future&>, void>
         {
-            if (task_->is_ended())
+            if (task_.is_ended())
                 fn(*this);
             else
-                task_->callback(std::make_shared<task>([this, fn = std::move(fn)]() mutable {
+                task_.callback(task::create([this, fn = std::move(fn)]() mutable {
                     fn(*this);
                 }));
         }
@@ -275,15 +275,15 @@ namespace fast_task {
         void when_ready(FN&& fn)
             requires std::is_invocable_v<FN>
         {
-            if (task_->is_ended())
+            if (task_.is_ended())
                 fn();
             else
-                task_->callback(std::make_shared<task>([fn = std::move(fn)]() mutable {
+                task_.callback(task::create([fn = std::move(fn)]() mutable {
                     fn();
                 }));
         }
 
-        void callback(const std::shared_ptr<task>& task);
+        void callback(const task& task);
         bool is_ready();
         void wait();
 
@@ -304,8 +304,8 @@ namespace fast_task {
         bool has_exception() const;
         bool is_canceled() const;
         void cancel();
-        bool enter_wait(const std::shared_ptr<task>& t);
-        bool enter_wait_until(const std::shared_ptr<task>& t, std::chrono::high_resolution_clock::time_point time);
+        bool enter_wait(const task&, enter_state& t);
+        bool enter_wait_until(const task&, enter_state& t, std::chrono::high_resolution_clock::time_point time);
     };
 
     extern template class FT_API future<void>;
@@ -318,7 +318,7 @@ namespace fast_task {
     future_ptr<std::invoke_result_t<FN, T>> future<T>::chain(FN&& fn, uint16_t bind_id) & {
         using ResT = std::invoke_result_t<FN, T>;
         std::shared_ptr<future> future_ = std::make_shared<future>();
-        future_->task_ = std::make_shared<task>(
+        future_->task_ = task::create(
             [fn = std::move(fn), future_, prev_future = this->shared_from_this()]() mutable {
                 if constexpr (std::is_same_v<ResT, void>) {
                     fn(prev_future->get());
@@ -331,7 +331,7 @@ namespace fast_task {
             }
         );
         if (bind_id != (uint16_t)-1)
-            future_->task_->set_worker_id(bind_id);
+            future_->task_.set_worker_id(bind_id);
         callback(future_->task_);
         return future_;
     }
@@ -341,7 +341,7 @@ namespace fast_task {
     future_ptr<std::invoke_result_t<FN, T>> future<T>::chain(FN&& fn, uint16_t bind_id) && {
         using ResT = std::invoke_result_t<FN, T>;
         std::shared_ptr<future> future_ = std::make_shared<future>();
-        future_->task_ = std::make_shared<task>(
+        future_->task_ = task::create(
             [fn = std::move(fn), future_, prev_future = this->shared_from_this()]() mutable {
                 if constexpr (std::is_same_v<ResT, void>) {
                     fn(prev_future->take());
@@ -354,7 +354,7 @@ namespace fast_task {
             }
         );
         if (bind_id != (uint16_t)-1)
-            future_->task_->set_worker_id(bind_id);
+            future_->task_.set_worker_id(bind_id);
         callback(future_->task_);
         return future_;
     }

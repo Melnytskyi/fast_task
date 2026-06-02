@@ -6,6 +6,7 @@
 
 #ifndef INCLUDE_TASK_DEADLINE_TIMER
 #define INCLUDE_TASK_DEADLINE_TIMER
+#include "enter_state.hpp"
 #include "fwd.hpp"
 #include "mutex_unify.hpp"
 #include <functional>
@@ -35,7 +36,7 @@ namespace fast_task {
         bool cancel_one();
 
         //awoken when timeouted
-        void async_wait(const std::shared_ptr<task>&);
+        void async_wait(const task&);
 
         //true if got timeout
         void async_wait(std::function<void(status)>&&);
@@ -50,10 +51,9 @@ namespace fast_task {
 
         bool timed_out();
 
-        //for coroutines
-        bool enter_wait(const std::shared_ptr<task>& task, std::chrono::high_resolution_clock::time_point& out_time);
-        bool enter_wait(mutex_unify& mut, const std::shared_ptr<task>& task, std::chrono::high_resolution_clock::time_point& out_time);
-        status get_status(const std::shared_ptr<task>& task, std::chrono::high_resolution_clock::time_point timeout_time);
+        bool enter_wait(const task&, enter_state& task, std::chrono::high_resolution_clock::time_point& out_time);
+        bool enter_wait(mutex_unify& mut, const task& task, enter_state&, std::chrono::high_resolution_clock::time_point& out_time);
+        status get_status(const task& task, std::chrono::high_resolution_clock::time_point timeout_time);
 
         template <class Rep, class Period>
         size_t expires_from_now(const std::chrono::duration<Rep, Period>& duration) {

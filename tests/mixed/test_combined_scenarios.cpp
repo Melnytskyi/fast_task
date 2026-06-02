@@ -17,8 +17,8 @@ TEST_F(CombinedScenariosTest, TaskQueryMixedTasksAndCoroutines) {
     std::atomic<int> count{0};
 
     // Stackful tasks
-    auto t1 = std::make_shared<fast_task::task>([&] { ++count; });
-    auto t2 = std::make_shared<fast_task::task>([&] { ++count; });
+    auto t1 = fast_task::task::create([&] { ++count; });
+    auto t2 = fast_task::task::create([&] { ++count; });
     query.add(t1);
     query.add(t2);
 
@@ -32,8 +32,8 @@ TEST_F(CombinedScenariosTest, TaskQueryMixedTasksAndCoroutines) {
     query.enable();
     query.wait();
 
-    t1->await_task();
-    t2->await_task();
+    t1.await_task();
+    t2.await_task();
     c->await_task();
 
     EXPECT_EQ(count.load(), 3);
@@ -47,7 +47,7 @@ TEST_F(CombinedScenariosTest, DeadlineTimerCancelsBlockedTask) {
     std::atomic<bool> cancelled{false};
 
     auto deadline = std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(50);
-    auto t = std::make_shared<fast_task::task>(
+    auto t = fast_task::task::create(
         [&] {
             try {
                 fast_task::unique_lock<fast_task::task_mutex> lock(mtx);
@@ -62,7 +62,7 @@ TEST_F(CombinedScenariosTest, DeadlineTimerCancelsBlockedTask) {
 
     fast_task::unique_lock<fast_task::task_mutex> native_lock(mtx);
     fast_task::scheduler::start(t);
-    t->await_task();
+    t.await_task();
 
     EXPECT_TRUE(cancelled.load());
 }

@@ -14,7 +14,7 @@ TEST_F(InterruptUnsafeTest, RegionPreventsInterrupt) {
     std::atomic<bool> interrupted_inside{false};
 
     // Pre-cancel the task; inside interrupt_unsafe_region check_cancellation should NOT throw
-    auto t = std::make_shared<fast_task::task>([&] {
+    auto t = fast_task::task::create([&] {
         fast_task::interrupt_unsafe_region region;
         try {
             fast_task::this_task::check_cancellation();
@@ -22,9 +22,9 @@ TEST_F(InterruptUnsafeTest, RegionPreventsInterrupt) {
             interrupted_inside = true;
         }
     });
-    t->notify_cancel();
+    t.notify_cancel();
     fast_task::scheduler::start(t);
-    t->await_task();
+    t.await_task();
 
     EXPECT_FALSE(interrupted_inside.load());
 }
