@@ -712,7 +712,6 @@ namespace fast_task {
                             if (victim_deque->pop(loc.curr_task)) {
                                 if (loc.curr_task && !get_data(loc.curr_task).get_is_on_scheduler())
                                     loc.stack_current_context = &get_execution_data(loc.curr_task).context;
-                                loc.stack_current_context = &get_execution_data(loc.curr_task).context;
                                 return true;
                             }
                         }
