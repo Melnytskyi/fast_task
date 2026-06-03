@@ -158,17 +158,14 @@ namespace fast_task {
 
     void task_semaphore::release_all() {
         fast_task::lock_guard lg0(values.no_race);
-        resume_task* head = nullptr;
-        {
-            fast_task::unique_lock no_race_guard(values.no_race);
-            if (values.allow_threshold == values.max_threshold)
-                return;
-            head = values.begin;
-            values.begin = nullptr;
-            values.end = nullptr;
-            values.allow_threshold = values.max_threshold;
-            values.native_notify.notify_all();
-        }
+        if (values.allow_threshold == values.max_threshold)
+            return;
+        resume_task* head = values.begin;
+        values.begin = nullptr;
+        values.end = nullptr;
+        values.allow_threshold = values.max_threshold;
+        values.native_notify.notify_all();
+
         if (!head)
             return;
 

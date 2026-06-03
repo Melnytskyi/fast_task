@@ -52,11 +52,12 @@ namespace fast_task {
         if (get_loc().is_task_thread) {
             node.task = get_loc().curr_task;
             node.awake_check = get_data(get_loc().curr_task).awake_check;
-            {
-                fast_task::lock_guard guard(values.no_race);
-                push_back(values, &node);
-            }
-            swapCtxRelock(*mut.mutex(), values.no_race);
+
+            fast_task::unique_lock guard(values.no_race);
+            relock_guard relock(mut);
+            push_back(values, &node);
+            swapCtxRelock(values.no_race);
+            guard.unlock();
         } else {
             fast_task::condition_variable_any cd;
             bool has_res = false;
@@ -80,16 +81,17 @@ namespace fast_task {
         if (get_loc().is_task_thread) {
             node.task = get_loc().curr_task;
             node.awake_check = get_data(get_loc().curr_task).awake_check;
-            {
-                fast_task::lock_guard guard(glob.task_timer_safety);
-                makeTimeWait_unsafe(time_point);
-                {
-                    fast_task::lock_guard _guard(values.no_race);
-                    push_back(values, &node);
-                }
-                swapCtxRelock(*mut.mutex(), glob.task_timer_safety);
-            }
+
+            fast_task::unique_lock guard_tim(glob.task_timer_safety);
+            makeTimeWait_unsafe(time_point);
+            fast_task::unique_lock guard(values.no_race);
+            relock_guard relock(mut);
+            push_back(values, &node);
+            swapCtxRelock(values.no_race, glob.task_timer_safety);
             auto timed = get_data(get_loc().curr_task).get_time_end();
+            guard.unlock();
+            guard_tim.unlock();
+
             resetTimeWait();
             if (timed) {
                 fast_task::lock_guard _guard(values.no_race);
@@ -125,11 +127,10 @@ namespace fast_task {
         if (get_loc().is_task_thread) {
             node.task = get_loc().curr_task;
             node.awake_check = get_data(get_loc().curr_task).awake_check;
-            {
-                fast_task::lock_guard guard(values.no_race);
-                push_back(values, &node);
-            }
-            swapCtxRelock(*mut.mutex(), values.no_race);
+            fast_task::unique_lock guard(values.no_race);
+            relock_guard relock(mut);
+            push_back(values, &node);
+            swapCtxRelock(values.no_race);
         } else {
             fast_task::condition_variable_any cd;
             bool has_res = false;
@@ -153,16 +154,17 @@ namespace fast_task {
             resume_task node;
             node.task = get_loc().curr_task;
             node.awake_check = get_data(get_loc().curr_task).awake_check;
-            {
-                fast_task::lock_guard guard(glob.task_timer_safety);
-                makeTimeWait_unsafe(time_point);
-                {
-                    fast_task::lock_guard _guard(values.no_race);
-                    push_back(values, &node);
-                }
-                swapCtxRelock(*mut.mutex(), glob.task_timer_safety);
-            }
+
+            fast_task::unique_lock guard_tim(glob.task_timer_safety);
+            makeTimeWait_unsafe(time_point);
+            fast_task::unique_lock guard(values.no_race);
+            relock_guard relock(mut);
+            push_back(values, &node);
+            swapCtxRelock(values.no_race, glob.task_timer_safety);
             auto timed = get_data(get_loc().curr_task).get_time_end();
+            guard.unlock();
+            guard_tim.unlock();
+
             resetTimeWait();
             if (timed) {
                 fast_task::lock_guard _guard(values.no_race);
