@@ -230,8 +230,10 @@ namespace fast_task {
         node->next = obj->on_wait.load(std::memory_order_relaxed);
         obj->on_wait.store(node, std::memory_order_relaxed);
 
-        if (!cd.is_started())
+        if (!cd.is_started()) {
             ++glob.executing_tasks;
+            cd.set_status(task_object::status_e::running);
+        }
         obj->unlock();
     }
 
