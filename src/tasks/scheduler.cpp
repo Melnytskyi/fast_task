@@ -332,6 +332,12 @@ namespace fast_task {
     }
 
     void transfer_task(task&& task, enter_state* stat) {
+        if (!task) {
+            glob.tasks.enqueue(std::move(task));
+            glob.tasks_notifier.unsafe_notify_one();
+            return;
+        }
+
         if (get_data(task).get_is_on_scheduler() && get_data(task).get_relock_0() && stat) {
             auto mut = get_data(task).get_relock_0();
 
@@ -402,7 +408,8 @@ namespace fast_task {
     bool loadTask() {
         auto& loc = get_loc();
         if (loc.local_tasks->pop(loc.curr_task)) {
-            loc.stack_current_context = &get_execution_data(loc.curr_task).context;
+            if (loc.curr_task && !get_data(loc.curr_task).get_is_on_scheduler())
+                loc.stack_current_context = &get_execution_data(loc.curr_task).context;
             return false;
         }
 
@@ -416,7 +423,8 @@ namespace fast_task {
                     if (!loc.local_tasks->emplace(std::move(temp_tasks[i])))
                         glob.tasks.enqueue(temp_tasks[i]);
                 loc.curr_task = std::move(temp_tasks[0]);
-                loc.stack_current_context = &get_execution_data(loc.curr_task).context;
+                if (loc.curr_task && !get_data(loc.curr_task).get_is_on_scheduler())
+                    loc.stack_current_context = &get_execution_data(loc.curr_task).context;
                 return false;
             }
         }
@@ -429,7 +437,8 @@ namespace fast_task {
                     if (!loc.local_tasks->emplace(std::move(temp_tasks[i])))
                         glob.cold_tasks.enqueue(temp_tasks[i]);
                 loc.curr_task = std::move(temp_tasks[0]);
-                loc.stack_current_context = &get_execution_data(loc.curr_task).context;
+                if (loc.curr_task && !get_data(loc.curr_task).get_is_on_scheduler())
+                    loc.stack_current_context = &get_execution_data(loc.curr_task).context;
                 return false;
             }
         }
@@ -451,7 +460,8 @@ namespace fast_task {
                             continue;
 
                         if (victim_deque->steal(loc.curr_task)) {
-                            loc.stack_current_context = &get_execution_data(loc.curr_task).context;
+                            if (loc.curr_task && !get_data(loc.curr_task).get_is_on_scheduler())
+                                loc.stack_current_context = &get_execution_data(loc.curr_task).context;
                             return false;
                         }
                     }
@@ -478,7 +488,7 @@ namespace fast_task {
     bool execute_task(const std::string& old_name) {
         auto& pre_exec_loc = get_loc();
         if (!pre_exec_loc.curr_task)
-            return false;
+            return true;
         auto& vtable = get_data(pre_exec_loc.curr_task).vtable;
         if (vtable && vtable->on_start == nullptr && vtable->on_destruct == nullptr) {
             get_data(pre_exec_loc.curr_task).end_of_life_notify();
@@ -499,7 +509,7 @@ namespace fast_task {
         pre_exec_loc.is_task_thread = true;
 
         worker_mode_desk(old_name, "process task - ", this_task::get_id());
-        if (*get_loc().stack_current_context) {
+        if (get_loc().stack_current_context && *get_loc().stack_current_context) {
             *get_loc().stack_current_context = std::move(*get_loc().stack_current_context).resume();
             get_data(get_loc().curr_task).get_relock_0().relock_start();
             get_data(get_loc().curr_task).get_relock_1().relock_start();
@@ -623,7 +633,7 @@ namespace fast_task {
                 continue;
             }
             retrys = 0;
-            if (get_data(loc.curr_task).bind_to_worker_id != (uint16_t)-1) {
+            if (loc.curr_task && get_data(loc.curr_task).bind_to_worker_id != (uint16_t)-1) {
                 transfer_task(std::move(loc.curr_task));
                 continue;
             }
@@ -665,7 +675,8 @@ namespace fast_task {
         while (true) {
             check_stw();
             if (loc.local_tasks->pop(loc.curr_task)) {
-                loc.stack_current_context = &get_execution_data(loc.curr_task).context;
+                if (loc.curr_task && !get_data(loc.curr_task).get_is_on_scheduler())
+                    loc.stack_current_context = &get_execution_data(loc.curr_task).context;
                 return true;
             }
 
@@ -678,7 +689,8 @@ namespace fast_task {
                     if (!loc.local_tasks->emplace(std::move(temp_tasks[i])))
                         glob.tasks.enqueue(temp_tasks[i]);
                 loc.curr_task = std::move(temp_tasks[0]);
-                loc.stack_current_context = &get_execution_data(loc.curr_task).context;
+                if (loc.curr_task && !get_data(loc.curr_task).get_is_on_scheduler())
+                    loc.stack_current_context = &get_execution_data(loc.curr_task).context;
                 return true;
             }
 
@@ -698,6 +710,8 @@ namespace fast_task {
                                 continue;
 
                             if (victim_deque->pop(loc.curr_task)) {
+                                if (loc.curr_task && !get_data(loc.curr_task).get_is_on_scheduler())
+                                    loc.stack_current_context = &get_execution_data(loc.curr_task).context;
                                 loc.stack_current_context = &get_execution_data(loc.curr_task).context;
                                 return true;
                             }
@@ -717,11 +731,11 @@ namespace fast_task {
                     break;
                 if (!context.tasks.try_dequeue(loc.curr_task)) {
                     context.new_task_notifier.wait(guard);
-                } else {
+                } else if (loc.curr_task && !get_data(loc.curr_task).get_is_on_scheduler()) {
                     loc.stack_current_context = &get_execution_data(loc.curr_task).context;
                     return true;
                 }
-            } else {
+            } else if (loc.curr_task && !get_data(loc.curr_task).get_is_on_scheduler()) {
                 loc.stack_current_context = &get_execution_data(loc.curr_task).context;
                 return true;
             }
@@ -761,7 +775,7 @@ namespace fast_task {
             if (!loadTaskBinded(context))
                 break;
 
-            if (get_data(loc.curr_task).bind_to_worker_id != (uint16_t)id) {
+            if (loc.curr_task && get_data(loc.curr_task).bind_to_worker_id != (uint16_t)id) {
                 transfer_task(std::move(loc.curr_task));
                 continue;
             }
@@ -793,6 +807,8 @@ namespace fast_task {
                 if (context.in_close) {
                     while (context.tasks.size_approx())
                         while (context.tasks.try_dequeue(loc.curr_task)) {
+                            if (!loc.curr_task)
+                                continue;
                             if (context.abort_tasks_on_close) {
                                 bool should_decrement = false;
                                 {

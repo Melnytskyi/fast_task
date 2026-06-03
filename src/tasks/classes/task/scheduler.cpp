@@ -74,6 +74,8 @@ namespace fast_task::scheduler {
         if (!total_executors())
             create_executor(1);
 
+        assert(tsk && "Cannot start an empty task");
+
         task lgr_task = tsk;
 
         {
@@ -247,9 +249,9 @@ namespace fast_task::scheduler {
     }
 
     void reduce_executor(size_t count) {
-        for (size_t i = 0; i < count; i++) {
-            start(task(nullptr));
-        }
+        fast_task::shared_lock notify_guard(glob.task_thread_safety);
+        for (size_t i = 0; i < count; i++)
+            transfer_task(task(nullptr));
     }
 
     void become_task_executor() {
