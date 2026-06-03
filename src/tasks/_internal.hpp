@@ -44,6 +44,7 @@
     #include <shared.hpp>
     #include <task.hpp>
     #include <tasks/util/_dbg_macro.hpp>
+    #include <tasks/util/hashed_timing_wheel.hpp>
     #include <tasks/util/work_stealing_deque.hpp>
 
 namespace fast_task {
@@ -383,12 +384,6 @@ namespace fast_task {
         void reset();
     };
 
-    struct FT_API_LOCAL timing {
-        std::chrono::high_resolution_clock::time_point wait_timepoint;
-        task awake_task;
-        uint16_t check_id;
-    };
-
     struct FT_API_LOCAL binded_context {
         std::atomic<std::shared_ptr<const std::vector<std::shared_ptr<work_stealing_deque<task>>>>> executors_queues;
         std::list<uint32_t> completions;
@@ -414,8 +409,8 @@ namespace fast_task {
         std::atomic<std::shared_ptr<const std::vector<std::shared_ptr<work_stealing_deque<task>>>>> executors_queues;
         moodycamel::ConcurrentQueue<task> tasks;
         moodycamel::ConcurrentQueue<task> cold_tasks;
-        std::deque<timing> timed_tasks;
-        std::deque<timing> cold_timed_tasks;
+        hashed_timing_wheel timed_wheel;
+        hashed_timing_wheel cold_timed_wheel;
 
         fast_task::rw_mutex task_thread_safety;
         fast_task::mutex task_timer_safety;
@@ -497,7 +492,7 @@ namespace fast_task {
 
     void FT_API_LOCAL taskExecutor(bool end_in_task_out = false, bool prevent_naming = false);
     void FT_API_LOCAL bindedTaskExecutor(uint16_t id);
-    void FT_API_LOCAL unsafe_put_task_to_timed_queue(std::deque<timing>& queue, std::chrono::high_resolution_clock::time_point t, task&);
+    void FT_API_LOCAL unsafe_put_task_to_timed_queue(hashed_timing_wheel& wheel, std::chrono::high_resolution_clock::time_point t, task&);
     bool FT_API_LOCAL can_be_scheduled_task_to_hot();
     void FT_API_LOCAL forceCancelCancellation(const task_cancellation& restart);
 

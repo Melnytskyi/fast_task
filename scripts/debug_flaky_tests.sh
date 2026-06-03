@@ -1,13 +1,12 @@
 #!/bin/bash
 
 MAX_JOBS=8
-LOG_FILE="./test_hunt_results_$(date +%Y%m%d_%H%M%S).log"
 BUILD_DIR="../out/build/Linux-Test"
 
-echo "--- Test Hunt Started $(date) ---" > "$LOG_FILE"
 cd "$BUILD_DIR" || exit 1
+LOG_FILE="./test_hunt_results_$(date +%Y%m%d_%H%M%S).log"
 
-readarray -t executables < <(find ./tests -type f -executable | grep "/Debug/")
+readarray -t executables < <(find ./tests -type f -executable)
 
 echo "Found ${#executables[@]} executables. Starting hunt with max $MAX_JOBS parallel jobs..."
 
@@ -17,7 +16,7 @@ hunt_test() {
     local temp_out=$(mktemp)
     local temp_err=$(mktemp)
 
-    echo -e "\n=======================================================" > "$temp_log"
+    echo -e "\n=======================================================" >> "$temp_log"
     echo "--- Starting hunt for: $test_path ---" >> "$temp_log"
 
     local hung=false
@@ -69,6 +68,7 @@ hunt_test() {
     echo "Finished: $test_path"
 }
 
+echo "--- Test Hunt Started $(date) ---" >> "$LOG_FILE"
 for exe in "${executables[@]}"; do
     hunt_test "$exe" &
     

@@ -35,6 +35,29 @@ endif()
 target_compile_definitions(fast_task_flags INTERFACE FT_TASK_TRANSFERS_LIMIT=${FAST_TASK_TASK_TRANSFERS_LIMIT})
 target_compile_definitions(fast_task_flags INTERFACE FT_GUARD_PAGE_COUNT=${FAST_TASK_GUARD_PAGE_COUNT})
 
+if(FAST_TASK_TIMER_PRECISION STREQUAL "1us")
+    target_compile_definitions(fast_task_flags INTERFACE FT_TIMER_PRECISION=1)
+elseif(FAST_TASK_TIMER_PRECISION STREQUAL "10ms")
+    target_compile_definitions(fast_task_flags INTERFACE FT_TIMER_PRECISION=10000)
+else()
+    target_compile_definitions(fast_task_flags INTERFACE FT_TIMER_PRECISION=1000)
+endif()
+
+# Detect platform hi-res timer support for 1us precision
+if(FAST_TASK_TIMER_PRECISION STREQUAL "1us")
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        # Linux: timerfd + clock_nanosleep provide microsecond resolution
+        target_compile_definitions(fast_task_flags INTERFACE FT_HAS_HIRES_TIMER)
+    elseif(WIN32)
+        # Windows 10 1803+ has CreateWaitableTimerEx with high-res option
+        # Detect via _WIN32_WINNT >= 0x0A00 (Win10)
+        target_compile_definitions(fast_task_flags INTERFACE FT_HAS_HIRES_TIMER)
+    elseif(APPLE)
+        # macOS has mach_wait_until for microsecond waits
+        target_compile_definitions(fast_task_flags INTERFACE FT_HAS_HIRES_TIMER)
+    endif()
+endif()
+
 if(MSVC)
     target_compile_options(fast_task_flags INTERFACE $<$<COMPILE_LANGUAGE:CXX>:/utf-8>)
     target_compile_options(fast_task_flags INTERFACE $<$<COMPILE_LANGUAGE:CXX>:/wd4505>)

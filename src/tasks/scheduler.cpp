@@ -846,95 +846,121 @@ namespace fast_task {
 
 #pragma endregion
 
-    void taskTimer() { //TODO Hashed Hierarchical Timing Wheel
+#if defined(FT_TIMER_PRECISION) && FT_TIMER_PRECISION == 1 && !defined(FT_HAS_HIRES_TIMER)
+    static void hires_spin_sleep(std::chrono::high_resolution_clock::time_point deadline) {
+        while (std::chrono::high_resolution_clock::now() < deadline) {
+    #if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+            __builtin_ia32_pause();
+    #elif defined(__aarch64__) || defined(_M_ARM64)
+            __yield();
+    #else
+            std::atomic_signal_fence(std::memory_order_seq_cst);
+    #endif
+        }
+    }
+#endif
+    static void smart_wait_until(fast_task::unique_lock<fast_task::mutex>& guard, std::chrono::high_resolution_clock::time_point deadline) {
+        auto now = std::chrono::high_resolution_clock::now();
+        if (deadline <= now)
+            return;
+#if defined(FT_TIMER_PRECISION) && FT_TIMER_PRECISION == 1 && !defined(FT_HAS_HIRES_TIMER)
+        auto remaining = deadline - now;
+        if (remaining <= std::chrono::microseconds(100)) {
+            guard.unlock();
+            hires_spin_sleep(deadline);
+            guard.lock();
+            return;
+        }
+#endif
+        glob.time_notifier.wait_until(guard, deadline);
+    }
+
+    void taskTimer() {
         _set_name_thread_dbg("task time controller");
 
         fast_task::unique_lock guard(glob.task_timer_safety);
-        std::list<task> cached_wake_ups;
-        std::list<task> cached_cold;
+        constexpr size_t BATCH = 64;
+        task wake_ups[BATCH];
+        task cold_wakes[BATCH];
+        size_t wake_count = 0;
+        size_t cold_count = 0;
+
+        auto flush_wake_ups = [&] {
+            for (size_t i = 0; i < wake_count; ++i)
+                transfer_task(std::move(wake_ups[i]));
+            wake_count = 0;
+        };
+        auto flush_cold = [&] {
+            if (cold_count) {
+                {
+                    fast_task::shared_lock sg(glob.task_thread_safety);
+                    for (size_t i = 0; i < cold_count; ++i)
+                        glob.cold_tasks.enqueue(std::move(cold_wakes[i]));
+                }
+                glob.tasks_notifier.unsafe_notify_all();
+                cold_count = 0;
+            }
+        };
+
+        auto enqueue_wake = [&](task&& t) {
+            wake_ups[wake_count++] = std::move(t);
+            if (wake_count == BATCH)
+                flush_wake_ups();
+        };
+        auto enqueue_cold = [&](task&& t) {
+            cold_wakes[cold_count++] = std::move(t);
+            if (cold_count == BATCH)
+                flush_cold();
+        };
+
         while (glob.time_control_enabled) {
+            auto current_now = std::chrono::high_resolution_clock::now();
+
             if (glob.shutdown_requested.load(std::memory_order_acquire)) {
-                while (!glob.timed_tasks.empty()) {
-                    timing& tmng = glob.timed_tasks.front();
+                glob.timed_wheel.clear([&](timing& tmng) {
                     if (tmng.check_id == get_data(tmng.awake_task).awake_check) {
-                        fast_task::lock_guard task_guard(get_data(tmng.awake_task));
+                        fast_task::lock_guard tg(get_data(tmng.awake_task));
                         if (!get_data(tmng.awake_task).get_awaked()) {
                             get_data(tmng.awake_task).set_time_end(true);
-                            cached_wake_ups.push_back(std::move(tmng.awake_task));
+                            enqueue_wake(std::move(tmng.awake_task));
                         }
                     }
-                    glob.timed_tasks.pop_front();
-                }
-                while (!glob.cold_timed_tasks.empty()) {
-                    timing& tmng = glob.cold_timed_tasks.front();
+                });
+                glob.cold_timed_wheel.clear([&](timing& tmng) {
                     if (tmng.check_id == get_data(tmng.awake_task).awake_check) {
-                        fast_task::lock_guard task_guard(get_data(tmng.awake_task));
+                        fast_task::lock_guard tg(get_data(tmng.awake_task));
                         if (!get_data(tmng.awake_task).get_awaked()) {
                             get_data(tmng.awake_task).set_time_end(true);
-                            cached_cold.push_back(std::move(tmng.awake_task));
+                            enqueue_cold(std::move(tmng.awake_task));
                         }
                     }
-                    glob.cold_timed_tasks.pop_front();
-                }
-            } else if (glob.timed_tasks.size()) {
-                auto current_now = std::chrono::high_resolution_clock::now();
-                while (glob.timed_tasks.front().wait_timepoint <= current_now) {
-                    timing& tmng = glob.timed_tasks.front();
-                    if (tmng.check_id != get_data(tmng.awake_task).awake_check) {
-                        glob.timed_tasks.pop_front();
-                        if (glob.timed_tasks.empty())
-                            break;
-                        else
-                            continue;
-                    }
-                    fast_task::lock_guard task_guard(get_data(tmng.awake_task));
-                    if (get_data(tmng.awake_task).get_awaked()) {
-                        glob.timed_tasks.pop_front();
-                    } else {
-                        get_data(tmng.awake_task).set_time_end(true);
-                        cached_wake_ups.push_back(std::move(tmng.awake_task));
-                        glob.timed_tasks.pop_front();
-                    }
-                    if (glob.timed_tasks.empty())
-                        break;
-                }
-            }
-            if (glob.cold_timed_tasks.size()) {
-                auto current_now = std::chrono::high_resolution_clock::now();
-                while (glob.cold_timed_tasks.front().wait_timepoint <= current_now) {
-                    timing& tmng = glob.cold_timed_tasks.front();
-                    if (tmng.check_id != get_data(tmng.awake_task).awake_check) {
-                        glob.cold_timed_tasks.pop_front();
-                        if (glob.cold_timed_tasks.empty())
-                            break;
-                        else
-                            continue;
-                    }
-                    cached_cold.push_back(std::move(tmng.awake_task));
-                    glob.cold_timed_tasks.pop_front();
-                    if (glob.cold_timed_tasks.empty())
-                        break;
-                }
-            }
-            guard.unlock();
-            if (!cached_wake_ups.empty() || !cached_cold.empty()) {
-                if (!cached_wake_ups.empty())
-                    while (!cached_wake_ups.empty()) {
-                        transfer_task(std::move(cached_wake_ups.back()));
-                        cached_wake_ups.pop_back();
-                    }
-                if (!cached_cold.empty()) {
-                    fast_task::shared_lock _guard(glob.task_thread_safety);
-                    while (!cached_cold.empty()) {
-                        glob.cold_tasks.enqueue(std::move(cached_cold.back()));
-                        cached_cold.pop_back();
-                    }
-                    glob.tasks_notifier.unsafe_notify_all();
-                }
+                });
+            } else {
+                glob.timed_wheel.collect_expired(current_now, [&](timing& tmng) {
+                    if (tmng.check_id != get_data(tmng.awake_task).awake_check)
+                        return;
+
+                    fast_task::lock_guard tg(get_data(tmng.awake_task));
+                    if (get_data(tmng.awake_task).get_awaked())
+                        return;
+
+                    get_data(tmng.awake_task).set_time_end(true);
+                    enqueue_wake(std::move(tmng.awake_task));
+                });
+
+                glob.cold_timed_wheel.collect_expired(current_now, [&](timing& tmng) {
+                    if (tmng.check_id != get_data(tmng.awake_task).awake_check)
+                        return;
+                    enqueue_cold(std::move(tmng.awake_task));
+                });
             }
 
+            guard.unlock();
+            flush_wake_ups();
+            flush_cold();
+
             {
-                fast_task::shared_lock _guard(glob.task_thread_safety);
+                fast_task::shared_lock sg(glob.task_thread_safety);
                 glob.no_tasks_execute_notifier.notify_all_guarded();
             }
 
@@ -942,20 +968,28 @@ namespace fast_task {
             guard.lock();
             if (!glob.time_control_enabled)
                 break;
+
+            auto next_hot = glob.timed_wheel.next_deadline();
+            auto next_cold = glob.cold_timed_wheel.next_deadline();
+
             if (glob.shutdown_requested.load(std::memory_order_acquire))
                 glob.time_notifier.wait(guard);
-            else if (glob.timed_tasks.empty() && glob.cold_timed_tasks.empty())
+            else if (next_hot == std::chrono::high_resolution_clock::time_point::max() && next_cold == std::chrono::high_resolution_clock::time_point::max())
                 glob.time_notifier.wait(guard);
-            else if (glob.timed_tasks.size() && glob.cold_timed_tasks.size()) {
-                if (glob.timed_tasks.front().wait_timepoint < glob.cold_timed_tasks.front().wait_timepoint)
-                    glob.time_notifier.wait_until(guard, glob.timed_tasks.front().wait_timepoint);
-                else
-                    glob.time_notifier.wait_until(guard, glob.cold_timed_tasks.front().wait_timepoint);
-            } else if (glob.timed_tasks.size())
-                glob.time_notifier.wait_until(guard, glob.timed_tasks.front().wait_timepoint);
-            else
-                glob.time_notifier.wait_until(guard, glob.cold_timed_tasks.front().wait_timepoint);
+            else {
+                auto deadline = (next_hot == std::chrono::high_resolution_clock::time_point::max())
+                                    ? next_cold
+                                : (next_cold == std::chrono::high_resolution_clock::time_point::max())
+                                    ? next_hot
+                                    : std::min(next_hot, next_cold);
+                smart_wait_until(guard, deadline);
+            }
         }
+
+        guard.unlock();
+        flush_wake_ups();
+        flush_cold();
+        guard.lock();
 
         fast_task::shared_lock _guard(glob.task_thread_safety);
         get_loc().reset();
@@ -980,20 +1014,8 @@ namespace fast_task {
         fast_task::thread(taskTimer).detach();
     }
 
-    void unsafe_put_task_to_timed_queue(std::deque<timing>& queue, std::chrono::high_resolution_clock::time_point t, task& task) {
-        size_t i = 0;
-        auto it = queue.begin();
-        auto end = queue.end();
-        while (it != end) {
-            if (it->wait_timepoint >= t) {
-                queue.emplace(it, timing(t, task, get_data(task).awake_check));
-                i = (size_t)-1;
-                break;
-            }
-            ++it;
-        }
-        if (i != (size_t)-1)
-            queue.emplace_back(timing(t, task, get_data(task).awake_check));
+    void unsafe_put_task_to_timed_queue(hashed_timing_wheel& wheel, std::chrono::high_resolution_clock::time_point t, task& task) {
+        wheel.insert(timing(t, task, get_data(task).awake_check));
     }
 
     void makeTimeWait_extern(task _task, std::chrono::high_resolution_clock::time_point time_point) {
@@ -1004,9 +1026,9 @@ namespace fast_task {
         get_data(loc.curr_task).set_time_end(false);
         fast_task::lock_guard guard(glob.task_timer_safety);
         if (can_be_scheduled_task_to_hot())
-            unsafe_put_task_to_timed_queue(glob.timed_tasks, time_point, _task);
+            unsafe_put_task_to_timed_queue(glob.timed_wheel, time_point, _task);
         else
-            unsafe_put_task_to_timed_queue(glob.cold_timed_tasks, time_point, _task);
+            unsafe_put_task_to_timed_queue(glob.cold_timed_wheel, time_point, _task);
         glob.tasks_notifier.notify_one();
     }
 
@@ -1018,7 +1040,7 @@ namespace fast_task {
         get_data(loc.curr_task).set_time_end(false);
 
         fast_task::lock_guard guard(glob.task_timer_safety);
-        unsafe_put_task_to_timed_queue(glob.timed_tasks, t, loc.curr_task);
+        unsafe_put_task_to_timed_queue(glob.timed_wheel, t, loc.curr_task);
         glob.time_notifier.notify_one();
     }
 
@@ -1029,7 +1051,7 @@ namespace fast_task {
         get_data(loc.curr_task).set_awaked(false);
         get_data(loc.curr_task).set_time_end(false);
 
-        unsafe_put_task_to_timed_queue(glob.timed_tasks, t, loc.curr_task);
+        unsafe_put_task_to_timed_queue(glob.timed_wheel, t, loc.curr_task);
         glob.time_notifier.notify_one();
     }
 

@@ -187,7 +187,7 @@ namespace fast_task {
                                 if (next) {
                                     next->prev = nullptr;
                                     values.begin = next;
-                                    values.end = next->next ? values.end : next;
+                                    values.end = next->next ? end : next;
                                 }
                             }
                             get_data(curr->task).set_awaked(true);

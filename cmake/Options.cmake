@@ -24,6 +24,16 @@ STRING
 if(NOT FAST_TASK_TASK_TRANSFERS_LIMIT MATCHES "^[0-9]+$")
   message(FATAL_ERROR "FAST_TASK_TASK_TRANSFERS_LIMIT must be a non-negative integer.")
 endif()
+set(FAST_TASK_TIMER_PRECISION "1ms" CACHE 
+STRING 
+"Timer wheel precision and resolution: 1us (microsecond), 1ms (millisecond), 10ms (decisecond)
+  - 1us: 1 microsecond ticks. Uses platform hi-res timer if available, otherwise spin loop with _mm_pause.
+  - 1ms: 1 millisecond ticks. Standard precision.
+  - 10ms: 10 millisecond ticks. Low-precision, low-overhead. Good for infrequent timers.")
+
+set_property(CACHE FAST_TASK_TIMER_PRECISION PROPERTY STRINGS "1us" "1ms" "10ms")
+mark_as_advanced(FAST_TASK_TIMER_PRECISION)
+
 set(FAST_TASK_EXCEPTION_POLICY "NONE" CACHE 
 STRING 
 "Sets the exception handling policy for context switches:

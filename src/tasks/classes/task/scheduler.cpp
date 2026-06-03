@@ -48,9 +48,9 @@ namespace fast_task::scheduler {
             startTimeController();
         fast_task::unique_lock guard(glob.task_timer_safety);
         if (can_be_scheduled_task_to_hot())
-            unsafe_put_task_to_timed_queue(glob.timed_tasks, time_point, lgr_task);
+            unsafe_put_task_to_timed_queue(glob.timed_wheel, time_point, lgr_task);
         else
-            unsafe_put_task_to_timed_queue(glob.cold_timed_tasks, time_point, lgr_task);
+            unsafe_put_task_to_timed_queue(glob.cold_timed_wheel, time_point, lgr_task);
         glob.time_notifier.notify_all();
         glob.tasks_notifier.notify_one();
         guard.unlock();
@@ -296,7 +296,7 @@ namespace fast_task::scheduler {
                 return false;
             };
 
-            while (tasks_present() || glob.cold_tasks.size_approx() || glob.timed_tasks.size() || glob.cold_timed_tasks.size() || glob.executing_tasks) {
+            while (tasks_present() || glob.cold_tasks.size_approx() || !glob.timed_wheel.empty() || !glob.cold_timed_wheel.empty() || glob.executing_tasks) {
                 if (!total_executors())
                     create_executor(1);
 
@@ -368,8 +368,10 @@ namespace fast_task::scheduler {
             std::this_thread::yield();
         {
             task tmp;
-            while (glob.tasks.try_dequeue(tmp)) {}
-            while (glob.cold_tasks.try_dequeue(tmp)) {}
+            while (glob.tasks.try_dequeue(tmp)) {
+            }
+            while (glob.cold_tasks.try_dequeue(tmp)) {
+            }
         }
         glob.executor_shutting_down.store(false, std::memory_order_release);
     }
@@ -390,6 +392,5 @@ namespace fast_task::scheduler {
         decltype(glob.cold_tasks) cold;
         glob.executors_queues = nullptr;
         glob.cold_tasks.swap(cold);
-        glob.timed_tasks.shrink_to_fit();
     }
 }
