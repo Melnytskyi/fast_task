@@ -152,22 +152,21 @@ namespace fast_task {
     }
 
     void task_mutex::unlock() {
-        resume_task* head = nullptr;
-        {
-            fast_task::unique_lock no_race_guard(values.no_race);
-            if (get_loc().is_task_thread) {
-                if (values.current_task != get_loc().curr_task.get_id())
-                    throw std::logic_error("Tried unlock non owned mutex");
-            } else if (values.current_task != ((size_t)_thread_id() | native_thread_flag))
+        bool to_yield = false;
+        fast_task::unique_lock no_race_guard(values.no_race);
+        if (get_loc().is_task_thread) {
+            if (values.current_task != get_loc().curr_task.get_id())
                 throw std::logic_error("Tried unlock non owned mutex");
-            head = values.begin;
-            values.begin = nullptr;
-            values.end = nullptr;
-            values.current_task = 0;
-        }
+        } else if (values.current_task != ((size_t)_thread_id() | native_thread_flag))
+            throw std::logic_error("Tried unlock non owned mutex");
+
+        resume_task* head = values.begin;
+        resume_task* end = values.end;
+        values.begin = nullptr;
+        values.end = nullptr;
+        values.current_task = 0;
         if (!head)
             return;
-        bool to_yield = false;
         {
             fast_task::shared_lock guard(glob.task_thread_safety);
             resume_task* curr = head;
@@ -182,22 +181,34 @@ namespace fast_task {
                     fast_task::lock_guard guard_loc(get_data(curr->task));
                     if (get_data(curr->task).awake_check == curr->awake_check) {
                         if (!get_data(curr->task).get_time_end()) {
-                            if (get_data(curr->task).get_is_on_scheduler())
+                            bool on_scheduler = get_data(curr->task).get_is_on_scheduler();
+                            if (on_scheduler) {
                                 values.current_task = curr->task.get_id();
+                                if (next) {
+                                    next->prev = nullptr;
+                                    values.begin = next;
+                                    values.end = next->next ? values.end : next;
+                                }
+                            }
                             get_data(curr->task).set_awaked(true);
-                            fast_task::relock_guard guard_relock(guard);
-                            transfer_task(std::move(curr->task));
+                            task rescheduled = curr->task;
+                            {
+                                fast_task::relock_guard guard_relock(guard);
+                                transfer_task(std::move(rescheduled));
+                            }
+                            if (on_scheduler)
+                                break;
                         }
                     }
                 }
                 curr = next;
             }
             glob.tasks_notifier.notify_one();
-            if (task::max_running_tasks && get_loc().is_task_thread) {
+            if (task::max_running_tasks && get_loc().is_task_thread)
                 if (can_be_scheduled_task_to_hot() && get_loc().curr_task && !get_data(get_loc().curr_task).is_ended())
                     to_yield = true;
-            }
         }
+        no_race_guard.unlock();
         if (to_yield)
             this_task::yield();
     }

@@ -195,13 +195,10 @@ namespace fast_task {
     }
 
     void task_condition_variable::notify_all() {
-        resume_task* head = nullptr;
-        {
-            fast_task::unique_lock no_race_guard(values.no_race);
-            head = values.begin;
-            values.begin = nullptr;
-            values.end = nullptr;
-        }
+        fast_task::unique_lock no_race_guard(values.no_race);
+        resume_task* head = values.begin;
+        values.begin = nullptr;
+        values.end = nullptr;
         if (!head)
             return;
         bool to_yield = false;
@@ -230,23 +227,20 @@ namespace fast_task {
                 curr = next;
             }
             glob.tasks_notifier.notify_one();
-            if (task::max_running_tasks && get_loc().is_task_thread) {
+            if (task::max_running_tasks && get_loc().is_task_thread)
                 if (can_be_scheduled_task_to_hot() && get_loc().curr_task && !get_data(get_loc().curr_task).is_ended())
                     to_yield = true;
-            }
         }
+        no_race_guard.unlock();
         if (to_yield)
             this_task::yield();
     }
 
     void task_condition_variable::notify_all_guarded() {
-        resume_task* head = nullptr;
-        {
-            fast_task::unique_lock no_race_guard(values.no_race);
-            head = values.begin;
-            values.begin = nullptr;
-            values.end = nullptr;
-        }
+        fast_task::unique_lock no_race_guard(values.no_race);
+        resume_task* head = values.begin;
+        values.begin = nullptr;
+        values.end = nullptr;
         if (!head)
             return;
         bool to_yield = false;
@@ -276,6 +270,7 @@ namespace fast_task {
             if (can_be_scheduled_task_to_hot() && get_loc().curr_task && !get_data(get_loc().curr_task).is_ended())
                 to_yield = true;
         }
+        no_race_guard.unlock();
         if (to_yield)
             this_task::yield();
     }
@@ -313,14 +308,13 @@ namespace fast_task {
                 return;
         }
         bool to_yield = false;
-        fast_task::lock_guard guard_loc(get_data(tsk), fast_task::adopt_lock);
+        fast_task::lock_guard guard_loc(get_data(tsk));
         {
             get_data(tsk).set_awaked(true);
             fast_task::shared_lock guard(glob.task_thread_safety);
-            if (task::max_running_tasks && get_loc().is_task_thread) {
+            if (task::max_running_tasks && get_loc().is_task_thread)
                 if (can_be_scheduled_task_to_hot() && get_loc().curr_task && !get_data(get_loc().curr_task).is_ended())
                     to_yield = true;
-            }
             guard.unlock();
             transfer_task(std::move(tsk), reinterpret_cast<enter_state*>(popped_node));
             if (popped_node && popped_node->heap_allocated)
@@ -412,4 +406,3 @@ namespace fast_task {
         return false;
     }
 }
-
