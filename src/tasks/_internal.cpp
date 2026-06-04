@@ -303,6 +303,7 @@ namespace fast_task {
         size_t to_wake = 0;
         while (head) {
             auto* next = head->next;
+            bool heap_allocated = head->heap_allocated;
             if (head->waiter) {
                 auto& wd = get_data(head->waiter);
                 fast_task::lock_guard guard_loc(wd);
@@ -316,7 +317,7 @@ namespace fast_task {
                 *head->native_check = true;
                 head->native_cv->notify_all();
             }
-            if (head->heap_allocated)
+            if (heap_allocated)
                 delete head;
             head = next;
         }
@@ -459,8 +460,10 @@ namespace fast_task {
         relock1_type = mutex_unify_relock_access::raw_type(mut);
     }
 
+    global_block_allocator g_block_allocator;
+
     task_object* task_object::alloc() {
-        task_object* obj = new task_object();
+        task_object* obj = new (get_tls_cache().allocate()) task_object();
         obj->tls_data.store(nullptr, std::memory_order_relaxed);
         obj->on_wait.store(nullptr, std::memory_order_relaxed);
         obj->exdata.store(nullptr, std::memory_order_relaxed);
@@ -526,7 +529,7 @@ namespace fast_task {
             FT_DEBUG_ONLY(unregister_object(obj));
             if (obj->vtable && obj->vtable->heap_allocated)
                 delete const_cast<task_vtable*>(obj->vtable);
-            delete obj;
+            get_tls_cache().deallocate(obj);
         }
     }
 

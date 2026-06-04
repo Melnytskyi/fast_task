@@ -249,6 +249,7 @@ namespace fast_task {
         resume_task* curr = head;
         while (curr) {
             resume_task* next = curr->next;
+            bool heap_allocated = curr->heap_allocated;
             if (curr->task == nullptr) {
                 if (curr->native_cv != nullptr) {
                     *curr->native_check = true;
@@ -263,7 +264,7 @@ namespace fast_task {
                     }
                 }
             }
-            if (curr->heap_allocated)
+            if (heap_allocated)
                 delete curr;
             curr = next;
         }

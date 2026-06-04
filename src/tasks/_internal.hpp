@@ -44,6 +44,7 @@
     #include <shared.hpp>
     #include <task.hpp>
     #include <tasks/util/_dbg_macro.hpp>
+    #include <tasks/util/fixed_block_allocator.hpp>
     #include <tasks/util/hashed_timing_wheel.hpp>
     #include <tasks/util/work_stealing_deque.hpp>
 

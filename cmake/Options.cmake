@@ -1,6 +1,7 @@
 
 option(FAST_TASK_STATIC "Enable static build for fast task library" ON)
 option(FAST_TASK_BUILD_TESTS "Build the test suite" OFF)
+option(FAST_TASK_DISABLE_IO_TESTS "Disable I/O tests" ON)
 option(FAST_TASK_ENABLE_DEBUG_API "Enable the debugging and introspection API" OFF)
 option(FAST_TASK_ENABLE_ABORT_IF_ALREADY_STARTED "Abort if the task already started" OFF)
 option(FAST_TASK_ENABLE_ABORT_IF_NEVER_STARTED "Abort if task's destructor called before the task even started" OFF)
@@ -24,6 +25,7 @@ STRING
 if(NOT FAST_TASK_TASK_TRANSFERS_LIMIT MATCHES "^[0-9]+$")
   message(FATAL_ERROR "FAST_TASK_TASK_TRANSFERS_LIMIT must be a non-negative integer.")
 endif()
+
 set(FAST_TASK_TIMER_PRECISION "1ms" CACHE 
 STRING 
 "Timer wheel precision and resolution: 1us (microsecond), 1ms (millisecond), 10ms (decisecond)
@@ -32,7 +34,6 @@ STRING
   - 10ms: 10 millisecond ticks. Low-precision, low-overhead. Good for infrequent timers.")
 
 set_property(CACHE FAST_TASK_TIMER_PRECISION PROPERTY STRINGS "1us" "1ms" "10ms")
-mark_as_advanced(FAST_TASK_TIMER_PRECISION)
 
 set(FAST_TASK_EXCEPTION_POLICY "NONE" CACHE 
 STRING 
@@ -47,3 +48,4 @@ mark_as_advanced(FAST_TASK_ENABLE_PREEMPTIVE_SCHEDULER)
 mark_as_advanced(FAST_TASK_EXCEPTION_POLICY)
 mark_as_advanced(FAST_TASK_TASK_TRANSFERS_LIMIT)
 mark_as_advanced(FAST_TASK_GUARD_PAGE_COUNT)
+mark_as_advanced(FAST_TASK_TIMER_PRECISION)

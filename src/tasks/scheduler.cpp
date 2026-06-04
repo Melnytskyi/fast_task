@@ -971,9 +971,7 @@ namespace fast_task {
             auto next_hot = glob.timed_wheel.next_deadline();
             auto next_cold = glob.cold_timed_wheel.next_deadline();
 
-            if (glob.shutdown_requested.load(std::memory_order_acquire))
-                glob.time_notifier.wait(guard);
-            else if (next_hot == std::chrono::high_resolution_clock::time_point::max() && next_cold == std::chrono::high_resolution_clock::time_point::max())
+            if (next_hot == std::chrono::high_resolution_clock::time_point::max() && next_cold == std::chrono::high_resolution_clock::time_point::max())
                 glob.time_notifier.wait(guard);
             else {
                 auto deadline = (next_hot == std::chrono::high_resolution_clock::time_point::max())
@@ -988,7 +986,6 @@ namespace fast_task {
         guard.unlock();
         flush_wake_ups();
         flush_cold();
-        guard.lock();
 
         fast_task::shared_lock _guard(glob.task_thread_safety);
         get_loc().reset();

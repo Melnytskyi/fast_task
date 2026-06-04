@@ -362,10 +362,11 @@ namespace fast_task::scheduler {
             glob.time_control_enabled = false;
             glob.time_notifier.notify_all();
         }
-
-
-        while (glob.thread_count.load())
-            std::this_thread::yield();
+        {
+            fast_task::unique_lock guard(glob.task_thread_safety);
+            while (glob.thread_count.load())
+                glob.executor_shutdown_notifier.wait(guard);
+        }
         {
             task tmp;
             while (glob.tasks.try_dequeue(tmp)) {

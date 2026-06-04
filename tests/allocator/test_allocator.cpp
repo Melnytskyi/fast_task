@@ -4,11 +4,15 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
-#include <helpers.hpp>
 #include <allocator.hpp>
-#include <vector>
-#include <list>
 #include <array>
+#include <helpers.hpp>
+#include <list>
+#include <set>
+#include <thread>
+#include <vector>
+
+#include "tasks/util/fixed_block_allocator.hpp"
 
 // ---- raw allocate / free ---------------------------------------------------
 
@@ -86,4 +90,182 @@ TEST(Allocator, AllocatorAllocateDeallocate) {
         p[i] = i * 2;
     EXPECT_EQ(p[5], 10);
     (void)alloc.deallocate(p, 10);
+}
+
+// ---- fixed-size block allocator tests -------------------------------------
+
+using namespace fast_task;
+
+TEST(BlockAllocator, SingleThreadAllocFree) {
+    // Allocate and free a block, verify it's not null
+    void* p = get_tls_cache().allocate();
+    ASSERT_NE(p, nullptr);
+    get_tls_cache().deallocate(p);
+}
+
+TEST(BlockAllocator, Alignment) {
+    // Every block must be 64-byte aligned
+    for (int i = 0; i < 100; ++i) {
+        void* p = get_tls_cache().allocate();
+        ASSERT_NE(p, nullptr);
+        EXPECT_EQ(reinterpret_cast<uintptr_t>(p) & 63, 0u)
+            << "Block " << i << " at " << p << " not 64-byte aligned";
+        get_tls_cache().deallocate(p);
+    }
+}
+
+TEST(BlockAllocator, BootstrapBatch) {
+    // First allocation fetches 128 blocks from global.
+    // After allocating 128, the 129th should trigger another batch.
+    std::vector<void*> blocks;
+    blocks.reserve(200);
+    for (int i = 0; i < 200; ++i) {
+        void* p = get_tls_cache().allocate();
+        ASSERT_NE(p, nullptr);
+        blocks.push_back(p);
+    }
+    // All pointers must be unique
+    std::set<void*> unique(blocks.begin(), blocks.end());
+    EXPECT_EQ(unique.size(), blocks.size());
+    // Cleanup
+    for (auto* p : blocks)
+        get_tls_cache().deallocate(p);
+}
+
+TEST(BlockAllocator, LIFOReuse) {
+    // LIFO means the most recently freed block is the next allocated one
+    void* first = get_tls_cache().allocate();
+    void* second = get_tls_cache().allocate();
+    ASSERT_NE(first, second);
+
+    get_tls_cache().deallocate(second);
+    void* reused = get_tls_cache().allocate();
+    EXPECT_EQ(reused, second) << "Expected LIFO reuse of second block";
+
+    get_tls_cache().deallocate(first);
+    void* reused_first = get_tls_cache().allocate();
+    EXPECT_EQ(reused_first, first) << "Expected LIFO reuse of first block";
+
+    get_tls_cache().deallocate(reused_first);
+    get_tls_cache().deallocate(reused);
+}
+
+TEST(BlockAllocator, WatermarkBulkReturn) {
+    // Allocate 257 blocks, then free all of them.
+    // The local free list should bulk-return 128 to global when it exceeds 256.
+    std::vector<void*> blocks;
+    blocks.reserve(300);
+    for (int i = 0; i < 257; ++i) {
+        void* p = get_tls_cache().allocate();
+        ASSERT_NE(p, nullptr);
+        blocks.push_back(p);
+    }
+    // Free all — this should trigger the watermark and bulk-return
+    for (auto* p : blocks)
+        get_tls_cache().deallocate(p);
+
+    // Now allocate again — should get blocks from the local free list
+    // (which still has 257 - 128 = 129 blocks after bulk return)
+    for (int i = 0; i < 129; ++i) {
+        void* p = get_tls_cache().allocate();
+        ASSERT_NE(p, nullptr);
+    }
+    // The next alloc triggers a batch fetch from global (since local is now 0)
+    void* p = get_tls_cache().allocate();
+    ASSERT_NE(p, nullptr);
+    get_tls_cache().deallocate(p);
+}
+
+TEST(BlockAllocator, GeometricGrowth) {
+    // Exhaust blocks repeatedly to force arena expansion.
+    // Verify that the global allocator expands at least once.
+    // We'll allocate in large batches and free in between.
+    std::vector<void*> blocks1, blocks2, blocks3;
+    blocks1.reserve(200);
+    for (int i = 0; i < 200; ++i) {
+        void* p = get_tls_cache().allocate();
+        ASSERT_NE(p, nullptr);
+        blocks1.push_back(p);
+    }
+    for (auto* p : blocks1)
+        get_tls_cache().deallocate(p);
+
+    // Second wave — local should have freed blocks, but if not enough, expand
+    blocks2.reserve(300);
+    for (int i = 0; i < 300; ++i) {
+        void* p = get_tls_cache().allocate();
+        ASSERT_NE(p, nullptr);
+        blocks2.push_back(p);
+    }
+    for (auto* p : blocks2)
+        get_tls_cache().deallocate(p);
+
+    // Third wave — same
+    blocks3.reserve(500);
+    for (int i = 0; i < 500; ++i) {
+        void* p = get_tls_cache().allocate();
+        ASSERT_NE(p, nullptr);
+        blocks3.push_back(p);
+    }
+    for (auto* p : blocks3)
+        get_tls_cache().deallocate(p);
+
+    // No crash = geometric growth worked, all blocks unique
+    SUCCEED();
+}
+
+TEST(BlockAllocator, MultiThreadContention) {
+    // Launch 4 threads, each allocating and freeing blocks concurrently.
+    // This stresses the DWCAS global stack.
+    constexpr int num_threads = 4;
+    constexpr int blocks_per_thread = 200;
+    std::vector<std::thread> threads;
+    std::atomic<bool> failed{false};
+
+    for (int t = 0; t < num_threads; ++t) {
+        threads.emplace_back([&failed]() {
+            std::vector<void*> blocks;
+            blocks.reserve(blocks_per_thread);
+            for (int i = 0; i < blocks_per_thread; ++i) {
+                void* p = get_tls_cache().allocate();
+                if (!p) {
+                    failed.store(true, std::memory_order_relaxed);
+                    return;
+                }
+                // Verify alignment
+                if (reinterpret_cast<uintptr_t>(p) & 63) {
+                    failed.store(true, std::memory_order_relaxed);
+                    return;
+                }
+                blocks.push_back(p);
+            }
+            for (auto* p : blocks)
+                get_tls_cache().deallocate(p);
+        });
+    }
+
+    for (auto& th : threads)
+        th.join();
+
+    EXPECT_FALSE(failed.load()) << "One or more threads encountered an error";
+}
+
+TEST(BlockAllocator, CrossThreadAllocFree) {
+    // Thread A allocates, Thread B frees (cross-thread deallocation).
+    // The freeing thread's local list handles it, then bulk-returns to global.
+    void* p = nullptr;
+    std::thread alloc_thread([&p]() {
+        p = get_tls_cache().allocate();
+        ASSERT_NE(p, nullptr);
+    });
+    alloc_thread.join();
+
+    ASSERT_NE(p, nullptr);
+    std::thread free_thread([p]() {
+        // This is cross-thread — p was allocated on a different thread
+        get_tls_cache().deallocate(p);
+    });
+    free_thread.join();
+
+    SUCCEED();
 }

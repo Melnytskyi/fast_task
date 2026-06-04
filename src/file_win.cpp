@@ -108,6 +108,7 @@ namespace fast_task::file {
         }
 
         void cancel() {
+            task old_awaiter;
             if (buffer && !get_data(awaiter).end_of_life) {
                 if (CancelIoEx(handle, &overlapped))
                     return;
@@ -121,7 +122,7 @@ namespace fast_task::file {
                         awaiter->end_dummy([&](auto data) { ((completion_struct*)data)->error = io_errors::operation_canceled; });
                 }
                 awaiters.notify_all();
-                awaiter = nullptr;
+                old_awaiter = std::move(awaiter);
             }
         }
 
@@ -133,34 +134,40 @@ namespace fast_task::file {
         }
 
         void now_fullifed() {
-            mutex_unify unify(mutex);
-            fast_task::unique_lock<mutex_unify> lock(unify);
-            fullifed = true;
-            if (awaiter) {
-                if (is_read)
-                    awaiter->end_dummy([&](auto data) { auto tt = (completion_struct*)data; tt->completed_bytes = fullifed_bytes; tt->data = buffer; });
-                else
-                    awaiter->end_dummy([&](auto data) { auto tt = (completion_struct*)data; tt->completed_bytes = fullifed_bytes; });
+            task old_awaiter;
+            {
+                mutex_unify unify(mutex);
+                fast_task::unique_lock<mutex_unify> lock(unify);
+                fullifed = true;
+                if (awaiter) {
+                    if (is_read)
+                        awaiter->end_dummy([&](auto data) { auto tt = (completion_struct*)data; tt->completed_bytes = fullifed_bytes; tt->data = buffer; });
+                    else
+                        awaiter->end_dummy([&](auto data) { auto tt = (completion_struct*)data; tt->completed_bytes = fullifed_bytes; });
+                }
+                awaiters.notify_all();
+                old_awaiter = std::move(awaiter);
             }
-            awaiters.notify_all();
-            awaiter = nullptr;
         }
 
         void exception(io_errors e) {
-            mutex_unify unify(mutex);
-            fast_task::unique_lock<mutex_unify> lock(unify);
-            fullifed = true;
-            if (awaiter) {
-                if (fullifed_bytes) {
-                    if (is_read)
-                        awaiter->end_dummy([&](auto data) { auto tt = (completion_struct*)data; tt->completed_bytes = fullifed_bytes; tt->data = buffer; tt->error = e; });
-                    else
-                        awaiter->end_dummy([&](auto data) { auto tt = (completion_struct*)data; tt->completed_bytes = fullifed_bytes; tt->error = e; });
-                } else
-                    awaiter->end_dummy([&](auto data) { auto tt = (completion_struct*)data; tt->error = e; });
+            task old_awaiter;
+            {
+                mutex_unify unify(mutex);
+                fast_task::unique_lock<mutex_unify> lock(unify);
+                fullifed = true;
+                if (awaiter) {
+                    if (fullifed_bytes) {
+                        if (is_read)
+                            awaiter->end_dummy([&](auto data) { auto tt = (completion_struct*)data; tt->completed_bytes = fullifed_bytes; tt->data = buffer; tt->error = e; });
+                        else
+                            awaiter->end_dummy([&](auto data) { auto tt = (completion_struct*)data; tt->completed_bytes = fullifed_bytes; tt->error = e; });
+                    } else
+                        awaiter->end_dummy([&](auto data) { auto tt = (completion_struct*)data; tt->error = e; });
+                }
+                awaiters.notify_all();
+                old_awaiter = std::move(awaiter);
             }
-            awaiters.notify_all();
-            awaiter = nullptr;
         }
 
         void readed(uint32_t len) {
