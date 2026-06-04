@@ -20,4 +20,5 @@ add_benchmark(benchmark_scheduler benchmark_scheduler.cpp)
 add_benchmark(benchmark_context_switch benchmark_context_switch.cpp)
 add_benchmark(benchmark_sync benchmark_sync.cpp)
 add_benchmark(benchmark_memory benchmark_memory.cpp)
+add_benchmark(benchmark_cpu benchmark_cpu.cpp)
 

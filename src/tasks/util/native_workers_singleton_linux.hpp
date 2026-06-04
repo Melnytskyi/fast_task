@@ -374,9 +374,7 @@ namespace fast_task::util {
                     if (!handle || !handle->manager)
                         continue;
 
-                    task::run([handle, res = cqe->res, flags = cqe->flags]() {
-                        handle->manager->handle(handle, res, flags);
-                    });
+                    handle->manager->handle(handle, cqe->res, cqe->flags);
                 }
 
                 io_uring_cq_advance(&shard.ring, cqe_count);

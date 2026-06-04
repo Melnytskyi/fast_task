@@ -66,14 +66,12 @@ namespace fast_task::util {
                 if (!status)
                     continue;
                 for (ULONG i = 0; i < entries_count; i++) {
-                    task::run([entry = std::move(entries[i])]() {
-                        auto overlap = ((native_worker_handle*)entry.lpOverlapped);
-                        overlap->manager->handle(
-                            (void*)entry.lpCompletionKey,
-                            overlap,
-                            entry.dwNumberOfBytesTransferred
-                        );
-                    });
+                    auto overlap = ((native_worker_handle*)entry.lpOverlapped);
+                    overlap->manager->handle(
+                        (void*)entry.lpCompletionKey,
+                        overlap,
+                        entry.dwNumberOfBytesTransferred
+                    );
                 }
             }
         }
