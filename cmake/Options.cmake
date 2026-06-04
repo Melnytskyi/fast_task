@@ -1,6 +1,7 @@
 
 option(FAST_TASK_STATIC "Enable static build for fast task library" ON)
 option(FAST_TASK_BUILD_TESTS "Build the test suite" OFF)
+option(FAST_TASK_BUILD_BENCHMARKS "Build the benchmark suite" OFF)
 option(FAST_TASK_DISABLE_IO_TESTS "Disable I/O tests" ON)
 option(FAST_TASK_ENABLE_DEBUG_API "Enable the debugging and introspection API" OFF)
 option(FAST_TASK_ENABLE_ABORT_IF_ALREADY_STARTED "Abort if the task already started" OFF)

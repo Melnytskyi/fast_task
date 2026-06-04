@@ -50,3 +50,7 @@ if(NOT FAST_TASK_DISABLE_IO_TESTS)
     add_subdirectory(io)
     add_subdirectory(network)
 endif()
+
+if(FAST_TASK_BUILD_BENCHMARKS)
+    add_subdirectory(benchmark)
+endif()

@@ -285,6 +285,7 @@ namespace fast_task {
                         data->vtable->on_start(data->user_data());
                     data->get_relock_0().relock_start();
                     data->get_relock_1().relock_start();
+                    data->set_status(task_object::status_e::suspended);
                     if (loc.transfer_state.pending == nullptr)
                         break;
 #if FT_TASK_TRANSFERS_LIMIT > 0
