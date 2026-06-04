@@ -19,7 +19,10 @@ static void bench_empty_task_create_start_await() {
         {"1M", 1'000'000},
     };
 
-    print_bench_header("Task — Create, Start, Await (empty lambda)");
+    std::cout << "# Task — Create, Start, Await (empty lambda)\n\n";
+    std::cout << "|Scale        |   Create/ms  |   Start/ms   |     Await/ms    |     Total/ms    |   Tasks/s  |\n";
+    std::cout << "|:------------|-------------:|-------------:|----------------:|----------------:|-----------:|\n";
+
     warm_up();
 
     for (auto const& sp : scales) {
@@ -45,14 +48,16 @@ static void bench_empty_task_create_start_await() {
             await_ms = timer.elapsed_ms();
         }
 
-        std::cout << std::left << std::setw(14) << sp.label
-                  << std::right
-                  << " create=" << std::setw(8) << std::fixed << std::setprecision(2) << create_ms
-                  << " ms  start=" << std::setw(8) << std::fixed << std::setprecision(2) << start_ms
-                  << " ms  await=" << std::setw(8) << std::fixed << std::setprecision(2) << await_ms
-                  << " ms  total=" << std::setw(8) << std::fixed << std::setprecision(2) << (create_ms + start_ms + await_ms)
-                  << " ms  through=" << std::setw(10) << std::fixed << std::setprecision(0)
-                  << (sp.iterations / ((create_ms + start_ms + await_ms) / 1000.0)) << " tasks/s\n";
+        // clang-format off
+    std::cout << '|' << std::left << std::setw(13) << sp.label 
+              << '|' << std::right << std::fixed << std::setw(14) << create_ms
+              << '|' << std::setw(14) << std::right << std::fixed << std::setprecision(2) << start_ms
+              << '|' << std::setw(17) << std::right << std::fixed << std::setprecision(2) << await_ms
+              << '|' << std::setw(17) << std::right << std::fixed << std::setprecision(2) << create_ms + (start_ms + await_ms)
+              << '|' << std::setw(12) << std::right << std::fixed <<std::setprecision(2) << (sp.iterations / ((create_ms + start_ms + await_ms) / 1000.0));
+        // clang-format on
+
+        std::cout << "|\n";
     }
 }
 

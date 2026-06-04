@@ -23,11 +23,14 @@ struct benchmark_timer {
 
     benchmark_timer() : start(Clock::now()) {}
 
-    void reset() { start = Clock::now(); }
+    void reset() {
+        start = Clock::now();
+    }
 
     uint64_t elapsed_us() const {
         return std::chrono::duration_cast<std::chrono::microseconds>(
-                   Clock::now() - start)
+                   Clock::now() - start
+        )
             .count();
     }
 
@@ -60,43 +63,54 @@ struct benchmark_timer {
 
 struct scale_point {
     const char* label;
-    uint64_t    iterations;
+    uint64_t iterations;
 };
 
-inline void print_bench_row(const char* scale_label,
-                            uint64_t ops,
-                            double elapsed_ms,
-                            uint64_t bytes_allocated = 0) {
+inline void print_bench_row(const char* scale_label, uint64_t ops, double elapsed_ms) {
     double latency_us = (ops > 0) ? (elapsed_ms * 1000.0) / static_cast<double>(ops) : 0.0;
     double throughput = (elapsed_ms > 0.0)
                             ? (static_cast<double>(ops) / (elapsed_ms / 1000.0))
                             : 0.0;
 
-    std::cout << std::left << std::setw(14) << scale_label
-              << std::right << std::setw(10) << ops
-              << std::setw(12) << std::fixed << std::setprecision(2) << elapsed_ms
-              << std::setw(14) << std::fixed << std::setprecision(2) << latency_us
-              << std::setw(18) << std::fixed << std::setprecision(0) << throughput;
+    // clang-format off
+    std::cout << '|' << std::left << std::setw(13) << scale_label 
+              << '|' << std::right << std::setw(10) << ops
+              << '|' << std::setw(11) << std::fixed << std::setprecision(2) << elapsed_ms
+              << '|' << std::setw(13) << std::fixed << std::setprecision(2) << latency_us
+              << '|' << std::setw(17) << std::fixed << std::setprecision(0) << throughput;
 
-    if (bytes_allocated > 0) {
-        double mb = static_cast<double>(bytes_allocated) / (1024.0 * 1024.0);
-        std::cout << std::setw(12) << std::fixed << std::setprecision(2) << mb;
-    }
-
-    std::cout << '\n';
+    std::cout << "|\n";
 }
-inline void print_bench_header(const char* title, bool show_memory = false) {
-    std::cout << "\n=== " << title << " ===\n";
-    std::cout << std::left << std::setw(14) << "Scale"
-              << std::right << std::setw(10) << "Ops"
-              << std::setw(12) << "Time(ms)"
-              << std::setw(14) << "Latency(us)"
-              << std::setw(18) << "Throughput(ops/s)";
-    if (show_memory)
-        std::cout << std::setw(12) << "Mem(MB)";
-    std::cout << '\n';
 
-    std::cout << std::string(show_memory ? 80 : 68, '-') << '\n';
+inline void print_bench_row(const char* scale_label, uint64_t ops, double elapsed_ms, uint64_t bytes_allocated) {
+    double latency_us = (ops > 0) ? (elapsed_ms * 1000.0) / static_cast<double>(ops) : 0.0;
+    double throughput = (elapsed_ms > 0.0)
+                            ? (static_cast<double>(ops) / (elapsed_ms / 1000.0))
+                            : 0.0;
+    double mb = static_cast<double>(bytes_allocated) / (1024.0 * 1024.0);
+
+    // clang-format off
+    std::cout << '|' << std::left << std::setw(13) << scale_label 
+              << '|' << std::right << std::setw(10) << ops
+              << '|' << std::setw(11) << std::fixed << std::setprecision(2) << elapsed_ms
+              << '|' << std::setw(13) << std::fixed << std::setprecision(2) << latency_us
+              << '|' << std::setw(17) << std::fixed << std::setprecision(0) << throughput
+              << '|' << std::setw(10) << std::fixed << std::setprecision(2) << mb;
+    // clang-format on
+
+    std::cout << "|\n";
+}
+
+inline void print_bench_header(const char* title, bool show_memory = false) {
+    std::cout << "\n# " << title << "\n\n";
+    std::cout << "|Scale        |       Ops|   Time(ms)|  Latency(us)|Throughput(ops/s)|";
+    if (show_memory)
+        std::cout << "   Mem(MB)|";
+
+    std::cout << "\n|:------------|---------:|----------:|------------:|----------------:|";
+    if (show_memory)
+        std::cout << "---------:|";
+    std::cout << '\n';
 }
 
 inline void warm_up() {
@@ -105,52 +119,59 @@ inline void warm_up() {
         sink += i;
     (void)sink;
 }
-#define BENCHMARK_GRADUATED(name, scales, body)                           \
-    do {                                                                  \
-        print_bench_header(name);                                         \
-        warm_up();                                                        \
-        for (auto const& sp : (scales)) {                                 \
-            benchmark_timer timer;                                        \
-            { body }                                                      \
-            double ms = timer.elapsed_ms();                               \
-            print_bench_row(sp.label, sp.iterations, ms);                 \
-        }                                                                 \
-        std::cout << std::endl;                                           \
+
+#define BENCHMARK_GRADUATED(name, scales, body)           \
+    do {                                                  \
+        print_bench_header(name);                         \
+        warm_up();                                        \
+        for (auto const& sp : (scales)) {                 \
+            benchmark_timer timer;                        \
+            {                                             \
+                body                                      \
+            }                                             \
+            double ms = timer.elapsed_ms();               \
+            print_bench_row(sp.label, sp.iterations, ms); \
+        }                                                 \
+        std::cout << std::endl;                           \
     } while (0)
-#define BENCHMARK_GRADUATED_WARM(name, scales, warmup, measured)          \
-    do {                                                                  \
-        print_bench_header(name);                                         \
-        for (auto const& sp : (scales)) {                                 \
-            /* warmup */                                                  \
-            for (int _w = 0; _w < 3; ++_w) { warmup }                    \
-            /* measured */                                                \
-            benchmark_timer timer;                                        \
-            { measured }                                                  \
-            double ms = timer.elapsed_ms();                               \
-            print_bench_row(sp.label, sp.iterations, ms);                 \
-        }                                                                 \
-        std::cout << std::endl;                                           \
+#define BENCHMARK_GRADUATED_WARM(name, scales, warmup, measured) \
+    do {                                                         \
+        print_bench_header(name);                                \
+        for (auto const& sp : (scales)) {                        \
+            /* warmup */                                         \
+            for (int _w = 0; _w < 3; ++_w) {                     \
+                warmup                                           \
+            }                                                    \
+            /* measured */                                       \
+            benchmark_timer timer;                               \
+            {                                                    \
+                measured                                         \
+            }                                                    \
+            double ms = timer.elapsed_ms();                      \
+            print_bench_row(sp.label, sp.iterations, ms);        \
+        }                                                        \
+        std::cout << std::endl;                                  \
     } while (0)
 inline const scale_point scales_small[] = {
-    {"1K",    1'000},
-    {"10K",   10'000},
-    {"100K",  100'000},
-    {"1M",    1'000'000},
+    {"1K", 1'000},
+    {"10K", 10'000},
+    {"100K", 100'000},
+    {"1M", 1'000'000},
 };
 
 inline const scale_point scales_tiny[] = {
-    {"100",   100},
-    {"1K",    1'000},
-    {"10K",   10'000},
-    {"50K",   50'000},
+    {"100", 100},
+    {"1K", 1'000},
+    {"10K", 10'000},
+    {"50K", 50'000},
 };
 
 inline const scale_point scales_large[] = {
-    {"1K",    1'000},
-    {"10K",   10'000},
-    {"100K",  100'000},
-    {"500K",  500'000},
-    {"1M",    1'000'000},
+    {"1K", 1'000},
+    {"10K", 10'000},
+    {"100K", 100'000},
+    {"500K", 500'000},
+    {"1M", 1'000'000},
 };
 
 static size_t current_rss_kb() {
