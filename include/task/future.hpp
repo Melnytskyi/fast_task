@@ -30,11 +30,14 @@ namespace fast_task {
         {
             std::shared_ptr<future> future_ = std::make_shared<future>();
             future_->task_ = task::create(
-                [fn = std::move(fn), future_]() mutable {
-                    future_->result = std::make_optional<T>(fn());
+                [fn = std::move(fn), weak_future = std::weak_ptr<future>(future_)]() mutable {
+                    auto result = std::make_optional<T>(fn());
+                    if (auto self = weak_future.lock())
+                        self->result = result;
                 },
-                [future_](const std::exception_ptr& ex) {
-                    future_->ex_ptr = ex;
+                [weak_future = std::weak_ptr<future>(future_)](const std::exception_ptr& ex) {
+                    if (auto self = weak_future.lock())
+                        self->ex_ptr = ex;
                 }
             );
             if (bind_id != (uint16_t)-1)
@@ -49,11 +52,14 @@ namespace fast_task {
         {
             std::shared_ptr<future> future_ = std::make_shared<future>();
             future_->task_ = task::create(
-                [fn = std::move(fn), future_]() mutable {
-                    future_->result = std::make_optional<T>(fn());
+                [fn = std::move(fn), weak_future = std::weak_ptr<future>(future_)]() mutable {
+                    auto result = std::make_optional<T>(fn());
+                    if (auto self = weak_future.lock())
+                        self->result = result;
                 },
-                [future_](const std::exception_ptr& ex) {
-                    future_->ex_ptr = ex;
+                [weak_future = std::weak_ptr<future>(future_)](const std::exception_ptr& ex) {
+                    if (auto self = weak_future.lock())
+                        self->ex_ptr = ex;
                 }
             );
             if (bind_id != (uint16_t)-1)
@@ -215,12 +221,14 @@ namespace fast_task {
         {
             std::shared_ptr<future> future_ = std::make_shared<future>();
             future_->task_ = task::create(
-                [fn = std::move(fn), future_]() mutable {
+                [fn = std::move(fn), weak_future = std::weak_ptr<future>(future_)]() mutable {
                     fn();
-                    future_->has_result = true;
+                    if (auto self = weak_future.lock())
+                        self->has_result = true;
                 },
-                [future_](const std::exception_ptr& ex) {
-                    future_->ex_ptr = ex;
+                [weak_future = std::weak_ptr<future>(future_)](const std::exception_ptr& ex) {
+                    if (auto self = weak_future.lock())
+                        self->ex_ptr = ex;
                 }
             );
             if (bind_id != (uint16_t)-1)
@@ -235,12 +243,14 @@ namespace fast_task {
         {
             std::shared_ptr<future> future_ = std::make_shared<future>();
             future_->task_ = task::create(
-                [fn = std::move(fn), future_]() mutable {
+                [fn = std::move(fn), weak_future = std::weak_ptr<future>(future_)]() mutable {
                     fn();
-                    future_->has_result = true;
+                    if (auto self = weak_future.lock())
+                        self->has_result = true;
                 },
-                [future_](const std::exception_ptr& ex) {
-                    future_->ex_ptr = ex;
+                [weak_future = std::weak_ptr<future>(future_)](const std::exception_ptr& ex) {
+                    if (auto self = weak_future.lock())
+                        self->ex_ptr = ex;
                 }
             );
             if (bind_id != (uint16_t)-1)
@@ -266,8 +276,8 @@ namespace fast_task {
             if (task_.is_ended())
                 fn(*this);
             else
-                task_.callback(task::create([this, fn = std::move(fn)]() mutable {
-                    fn(*this);
+                task_.callback(task::create([fut = this->shared_from_this(), fn = std::move(fn)]() mutable {
+                    fn(fut);
                 }));
         }
 
@@ -319,15 +329,20 @@ namespace fast_task {
         using ResT = std::invoke_result_t<FN, T>;
         std::shared_ptr<future> future_ = std::make_shared<future>();
         future_->task_ = task::create(
-            [fn = std::move(fn), future_, prev_future = this->shared_from_this()]() mutable {
+            [fn = std::move(fn), weak_future = std::weak_ptr<future>(future_), prev_future = this->shared_from_this()]() mutable {
                 if constexpr (std::is_same_v<ResT, void>) {
                     fn(prev_future->get());
-                    future_->has_result = true;
-                } else
-                    future_->result = std::make_optional<ResT>(fn(prev_future->get()));
+                    if (auto self = weak_future.lock())
+                        self->has_result = true;
+                } else {
+                    auto result = std::make_optional<ResT>(fn(prev_future->get()));
+                    if (auto self = weak_future.lock())
+                        self->result = result;
+                }
             },
-            [future_](const std::exception_ptr& ex) {
-                future_->ex_ptr = ex;
+            [weak_future = std::weak_ptr<future>(future_)](const std::exception_ptr& ex) {
+                if (auto self = weak_future.lock())
+                    self->ex_ptr = ex;
             }
         );
         if (bind_id != (uint16_t)-1)
@@ -342,15 +357,20 @@ namespace fast_task {
         using ResT = std::invoke_result_t<FN, T>;
         std::shared_ptr<future> future_ = std::make_shared<future>();
         future_->task_ = task::create(
-            [fn = std::move(fn), future_, prev_future = this->shared_from_this()]() mutable {
+            [fn = std::move(fn), weak_future = std::weak_ptr<future>(future_), prev_future = this->shared_from_this()]() mutable {
                 if constexpr (std::is_same_v<ResT, void>) {
                     fn(prev_future->take());
-                    future_->has_result = true;
-                } else
-                    future_->result = std::make_optional<ResT>(fn(prev_future->take()));
+                    if (auto self = weak_future.lock())
+                        self->has_result = true;
+                } else {
+                    auto result = std::make_optional<ResT>(fn(prev_future->get()));
+                    if (auto self = weak_future.lock())
+                        self->result = result;
+                }
             },
-            [future_](const std::exception_ptr& ex) {
-                future_->ex_ptr = ex;
+            [weak_future = std::weak_ptr<future>(future_)](const std::exception_ptr& ex) {
+                if (auto self = weak_future.lock())
+                    self->ex_ptr = ex;
             }
         );
         if (bind_id != (uint16_t)-1)

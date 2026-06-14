@@ -29,7 +29,7 @@ namespace fast_task {
                 void await_resume() noexcept {}
             };
 
-            return final_awaiter{task_object};
+            return final_awaiter{std::move(task_object)};
         }
     };
 

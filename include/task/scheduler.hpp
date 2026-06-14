@@ -85,9 +85,8 @@ namespace fast_task {
          */
         void FT_API request_stw(const std::function<void()>& func);
 
-        //DEBUG ONLY, not recommended use in production
+        //clean ups the unused memory
         void FT_API clean_up();
-        //DEBUG ONLY, not recommended use in production
     }
 }
 
