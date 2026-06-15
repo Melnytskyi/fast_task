@@ -89,6 +89,18 @@ namespace fast_task {
         *this = task();
     }
 
+    task_object* task::release() noexcept {
+        task_object* temp = obj;
+        obj = nullptr;
+        return temp;
+    }
+
+    task task::adopt(task_object* raw) noexcept {
+        task t(nullptr);
+        t.obj = raw;
+        return t;
+    }
+
     void task::set_auto_bind_worker(bool enable) const noexcept {
         if (!obj)
             return;
@@ -108,6 +120,8 @@ namespace fast_task {
         if (!obj)
             return;
 #ifdef FT_ENABLE_PREEMPTIVE_SCHEDULER
+        if (!get_data(*this).exdata && p == task_priority::semi_realtime)
+            return;
         get_execution_data(*this).priority = p;
 #endif
     }
@@ -125,7 +139,7 @@ namespace fast_task {
             return task_priority::semi_realtime;
 #ifdef FT_ENABLE_PREEMPTIVE_SCHEDULER
         auto* ex = obj->exdata.load(std::memory_order_acquire);
-        return ex ? ex->priority : task_priority::high;
+        return ex ? ex->priority : task_priority::semi_realtime;
 #else
         return task_priority::semi_realtime;
 #endif
@@ -243,16 +257,13 @@ namespace fast_task {
         if (obj->vtable && obj->vtable->on_cancel)
             obj->vtable->on_cancel(obj->user_data());
 
-        obj->lock();
+        fast_task::lock_guard guard(*obj);
         obj->set_cancellation_requested(true);
         if (obj->is_suspended() && !obj->is_ended() && !obj->get_time_end()) {
             obj->set_time_end(true);
             obj->set_awaked(true);
-            obj->unlock();
             fast_task::transfer_task(task(*this));
-            return;
         }
-        obj->unlock();
     }
 
     void task::await_notify_cancel() const {
@@ -345,18 +356,6 @@ namespace fast_task {
 
     task task::callback_dummy(void* dummy_data, void (*on_await)(void*), void (*on_cancel)(void*), void (*on_destruct)(void*), bool is_restartable, bool is_on_scheduler) {
         return callback_dummy(dummy_data, nullptr, on_await, on_cancel, on_destruct, is_restartable, is_on_scheduler);
-    }
-
-    task::operator bool() const noexcept {
-        return obj;
-    }
-
-    bool task::operator==(const task& tsk) const noexcept {
-        return obj == tsk.obj;
-    }
-
-    bool task::operator==(std::nullptr_t) const noexcept {
-        return obj == nullptr;
     }
 
     size_t task::get_id() const noexcept {

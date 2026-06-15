@@ -76,13 +76,11 @@ namespace fast_task::scheduler {
 
         assert(tsk && "Cannot start an empty task");
 
-        task lgr_task = tsk;
-
         {
-            fast_task::lock_guard guard(get_data(lgr_task));
+            fast_task::lock_guard guard(get_data(tsk));
 
             // Reject if currently executing or completely dead
-            if (get_data(lgr_task).is_running() || get_data(lgr_task).is_ended()) {
+            if (get_data(tsk).is_running() || get_data(tsk).is_ended()) {
 #ifdef FT_ENABLE_ABORT_IF_ALREADY_STARTED
                 assert(false && "The task is already running or stopped.");
                 std::abort();
@@ -91,7 +89,7 @@ namespace fast_task::scheduler {
             }
 
             // Reject if it is already scheduled but not yet executing
-            if (get_data(lgr_task).is_started() && !get_data(lgr_task).is_suspended()) {
+            if (get_data(tsk).is_started() && !get_data(tsk).is_suspended()) {
 #ifdef FT_ENABLE_ABORT_IF_ALREADY_STARTED
                 assert(false && "The task is already started.");
                 std::abort();
@@ -99,12 +97,12 @@ namespace fast_task::scheduler {
                 return;
             }
 
-            if (!get_data(lgr_task).is_started())
+            if (!get_data(tsk).is_started())
                 ++glob.executing_tasks;
-            get_data(lgr_task).set_status(task_object::status_e::running);
+            get_data(tsk).set_status(task_object::status_e::running);
         }
 
-        transfer_task(std::move(lgr_task));
+        transfer_task(task(tsk));
     }
 
     uint16_t create_bind_only_executor(uint16_t fixed_count, bool allow_implicit_start, executor_policy policy) {
@@ -191,10 +189,9 @@ namespace fast_task::scheduler {
             context.abort_tasks_on_close = abort_tasks;
 
             std::swap(transfer_tasks, context.tasks);
-            for (uint16_t i = 0; i < context.executors; i++) {
-                task tsk = task(nullptr);
-                context.tasks.enqueue(tsk);
-            }
+            for (uint16_t i = 0; i < context.executors; i++)
+                context.tasks.enqueue(nullptr);
+
 
             context.new_task_notifier.notify_all();
             {
@@ -209,8 +206,9 @@ namespace fast_task::scheduler {
             context_lock.unlock();
             glob.binded_workers.erase(id);
         }
-        task task;
-        while (transfer_tasks.try_dequeue(task)) {
+        task_object* raw_task;
+        while (transfer_tasks.try_dequeue(raw_task)) {
+            task task = task::adopt(raw_task);
             if (!abort_tasks) {
                 transfer_task(std::move(task));
                 continue;
@@ -279,17 +277,26 @@ namespace fast_task::scheduler {
             fast_task::unique_lock l(uni);
 
             static auto tasks_present = []() -> bool {
-                auto queue = glob.executors_queues.load();
-                if (!queue)
-                    return false;
-                for (auto& q : *queue)
-                    if (q->size())
+                auto cnt = glob.executors_registry.count.load(std::memory_order_acquire);
+                for (uint32_t i = 0; i < glob.executors_registry.max_slots && cnt > 0; ++i) {
+                    auto* q = glob.executors_registry.slots[i].load(std::memory_order_acquire);
+                    if (q && q->size()) {
                         return true;
+                    }
+                    if (q)
+                        --cnt;
+                }
                 for (auto& [id, bind_data] : glob.binded_workers) {
                     fast_task::unique_lock l(bind_data.no_race);
-                    for (auto& q : *bind_data.executors_queues.load())
-                        if (q->size())
+                    auto bcnt = bind_data.executors_registry.count.load(std::memory_order_acquire);
+                    for (uint32_t j = 0; j < bind_data.executors_registry.max_slots && bcnt > 0; ++j) {
+                        auto* q = bind_data.executors_registry.slots[j].load(std::memory_order_acquire);
+                        if (q && q->size()) {
                             return true;
+                        }
+                        if (q)
+                            --bcnt;
+                    }
                     if (bind_data.tasks.size_approx())
                         return true;
                 }
@@ -368,11 +375,11 @@ namespace fast_task::scheduler {
                 glob.executor_shutdown_notifier.wait(guard);
         }
         {
-            task tmp;
-            while (glob.tasks.try_dequeue(tmp)) {
-            }
-            while (glob.cold_tasks.try_dequeue(tmp)) {
-            }
+            task_object* tmp;
+            while (glob.tasks.try_dequeue(tmp))
+                task::adopt(tmp);
+            while (glob.cold_tasks.try_dequeue(tmp))
+                task::adopt(tmp);
         }
         glob.executor_shutting_down.store(false, std::memory_order_release);
     }
@@ -391,7 +398,7 @@ namespace fast_task::scheduler {
     void clean_up() {
         await_no_tasks();
         decltype(glob.cold_tasks) cold;
-        glob.executors_queues = nullptr;
         glob.cold_tasks.swap(cold);
+        glob.gba.claim_unused();
     }
 }

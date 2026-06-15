@@ -15,6 +15,7 @@ set_target_properties(fast_task
   CXX_STANDARD 20
   CXX_EXTENSIONS OFF
 )
+target_link_options(fast_task PRIVATE -flto=auto)
 
 generate_export_header(
   fast_task

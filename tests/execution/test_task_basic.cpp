@@ -76,3 +76,25 @@ TEST_F(TaskBasicTest, ScheduleDelayed) {
     fast_task::this_thread::sleep_for(std::chrono::milliseconds(100));
     EXPECT_TRUE(ran.load());
 }
+
+TEST_F(TaskBasicTest, RunFromMultiple) {
+    fast_task::task tasks[4];
+    bool complete[4]{false, false, false, false};
+    size_t c_index = 0;
+    for (auto& i : tasks)
+        i = fast_task::task::run([&, c_ind = c_index++] {
+            std::vector<fast_task::task> tasks;
+            tasks.reserve(100);
+            for (uint64_t i = 0; i < 100; ++i)
+                tasks.push_back(fast_task::task::run([] {}));
+
+            for (auto& t : tasks)
+                t.await_task();
+            complete[c_ind] = true;
+        });
+    fast_task::task::await_multiple(tasks);
+    EXPECT_TRUE(complete[0]);
+    EXPECT_TRUE(complete[1]);
+    EXPECT_TRUE(complete[2]);
+    EXPECT_TRUE(complete[3]);
+}

@@ -23,6 +23,48 @@ namespace fast_task {
 
     executor_global glob;
 
+    struct mutex_unify_relock_access {
+        static void* raw_ptr(const mutex_unify& m) noexcept {
+            return reinterpret_cast<void*>(m.nmut);
+        }
+
+        static uint8_t raw_type(const mutex_unify& m) noexcept {
+            return static_cast<uint8_t>(m.type);
+        }
+
+        static mutex_unify from_raw(void* ptr, uint8_t type) noexcept {
+            mutex_unify m(nullptr);
+            m.type = static_cast<mutex_unify::mutex_unify_type>(type);
+            m.nmut = reinterpret_cast<fast_task::mutex*>(ptr);
+            return m;
+        }
+
+        static mutex_unify from_task_object(task_object& obj) noexcept {
+            mutex_unify m(nullptr);
+            m.type = mutex_unify::mutex_unify_type::task_obj;
+            m.nmut = reinterpret_cast<fast_task::mutex*>(&obj);
+            return m;
+        }
+
+        static void unlink_wait(std::atomic<task_object::wait_item*>& head, task_object::wait_item* node) noexcept {
+            auto* cur = head.load(std::memory_order_relaxed);
+            task_object::wait_item* prev = nullptr;
+            while (cur) {
+                if (cur == node) {
+                    if (prev)
+                        prev->next = cur->next;
+                    else
+                        head.store(cur->next, std::memory_order_relaxed);
+                    return;
+                }
+                prev = cur;
+                cur = cur->next;
+            }
+        }
+
+        static_assert(sizeof(task_object::sbo_buffer) == task::sbo_size, "task::sbo_size must match task_object::sbo_buffer");
+    };
+
     std::chrono::nanoseconds next_quantum(task_priority priority, std::chrono::nanoseconds& current_available_quantum) {
         if (priority == task_priority::semi_realtime)
             return std::chrono::nanoseconds::min();
@@ -66,11 +108,16 @@ namespace fast_task {
     }
 
     void executors_local::reset() {
+        task_alloc_cache.release();
         local_tasks.reset();
         ex_ptr = nullptr;
         curr_task = task();
         transfer_state.pending = task();
     }
+
+    executor_global::executor_global() = default;
+
+    executor_global::~executor_global() {}
 
 #if PLATFORM_WINDOWS
     std::wstring s2ws(const std::string& str) {
@@ -178,19 +225,19 @@ namespace fast_task {
     }
 
     bool task_object::get_auto_bind() const noexcept {
-        return (state.load(std::memory_order_acquire) & (state_f::auto_bind)) != 0;
+        return (state.load(std::memory_order_relaxed) & (state_f::auto_bind)) != 0;
     }
 
     bool task_object::get_is_restartable() const noexcept {
-        return (state.load(std::memory_order_acquire) & (state_f::is_restartable)) != 0;
+        return (state.load(std::memory_order_relaxed) & (state_f::is_restartable)) != 0;
     }
 
     bool task_object::get_is_on_scheduler() const noexcept {
-        return (state.load(std::memory_order_acquire) & (state_f::is_on_scheduler)) != 0;
+        return (state.load(std::memory_order_relaxed) & (state_f::is_on_scheduler)) != 0;
     }
 
     bool task_object::get_is_sbo() const noexcept {
-        return (state.load(std::memory_order_acquire) & (state_f::is_sbo)) != 0;
+        return (state.load(std::memory_order_relaxed) & (state_f::is_sbo)) != 0;
     }
 
     bool task_object::get_cancellation_requested() const noexcept {
@@ -198,7 +245,7 @@ namespace fast_task {
     }
 
     bool task_object::get_invalid_switch_caught() const noexcept {
-        return (state.load(std::memory_order_acquire) & (state_f::invalid_switch_caught)) != 0;
+        return (state.load(std::memory_order_relaxed) & (state_f::invalid_switch_caught)) != 0;
     }
 
     bool task_object::get_completed() const noexcept {
@@ -247,6 +294,10 @@ namespace fast_task {
 
     void task_object::set_completed(bool on) noexcept {
         set_flag<state_f::completed>(state, on);
+    }
+
+    task_object::execution_mode task_object::get_execution_mode() const noexcept {
+        return static_cast<task_object::execution_mode>(state.load(std::memory_order_relaxed) & 0x03); //the execution mode should not be modified mid run
     }
 
     void task_object::lock() noexcept {
@@ -314,6 +365,7 @@ namespace fast_task {
                     ++to_wake;
                 }
             } else if (head->native_cv) {
+                fast_task::lock_guard re_lock(*this);
                 *head->native_check = true;
                 head->native_cv->notify_all();
             }
@@ -329,9 +381,8 @@ namespace fast_task {
     void task_object::wait() {
         mutex_unify self = mutex_unify_relock_access::from_task_object(*this);
         if (get_loc().is_task_thread) {
-            lock();
+            fast_task::lock_guard guard(*this);
             if (is_ended()) {
-                unlock();
                 return;
             }
             wait_item node;
@@ -340,7 +391,6 @@ namespace fast_task {
             node.next = on_wait.load(std::memory_order_relaxed);
             on_wait.store(&node, std::memory_order_relaxed);
             swapCtxRelock(self);
-            unlock();
         } else {
             fast_task::condition_variable_any cd;
             bool done = false;
@@ -360,9 +410,8 @@ namespace fast_task {
     void task_object::wait_until(std::chrono::high_resolution_clock::time_point time_point) {
         mutex_unify self = mutex_unify_relock_access::from_task_object(*this);
         if (get_loc().is_task_thread) {
-            lock();
+            fast_task::lock_guard guard(*this);
             if (is_ended()) {
-                unlock();
                 return;
             }
             wait_item node;
@@ -379,7 +428,6 @@ namespace fast_task {
             resetTimeWait();
             if (timed)
                 mutex_unify_relock_access::unlink_wait(on_wait, &node);
-            unlock();
         } else {
             fast_task::condition_variable_any cd;
             bool done = false;
@@ -463,7 +511,8 @@ namespace fast_task {
     global_block_allocator g_block_allocator;
 
     task_object* task_object::alloc() {
-        task_object* obj = new (get_tls_cache().allocate()) task_object();
+        auto obj = static_cast<task_object*>(get_loc().task_alloc_cache.allocate());
+
         obj->tls_data.store(nullptr, std::memory_order_relaxed);
         obj->on_wait.store(nullptr, std::memory_order_relaxed);
         obj->exdata.store(nullptr, std::memory_order_relaxed);
@@ -472,9 +521,9 @@ namespace fast_task {
         obj->relock1 = nullptr;
         obj->relock0_type = 0;
         obj->relock1_type = 0;
-        obj->status.store(task_object::status_e::created, std::memory_order_relaxed);
-        obj->state.store(task_object::state_f::f(0), std::memory_order_relaxed);
-        obj->bind_to_worker_id = (uint16_t)-1;
+        obj->status.store(status_e::created, std::memory_order_relaxed);
+        obj->state.store(static_cast<state_f::f>(0), std::memory_order_relaxed);
+        obj->bind_to_worker_id = static_cast<uint16_t>(-1);
         obj->awake_check = 0;
         obj->tls_capacity = 0;
         obj->reserved0 = 0;
@@ -529,7 +578,9 @@ namespace fast_task {
             FT_DEBUG_ONLY(unregister_object(obj));
             if (obj->vtable && obj->vtable->heap_allocated)
                 delete const_cast<task_vtable*>(obj->vtable);
-            get_tls_cache().deallocate(obj);
+
+            obj->status.store(task_object::status_e::released, std::memory_order_relaxed);
+            get_loc().task_alloc_cache.deallocate(obj);
         }
     }
 

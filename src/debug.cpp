@@ -60,7 +60,7 @@ namespace fast_task::debug {
         bool _init_stack_trace;
     };
 
-    protected_value<debug_registry, rw_mutex>& dbg_registry(){
+    protected_value<debug_registry, rw_mutex>& dbg_registry() {
         static protected_value<debug_registry, rw_mutex> d;
         return d;
     }
@@ -810,4 +810,44 @@ namespace fast_task::debug {
                 ii << "\t\tTimeouts in: " << std::chrono::hh_mm_ss{std::chrono::high_resolution_clock::time_point(std::chrono::high_resolution_clock::duration(it.timeout_timestamp)) - hi_current} << '\n';
         }
     }
+
+    void FT_API iterate_task_objects(void (*callback)(const task_object&, void* data), void* data) {
+        if (!callback)
+            return;
+        scheduler::request_stw([callback, data]() {
+            struct iterate_task_objects_data {
+                void (*callback)(const task_object&, void* data);
+                void* data;
+            } d;
+            d.callback = callback;
+            d.data = data;
+
+            glob.gba.iterate_all(
+                [](void* item, void* d) {
+                    auto obj = reinterpret_cast<task_object*>(item);
+                    auto dat = reinterpret_cast<iterate_task_objects_data*>(d);
+                    if (obj->status.load(std::memory_order_relaxed) != task_object::status_e::released)
+                        dat->callback(*obj, dat->data);
+                },
+                &d
+            );
+        });
+    }
+
+    namespace interact_helper {
+    }
+}
+
+__attribute__((used, retain)) std::vector<fast_task::task_object*> collect_task_objects() {
+    std::vector<fast_task::task_object*> collect;
+    fast_task::glob.gba.iterate_all(
+        [](void* item, void* d) {
+            auto obj = reinterpret_cast<fast_task::task_object*>(item);
+            auto dat = reinterpret_cast<std::vector<fast_task::task_object*>*>(d);
+            if (obj->status.load(std::memory_order_relaxed) != fast_task::task_object::status_e::released && obj->status.load(std::memory_order_relaxed) != fast_task::task_object::status_e::ended)
+                dat->push_back(obj);
+        },
+        &collect
+    );
+    return collect;
 }

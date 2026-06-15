@@ -16,7 +16,6 @@ if(NOT FAST_TASK_GUARD_PAGE_COUNT MATCHES "^[0-9]+$")
   message(FATAL_ERROR "FAST_TASK_GUARD_PAGE_COUNT must be a non-negative integer.")
 endif()
 
-
 set(FAST_TASK_TASK_TRANSFERS_LIMIT 8 CACHE 
 STRING 
 "Limits the count of the cooperative task transfers without making the context switch
@@ -25,6 +24,24 @@ STRING
 
 if(NOT FAST_TASK_TASK_TRANSFERS_LIMIT MATCHES "^[0-9]+$")
   message(FATAL_ERROR "FAST_TASK_TASK_TRANSFERS_LIMIT must be a non-negative integer.")
+endif()
+
+set(FAST_TASK_MAX_EXECUTORS 1024 CACHE STRING "Limits the max amount of work stealing entries")
+
+if(NOT FAST_TASK_MAX_EXECUTORS MATCHES "^[0-9]+$")
+  message(FATAL_ERROR "FAST_TASK_MAX_EXECUTORS must be a non-negative integer.")
+endif()
+
+set(FAST_TASK_BINDED_MAX_SLOTS 64 CACHE STRING "Max threads per binded pool")
+
+if(NOT FAST_TASK_BINDED_MAX_SLOTS MATCHES "^[0-9]+$")
+  message(FATAL_ERROR "FAST_TASK_BINDED_MAX_SLOTS must be a non-negative integer.")
+endif()
+
+set(FAST_TASK_MAX_STEAL_ATTEMPTS 3 CACHE STRING "Limits count of steal attempts from random worker")
+
+if(NOT FAST_TASK_MAX_STEAL_ATTEMPTS MATCHES "^[0-9]+$")
+  message(FATAL_ERROR "FAST_TASK_MAX_STEAL_ATTEMPTS must be a non-negative integer.")
 endif()
 
 set(FAST_TASK_TIMER_PRECISION "1ms" CACHE 

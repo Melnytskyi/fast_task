@@ -50,7 +50,6 @@ namespace fast_task {
         task_object* obj;
 
         friend task_object& get_data(task* task);
-        friend task_object& get_data(task& task);
         friend task_object& get_data(const task& task);
         friend struct mutex_unify_relock_access;
 
@@ -104,11 +103,22 @@ namespace fast_task {
         ~task();
         task& operator=(task&&) noexcept;
         task& operator=(const task&) noexcept;
-        operator bool() const noexcept;
-        bool operator==(const task&) const noexcept;
-        bool operator==(std::nullptr_t) const noexcept;
+
+        inline operator bool() const noexcept {
+            return obj;
+        }
+
+        inline bool operator==(const task& tsk) const noexcept {
+            return obj == tsk.obj;
+        }
+
+        inline bool operator==(std::nullptr_t) const noexcept {
+            return obj == nullptr;
+        }
 
         void reset() noexcept;
+        task_object* release() noexcept;
+        static task adopt(task_object* raw) noexcept;
 
 
         void set_auto_bind_worker(bool enable = true) const noexcept;

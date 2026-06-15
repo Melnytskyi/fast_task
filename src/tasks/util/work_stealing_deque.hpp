@@ -1,4 +1,3 @@
-
 // Copyright Danyil Melnytskyi 2025-Present
 //
 // Distributed under the Boost Software License, Version 1.0.
@@ -18,6 +17,12 @@
 constexpr std::size_t hardware_destructive_interference_size = std::hardware_destructive_interference_size;
 #else
 constexpr std::size_t hardware_destructive_interference_size = 64;
+#endif
+
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+    #define FT_DEQUE_STORE_LOAD_FENCE() std::atomic_signal_fence(std::memory_order_seq_cst)
+#else
+    #define FT_DEQUE_STORE_LOAD_FENCE() std::atomic_thread_fence(std::memory_order_seq_cst)
 #endif
 
 template <typename T>
@@ -76,7 +81,7 @@ public:
         b--;
         _bottom.store(b, std::memory_order_relaxed);
 
-        std::atomic_thread_fence(std::memory_order_seq_cst);
+        FT_DEQUE_STORE_LOAD_FENCE();
 
         t = _top.load(std::memory_order_relaxed);
 
@@ -90,7 +95,7 @@ public:
             return false;
         }
 
-        if (_top.compare_exchange_strong(t, t + 1, std::memory_order_seq_cst, std::memory_order_relaxed)) {
+        if (_top.compare_exchange_strong(t, t + 1, std::memory_order_acq_rel, std::memory_order_relaxed)) {
             _bottom.store(b + 1, std::memory_order_relaxed);
             item = std::move(_buffer[b & _mask]);
             return true;
@@ -110,8 +115,7 @@ public:
                 return false;
             }
 
-            std::atomic_thread_fence(std::memory_order_seq_cst);
-            if (_top.compare_exchange_strong(t, t + 1, std::memory_order_seq_cst, std::memory_order_relaxed)) {
+            if (_top.compare_exchange_strong(t, t + 1, std::memory_order_acq_rel, std::memory_order_relaxed)) {
                 item = std::move(_buffer[t & _mask]);
                 return true;
             }
@@ -127,5 +131,7 @@ private:
 
     std::unique_ptr<T[]> _buffer;
 };
+
+#undef FT_DEQUE_STORE_LOAD_FENCE
 
 #endif /* LIBRARY_FAST_TASK_SRC_TASKS_UTIL_WORK_STEALING_DEQUE */

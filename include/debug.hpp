@@ -8,6 +8,7 @@
 #define FAST_TASK_INCLUDE_DEBUG
 
 #include "allocator.hpp"
+#include "internal/task_object.hpp"
 #include "shared.hpp"
 #include "task.hpp"
 #include <cstdint>
@@ -17,6 +18,7 @@
 namespace fast_task::debug {
     struct FT_API program_state_dump;
     struct FT_API raw_stack_trace;
+
     /**
      * @brief Captures a raw snapshot of the entire fast_task state.
      *
@@ -36,6 +38,19 @@ namespace fast_task::debug {
 
     void FT_API save_program_state_dump(const char* path);
 
+
+    /**
+     * @brief Callback to iterate the task objects.
+     *
+     * This function is like dump_program_state and save_program_state_dump initiates the STW,
+     * and iterates all alive alive task objects, but the only difference is the function still works,
+     * even if the library compiled with disabled debug tracking, because the function iterates the areas directly
+     * from task object allocator.
+     *
+     * @throw invalid_native_context 
+     * @note The function could be called only from native thread
+     */
+    void FT_API iterate_task_objects(void (*callback)(const task_object&, void* data), void* data);
 
     /**
      * @brief Captures the tasks raw stack trace
@@ -355,4 +370,10 @@ namespace fast_task::debug {
         array<raw_deadline_timer_info> deadlines;
     };
 }
+
+/** 
+ * @brief helpers for debuggers with functionality to call functions for debug state, obviously is not safe for use in programs
+ */
+std::vector<fast_task::task_object*> collect_task_objects(); //available in all settings
+
 #endif /* FAST_TASK_INCLUDE_DEBUG */

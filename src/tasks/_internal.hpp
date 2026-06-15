@@ -35,12 +35,14 @@
     #include <barrier>
     #include <boost/context/continuation.hpp>
     #include <concurrentqueue/moodycamel/concurrentqueue.h>
+    #include <cstdint>
     #include <exception>
     #include <queue>
     #include <random>
     #include <unordered_set>
 
     #include <exceptions.hpp>
+    #include <internal/task_object.hpp>
     #include <shared.hpp>
     #include <task.hpp>
     #include <tasks/util/_dbg_macro.hpp>
@@ -49,7 +51,39 @@
     #include <tasks/util/work_stealing_deque.hpp>
 
 namespace fast_task {
-    struct execution_data {
+    template <uint32_t MaxSlots>
+    struct FT_API_LOCAL executor_registry {
+        static constexpr uint32_t max_slots = MaxSlots;
+
+        alignas(hardware_destructive_interference_size) std::atomic<work_stealing_deque<task_object*>*> slots[MaxSlots]{};
+        alignas(hardware_destructive_interference_size) std::atomic<uint32_t> count{0};
+        alignas(hardware_destructive_interference_size) std::atomic<uint32_t> next_free_hint{0};
+
+        uint32_t claim(work_stealing_deque<task_object*>* deque) noexcept {
+            uint32_t start = next_free_hint.load(std::memory_order_relaxed);
+            for (uint32_t i = 0; i < max_slots; ++i) {
+                uint32_t idx = (start + i) % max_slots;
+                work_stealing_deque<task_object*>* expected = nullptr;
+                if (slots[idx].compare_exchange_strong(expected, deque, std::memory_order_release, std::memory_order_relaxed)) {
+                    next_free_hint.store((idx + 1) % max_slots, std::memory_order_relaxed);
+                    count.fetch_add(1, std::memory_order_release);
+                    return idx;
+                }
+            }
+            return UINT32_MAX;
+        }
+
+        void release(uint32_t idx) noexcept {
+            if (idx < max_slots) {
+                slots[idx].store(nullptr, std::memory_order_release);
+                count.fetch_sub(1, std::memory_order_release);
+            }
+        }
+    };
+
+    using global_executor_registry = executor_registry<FT_MAX_EXECUTORS>;
+    using binded_executor_registry = executor_registry<FT_BINDED_MAX_SLOTS>;
+    struct FT_API_LOCAL task_object::execution_data {
         std::chrono::high_resolution_clock::time_point::rep timeout = std::chrono::high_resolution_clock::time_point::min().time_since_epoch().count();
         boost::context::continuation context;
         size_t context_switch_count = 0;
@@ -69,102 +103,6 @@ namespace fast_task {
     #endif
     };
 
-    struct alignas(64) FT_API_LOCAL task_object {
-        struct FT_API_LOCAL wait_item;
-        enum class status_e : uint8_t {
-            created,
-            running,
-            suspending,
-            suspended,
-            ended
-        };
-
-        struct state_f {
-            enum f : uint16_t {
-                time_end = 0x1,
-                awaked = 0x2,
-                auto_bind = 0x4,
-                is_restartable = 0x8,
-                is_on_scheduler = 0x10,
-                is_sbo = 0x20,
-                spin_lock_locked = 0x40,
-                cancellation_requested = 0x80,
-                invalid_switch_caught = 0x100,
-                completed = 0x200,
-            };
-        };
-
-        std::atomic<void*> tls_data;         // 8
-        std::atomic<wait_item*> on_wait;     // 8
-        std::atomic<execution_data*> exdata; // 8
-        const task_vtable* vtable;           // 8
-        void* relock0;                       // 8
-        void* relock1;                       // 8
-        uint8_t relock0_type, relock1_type;  // 2
-        std::atomic<status_e> status;        // 1
-        uint8_t reserved0;                   // 1
-        std::atomic<state_f::f> state;       // 2
-        uint16_t bind_to_worker_id;          // 2
-        uint16_t awake_check;                // 2
-        uint16_t tls_capacity;               // 2
-        std::atomic<uint32_t> link_counter;  // 4
-
-        alignas(std::max_align_t) std::byte sbo_buffer[48];
-        void (*on_start_override)(task_object*);
-        void* on_start_override_data;
-
-        bool get_time_end() const noexcept;
-        void set_time_end(bool state) noexcept;
-        bool get_awaked() const noexcept;
-        void set_awaked(bool state) noexcept;
-        bool get_auto_bind() const noexcept;
-        void set_auto_bind(bool state) noexcept;
-        bool get_is_restartable() const noexcept;
-        void set_is_restartable(bool state) noexcept;
-        bool get_is_on_scheduler() const noexcept;
-        void set_is_on_scheduler(bool state) noexcept;
-        bool get_is_sbo() const noexcept;
-        void set_is_sbo(bool state) noexcept;
-        bool get_cancellation_requested() const noexcept;
-        void set_cancellation_requested(bool state) noexcept;
-        bool get_invalid_switch_caught() const noexcept;
-        void set_invalid_switch_caught(bool state) noexcept;
-        bool get_completed() const noexcept;
-        void set_completed(bool state) noexcept;
-
-        void set_status(status_e) noexcept;
-
-        bool is_started() const noexcept;   // status != created
-        bool is_running() const noexcept;   // status == running
-        bool is_suspended() const noexcept; // status == suspended
-        bool is_ended() const noexcept;     // status == ended
-
-        void* user_data() const noexcept;
-        void end_of_life_notify();
-
-        void lock() noexcept;
-        void unlock() noexcept;
-
-        void wait();
-        void wait_until(std::chrono::high_resolution_clock::time_point);
-        void cancel();
-
-        bool enter_wait(const task&, enter_state& state);
-        bool enter_wait_until(const task&, enter_state& state, std::chrono::high_resolution_clock::time_point);
-        bool enter_cancel(const task&, enter_state& state);
-
-        mutex_unify get_relock_0() const noexcept;
-        mutex_unify get_relock_1() const noexcept;
-        void set_relock_0(mutex_unify) noexcept;
-        void set_relock_1(mutex_unify) noexcept;
-
-        static task_object* alloc();
-        static task_object* use(task_object*) noexcept;
-        static void free(task_object* obj);
-
-        mutex_unify get_self_unify() noexcept;
-    };
-
     struct FT_API_LOCAL task_object::wait_item {
         wait_item* next = nullptr;
         task waiter;
@@ -172,52 +110,6 @@ namespace fast_task {
         bool* native_check = nullptr;
         uint16_t awake_check = 0;
         bool heap_allocated = false;
-    };
-
-    struct mutex_unify_relock_access {
-        static void* raw_ptr(const mutex_unify& m) noexcept {
-            return reinterpret_cast<void*>(m.nmut);
-        }
-
-        static uint8_t raw_type(const mutex_unify& m) noexcept {
-            return static_cast<uint8_t>(m.type);
-        }
-
-        static mutex_unify from_raw(void* ptr, uint8_t type) noexcept {
-            mutex_unify m(nullptr);
-            m.type = static_cast<mutex_unify::mutex_unify_type>(type);
-            m.nmut = reinterpret_cast<fast_task::mutex*>(ptr);
-            return m;
-        }
-
-        // Builds a mutex_unify that locks/unlocks a task_object's spin bit, used to
-        // protect the task's completion-wait list across a context switch.
-        static mutex_unify from_task_object(task_object& obj) noexcept {
-            mutex_unify m(nullptr);
-            m.type = mutex_unify::mutex_unify_type::task_obj;
-            m.nmut = reinterpret_cast<fast_task::mutex*>(&obj);
-            return m;
-        }
-
-        // Removes a node from a task_object's intrusive completion-wait list
-        // (the caller must hold the owning task_object's spin lock).
-        static void unlink_wait(std::atomic<task_object::wait_item*>& head, task_object::wait_item* node) noexcept {
-            auto* cur = head.load(std::memory_order_relaxed);
-            task_object::wait_item* prev = nullptr;
-            while (cur) {
-                if (cur == node) {
-                    if (prev)
-                        prev->next = cur->next;
-                    else
-                        head.store(cur->next, std::memory_order_relaxed);
-                    return;
-                }
-                prev = cur;
-                cur = cur->next;
-            }
-        }
-
-        static_assert(sizeof(task_object::sbo_buffer) == task::sbo_size, "task::sbo_size must match task_object::sbo_buffer");
     };
 
     struct task_condition_variable::resume_task {
@@ -301,33 +193,39 @@ namespace fast_task {
         }
     };
 
-    inline auto FT_API_LOCAL get_data(task* task) -> task_object& {
+    inline auto FT_API_LOCAL get_data(class task* task) -> task_object& {
         return *task->obj;
     }
 
-    inline auto FT_API_LOCAL get_data(task& task) -> task_object& {
+    inline auto FT_API_LOCAL get_data(const class task& task) -> task_object& {
         return *task.obj;
     }
 
-    inline auto FT_API_LOCAL get_data(const task& task) -> task_object& {
-        return *task.obj;
-    }
-
-    inline auto FT_API_LOCAL get_execution_data(task* task) -> execution_data& {
+    inline auto FT_API_LOCAL get_execution_data(class task* task) -> task_object::execution_data& {
         auto& slot = get_data(task).exdata;
         auto* p = slot.load(std::memory_order_acquire);
         if (!p) {
-            p = new execution_data{};
+            p = new task_object::execution_data{};
             slot.store(p, std::memory_order_release);
         }
         return *p;
     }
 
-    inline auto FT_API_LOCAL get_execution_data(task& task) -> execution_data& {
+    inline auto FT_API_LOCAL get_execution_data(task_object* task) -> task_object::execution_data& {
+        auto& slot = task->exdata;
+        auto* p = slot.load(std::memory_order_acquire);
+        if (!p) {
+            p = new task_object::execution_data{};
+            slot.store(p, std::memory_order_release);
+        }
+        return *p;
+    }
+
+    inline auto FT_API_LOCAL get_execution_data(class task& task) -> task_object::execution_data& {
         return get_execution_data(&task);
     }
 
-    inline auto FT_API_LOCAL get_execution_data(const task& task) -> execution_data& {
+    inline auto FT_API_LOCAL get_execution_data(const class task& task) -> task_object::execution_data& {
         return get_execution_data(const_cast<class task*>(&task));
     }
 
@@ -364,16 +262,23 @@ namespace fast_task {
     std::chrono::nanoseconds FT_API_LOCAL init_quantum(task_priority priority);
 
     struct FT_API_LOCAL executors_local {
-        std::shared_ptr<work_stealing_deque<task>> local_tasks = std::make_shared<work_stealing_deque<task>>();
+        thread_local_block_cache task_alloc_cache;
+        std::shared_ptr<work_stealing_deque<task_object*>> local_tasks = std::make_shared<work_stealing_deque<task_object*>>();
         std::exception_ptr ex_ptr;
         task curr_task = nullptr;
         boost::context::continuation* stack_current_context = nullptr;
         scheduler::executor_policy policy = scheduler::executor_policy::default_policy;
         uint16_t binded_id = (uint16_t)-1;
+        uint32_t registry_slot = UINT32_MAX;
 
         bool is_task_thread : 1 = false;
         bool context_in_swap : 1 = false;
         bool yield_request : 1 = false;
+
+        struct {
+            work_stealing_deque<task_object*>* last_success_victim = nullptr;
+            uint32_t last_success_epoch = 0; // monotonic counter for staleness
+        } steal_cache;
 
         struct {
             task pending;
@@ -386,9 +291,9 @@ namespace fast_task {
     };
 
     struct FT_API_LOCAL binded_context {
-        std::atomic<std::shared_ptr<const std::vector<std::shared_ptr<work_stealing_deque<task>>>>> executors_queues;
+        binded_executor_registry executors_registry;
         std::list<uint32_t> completions;
-        moodycamel::ConcurrentQueue<task> tasks;
+        moodycamel::ConcurrentQueue<task_object*> tasks;
         task_condition_variable on_closed_notifier;
         fast_task::rw_mutex no_race;
         fast_task::condition_variable_any new_task_notifier;
@@ -402,14 +307,15 @@ namespace fast_task {
     };
 
     struct FT_API_LOCAL executor_global {
+        global_block_allocator gba;
         task_condition_variable no_tasks_execute_notifier;
         fast_task::condition_variable time_notifier;
         fast_task::condition_variable_any tasks_notifier;
         fast_task::condition_variable_any executor_shutdown_notifier;
 
-        std::atomic<std::shared_ptr<const std::vector<std::shared_ptr<work_stealing_deque<task>>>>> executors_queues;
-        moodycamel::ConcurrentQueue<task> tasks;
-        moodycamel::ConcurrentQueue<task> cold_tasks;
+        global_executor_registry executors_registry;
+        moodycamel::ConcurrentQueue<task_object*> tasks;
+        moodycamel::ConcurrentQueue<task_object*> cold_tasks;
         hashed_timing_wheel timed_wheel;
         hashed_timing_wheel cold_timed_wheel;
 
@@ -437,6 +343,9 @@ namespace fast_task {
         std::unique_ptr<std::barrier<>> stw_barrier_exit;
         std::atomic<size_t> thread_count{0}; //including native worker and timer
         fast_task::mutex stw_mutex;
+
+        executor_global();
+        ~executor_global();
     };
 
     NOINLINE executors_local& get_loc() noexcept;

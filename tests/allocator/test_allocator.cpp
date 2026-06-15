@@ -98,19 +98,19 @@ using namespace fast_task;
 
 TEST(BlockAllocator, SingleThreadAllocFree) {
     // Allocate and free a block, verify it's not null
-    void* p = get_tls_cache().allocate();
+    void* p = task_alloc_data::allocate();
     ASSERT_NE(p, nullptr);
-    get_tls_cache().deallocate(p);
+    task_alloc_data::deallocate(p);
 }
 
 TEST(BlockAllocator, Alignment) {
     // Every block must be 64-byte aligned
     for (int i = 0; i < 100; ++i) {
-        void* p = get_tls_cache().allocate();
+        void* p = task_alloc_data::allocate();
         ASSERT_NE(p, nullptr);
         EXPECT_EQ(reinterpret_cast<uintptr_t>(p) & 63, 0u)
             << "Block " << i << " at " << p << " not 64-byte aligned";
-        get_tls_cache().deallocate(p);
+        task_alloc_data::deallocate(p);
     }
 }
 
@@ -120,7 +120,7 @@ TEST(BlockAllocator, BootstrapBatch) {
     std::vector<void*> blocks;
     blocks.reserve(200);
     for (int i = 0; i < 200; ++i) {
-        void* p = get_tls_cache().allocate();
+        void* p = task_alloc_data::allocate();
         ASSERT_NE(p, nullptr);
         blocks.push_back(p);
     }
@@ -129,25 +129,25 @@ TEST(BlockAllocator, BootstrapBatch) {
     EXPECT_EQ(unique.size(), blocks.size());
     // Cleanup
     for (auto* p : blocks)
-        get_tls_cache().deallocate(p);
+        task_alloc_data::deallocate(p);
 }
 
 TEST(BlockAllocator, LIFOReuse) {
     // LIFO means the most recently freed block is the next allocated one
-    void* first = get_tls_cache().allocate();
-    void* second = get_tls_cache().allocate();
+    void* first = task_alloc_data::allocate();
+    void* second = task_alloc_data::allocate();
     ASSERT_NE(first, second);
 
-    get_tls_cache().deallocate(second);
-    void* reused = get_tls_cache().allocate();
+    task_alloc_data::deallocate(second);
+    void* reused = task_alloc_data::allocate();
     EXPECT_EQ(reused, second) << "Expected LIFO reuse of second block";
 
-    get_tls_cache().deallocate(first);
-    void* reused_first = get_tls_cache().allocate();
+    task_alloc_data::deallocate(first);
+    void* reused_first = task_alloc_data::allocate();
     EXPECT_EQ(reused_first, first) << "Expected LIFO reuse of first block";
 
-    get_tls_cache().deallocate(reused_first);
-    get_tls_cache().deallocate(reused);
+    task_alloc_data::deallocate(reused_first);
+    task_alloc_data::deallocate(reused);
 }
 
 TEST(BlockAllocator, WatermarkBulkReturn) {
@@ -156,24 +156,24 @@ TEST(BlockAllocator, WatermarkBulkReturn) {
     std::vector<void*> blocks;
     blocks.reserve(300);
     for (int i = 0; i < 257; ++i) {
-        void* p = get_tls_cache().allocate();
+        void* p = task_alloc_data::allocate();
         ASSERT_NE(p, nullptr);
         blocks.push_back(p);
     }
     // Free all — this should trigger the watermark and bulk-return
     for (auto* p : blocks)
-        get_tls_cache().deallocate(p);
+        task_alloc_data::deallocate(p);
 
     // Now allocate again — should get blocks from the local free list
     // (which still has 257 - 128 = 129 blocks after bulk return)
     for (int i = 0; i < 129; ++i) {
-        void* p = get_tls_cache().allocate();
+        void* p = task_alloc_data::allocate();
         ASSERT_NE(p, nullptr);
     }
     // The next alloc triggers a batch fetch from global (since local is now 0)
-    void* p = get_tls_cache().allocate();
+    void* p = task_alloc_data::allocate();
     ASSERT_NE(p, nullptr);
-    get_tls_cache().deallocate(p);
+    task_alloc_data::deallocate(p);
 }
 
 TEST(BlockAllocator, GeometricGrowth) {
@@ -183,32 +183,32 @@ TEST(BlockAllocator, GeometricGrowth) {
     std::vector<void*> blocks1, blocks2, blocks3;
     blocks1.reserve(200);
     for (int i = 0; i < 200; ++i) {
-        void* p = get_tls_cache().allocate();
+        void* p = task_alloc_data::allocate();
         ASSERT_NE(p, nullptr);
         blocks1.push_back(p);
     }
     for (auto* p : blocks1)
-        get_tls_cache().deallocate(p);
+        task_alloc_data::deallocate(p);
 
     // Second wave — local should have freed blocks, but if not enough, expand
     blocks2.reserve(300);
     for (int i = 0; i < 300; ++i) {
-        void* p = get_tls_cache().allocate();
+        void* p = task_alloc_data::allocate();
         ASSERT_NE(p, nullptr);
         blocks2.push_back(p);
     }
     for (auto* p : blocks2)
-        get_tls_cache().deallocate(p);
+        task_alloc_data::deallocate(p);
 
     // Third wave — same
     blocks3.reserve(500);
     for (int i = 0; i < 500; ++i) {
-        void* p = get_tls_cache().allocate();
+        void* p = task_alloc_data::allocate();
         ASSERT_NE(p, nullptr);
         blocks3.push_back(p);
     }
     for (auto* p : blocks3)
-        get_tls_cache().deallocate(p);
+        task_alloc_data::deallocate(p);
 
     // No crash = geometric growth worked, all blocks unique
     SUCCEED();
@@ -227,7 +227,7 @@ TEST(BlockAllocator, MultiThreadContention) {
             std::vector<void*> blocks;
             blocks.reserve(blocks_per_thread);
             for (int i = 0; i < blocks_per_thread; ++i) {
-                void* p = get_tls_cache().allocate();
+                void* p = task_alloc_data::allocate();
                 if (!p) {
                     failed.store(true, std::memory_order_relaxed);
                     return;
@@ -240,7 +240,7 @@ TEST(BlockAllocator, MultiThreadContention) {
                 blocks.push_back(p);
             }
             for (auto* p : blocks)
-                get_tls_cache().deallocate(p);
+                task_alloc_data::deallocate(p);
         });
     }
 
@@ -255,7 +255,7 @@ TEST(BlockAllocator, CrossThreadAllocFree) {
     // The freeing thread's local list handles it, then bulk-returns to global.
     void* p = nullptr;
     std::thread alloc_thread([&p]() {
-        p = get_tls_cache().allocate();
+        p = task_alloc_data::allocate();
         ASSERT_NE(p, nullptr);
     });
     alloc_thread.join();
@@ -263,7 +263,7 @@ TEST(BlockAllocator, CrossThreadAllocFree) {
     ASSERT_NE(p, nullptr);
     std::thread free_thread([p]() {
         // This is cross-thread — p was allocated on a different thread
-        get_tls_cache().deallocate(p);
+        task_alloc_data::deallocate(p);
     });
     free_thread.join();
 

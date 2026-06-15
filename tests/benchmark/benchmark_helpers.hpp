@@ -120,38 +120,93 @@ inline void warm_up() {
     (void)sink;
 }
 
-#define BENCHMARK_GRADUATED(name, scales, body)           \
-    do {                                                  \
-        print_bench_header(name);                         \
-        warm_up();                                        \
-        for (auto const& sp : (scales)) {                 \
-            benchmark_timer timer;                        \
-            {                                             \
-                body                                      \
-            }                                             \
-            double ms = timer.elapsed_ms();               \
-            print_bench_row(sp.label, sp.iterations, ms); \
-        }                                                 \
-        std::cout << std::endl;                           \
-    } while (0)
-#define BENCHMARK_GRADUATED_WARM(name, scales, warmup, measured) \
-    do {                                                         \
-        print_bench_header(name);                                \
-        for (auto const& sp : (scales)) {                        \
-            /* warmup */                                         \
-            for (int _w = 0; _w < 3; ++_w) {                     \
-                warmup                                           \
-            }                                                    \
-            /* measured */                                       \
-            benchmark_timer timer;                               \
-            {                                                    \
-                measured                                         \
-            }                                                    \
-            double ms = timer.elapsed_ms();                      \
-            print_bench_row(sp.label, sp.iterations, ms);        \
-        }                                                        \
-        std::cout << std::endl;                                  \
-    } while (0)
+static size_t current_rss_kb() {
+#ifdef __linux__
+    std::ifstream status("/proc/self/status");
+    std::string line;
+    while (std::getline(status, line)) {
+        if (line.compare(0, 6, "VmRSS:") == 0) {
+            std::istringstream iss(line.substr(6));
+            size_t kb;
+            iss >> kb;
+            return kb;
+        }
+    }
+#endif
+    return 0;
+}
+
+template <size_t size>
+inline double avg_bench_time(double (&times)[size]) {
+    double res = 0;
+    for (size_t i = 0; i < size; i++)
+        res += times[i];
+    return res / size;
+}
+
+template <size_t size>
+inline size_t avg_bench_mem(size_t (&usage)[size]) {
+    size_t res = 0;
+    for (size_t i = 0; i < size; i++)
+        res += usage[i];
+    return res / size;
+}
+
+#define BENCHMARK(name, scales, ...)                                             \
+    struct name {                                                                \
+        void run(size_t scale);                                                  \
+        name() {                                                                 \
+            size_t n = std::max(2u, std::thread::hardware_concurrency());        \
+            fast_task::scheduler::create_executor(n);                            \
+            while (fast_task::scheduler::total_executors() < n)                  \
+                std::this_thread::yield();                                       \
+            print_bench_header(#name);                                           \
+            warm_up();                                                           \
+            for (auto const& sp : (scales)) {                                    \
+                double times[20]{0};                                             \
+                for (size_t i = 0; i < 20; i++) {                                \
+                    benchmark_timer timer;                                       \
+                    run(sp.iterations);                                          \
+                    times[i] = timer.elapsed_ms(__VA_ARGS__);                    \
+                }                                                                \
+                print_bench_row(sp.label, sp.iterations, avg_bench_time(times)); \
+            }                                                                    \
+            std::cout << std::endl;                                              \
+        }                                                                        \
+    };                                                                           \
+    void name::run(size_t scale)
+
+#define BENCHMARK_MEM(name, scales, ...)                                                                \
+    struct name {                                                                                       \
+        void run(size_t scale);                                                                         \
+        name() {                                                                                        \
+            size_t n = std::max(2u, std::thread::hardware_concurrency());                               \
+            fast_task::scheduler::create_executor(n);                                                   \
+            while (fast_task::scheduler::total_executors() < n)                                         \
+                std::this_thread::yield();                                                              \
+            print_bench_header(#name, true);                                                            \
+            warm_up();                                                                                  \
+            size_t baseline_kb = current_rss_kb();                                                      \
+            for (auto const& sp : (scales)) {                                                           \
+                double times[20]{0};                                                                    \
+                size_t memuse[20]{0};                                                                   \
+                for (size_t i = 0; i < 20; i++) {                                                       \
+                    benchmark_timer timer;                                                              \
+                    run(sp.iterations);                                                                 \
+                    times[i] = timer.elapsed_ms(__VA_ARGS__);                                           \
+                    size_t rss_kb = current_rss_kb();                                                   \
+                    size_t delta_kb = (baseline_kb > 0) ? (rss_kb - baseline_kb) : 0;                   \
+                    memuse[i] = delta_kb * 1024;                                                        \
+                }                                                                                       \
+                print_bench_row(sp.label, sp.iterations, avg_bench_time(times), avg_bench_mem(memuse)); \
+            }                                                                                           \
+            fast_task::scheduler::shut_down();                                                          \
+            fast_task::scheduler::clean_up();                                                           \
+            std::cout << std::endl;                                                                     \
+        }                                                                                               \
+    };                                                                                                  \
+    void name::run(size_t scale)
+
 inline const scale_point scales_small[] = {
     {"1K", 1'000},
     {"10K", 10'000},
@@ -174,19 +229,14 @@ inline const scale_point scales_large[] = {
     {"1M", 1'000'000},
 };
 
-static size_t current_rss_kb() {
-#ifdef __linux__
-    std::ifstream status("/proc/self/status");
-    std::string line;
-    while (std::getline(status, line)) {
-        if (line.compare(0, 6, "VmRSS:") == 0) {
-            std::istringstream iss(line.substr(6));
-            size_t kb;
-            iss >> kb;
-            return kb;
-        }
-    }
-#endif
-    return 0;
-}
+inline const scale_point scales_xxl_large[] = {
+    {"100", 100},
+    {"1K", 1'000},
+    {"10K", 10'000},
+    {"50K", 50'000},
+    {"100K", 100'000},
+    {"500K", 500'000},
+    {"1M", 1'000'000},
+};
+
 #endif // FAST_TASK_BENCHMARK_HELPERS
