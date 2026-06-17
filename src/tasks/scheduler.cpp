@@ -442,6 +442,10 @@ namespace fast_task {
                 loc.transfer_state.pending.reset();
                 data = &get_data(loc.curr_task);
                 data->awake_check++;
+                loc.stack_current_context = (data && !data->get_is_on_scheduler())
+                                                ? &get_execution_data(data).context
+                                                : nullptr;
+                ;
             }
         }
     end_task:
@@ -485,7 +489,7 @@ namespace fast_task {
             if (should_decrement) {
                 --glob.executing_tasks;
                 fast_task::shared_lock guard(glob.task_thread_safety);
-                glob.no_tasks_execute_notifier.notify_all_guarded();
+                glob.no_tasks_execute_notifier.notify_all();
             }
         }
 
@@ -587,7 +591,7 @@ namespace fast_task {
             max_attempts = (cnt > 1) ? cnt - 1 : 0;
 
         for (uint32_t i = 0; i < max_attempts; ++i) {
-            uint32_t idx = (+rand()) % registry.max_slots;
+            uint32_t idx = loc.rand.next() % registry.max_slots;
             auto* deque = registry.slots[idx].load(std::memory_order_acquire);
             if (deque == nullptr || deque == loc.local_tasks.get())
                 continue;
@@ -738,7 +742,7 @@ namespace fast_task {
             max_attempts = (cnt > 1) ? cnt - 1 : 0;
 
         for (uint32_t i = 0; i < max_attempts; ++i) {
-            uint32_t idx = (+rand()) % registry.max_slots;
+            uint32_t idx = loc.rand.next() % registry.max_slots;
             auto* deque = registry.slots[idx].load(std::memory_order_acquire);
             if (deque == nullptr || deque == loc.local_tasks.get())
                 continue;
@@ -791,7 +795,7 @@ namespace fast_task {
             if (!context.tasks.try_dequeue(raw_curr_task)) {
                 {
                     fast_task::unique_lock guard(glob.task_thread_safety);
-                    glob.no_tasks_execute_notifier.notify_all_guarded();
+                    glob.no_tasks_execute_notifier.notify_all();
                 }
                 fast_task::unique_lock guard(context.no_race);
                 if (context.in_close)
@@ -881,7 +885,7 @@ namespace fast_task {
                                 if (should_decrement) {
                                     --glob.executing_tasks;
                                     fast_task::shared_lock notify_guard(glob.task_thread_safety);
-                                    glob.no_tasks_execute_notifier.notify_all_guarded();
+                                    glob.no_tasks_execute_notifier.notify_all();
                                 }
                             } else {
                                 get_data(loc.curr_task).bind_to_worker_id = (uint16_t)-1;
@@ -1021,7 +1025,7 @@ namespace fast_task {
 
             {
                 fast_task::shared_lock sg(glob.task_thread_safety);
-                glob.no_tasks_execute_notifier.notify_all_guarded();
+                glob.no_tasks_execute_notifier.notify_all();
             }
 
             check_stw();

@@ -102,11 +102,6 @@ namespace fast_task {
         return true;
     }
 
-    NOINLINE std::default_random_engine& FT_API_LOCAL get_thread_local_random_engine() {
-        static thread_local std::default_random_engine engine(std::random_device{}());
-        return engine;
-    }
-
     void executors_local::reset() {
         task_alloc_cache.release();
         local_tasks.reset();
@@ -565,7 +560,7 @@ namespace fast_task {
             if (!ended && started) {
                 --glob.executing_tasks;
                 fast_task::shared_lock guard(glob.task_thread_safety);
-                glob.no_tasks_execute_notifier.notify_all_guarded();
+                glob.no_tasks_execute_notifier.notify_all();
             }
 
 #ifdef FT_ENABLE_ABORT_IF_NEVER_STARTED

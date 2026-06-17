@@ -6,7 +6,6 @@
 
 #include <task.hpp>
 #include <tasks/_internal.hpp>
-#include <variant>
 
 namespace fast_task {
     void task_condition_variable::push_back(private_values& values, resume_task* node) {
@@ -232,46 +231,6 @@ namespace fast_task {
             if (task::max_running_tasks && get_loc().is_task_thread)
                 if (can_be_scheduled_task_to_hot() && get_loc().curr_task && !get_data(get_loc().curr_task).is_ended())
                     to_yield = true;
-        }
-        no_race_guard.unlock();
-        if (to_yield)
-            this_task::yield();
-    }
-
-    void task_condition_variable::notify_all_guarded() {
-        fast_task::unique_lock no_race_guard(values.no_race);
-        resume_task* head = values.begin;
-        values.begin = nullptr;
-        values.end = nullptr;
-        if (!head)
-            return;
-        bool to_yield = false;
-        resume_task* curr = head;
-        while (curr) {
-            resume_task* next = curr->next;
-            bool heap_allocated = curr->heap_allocated;
-            if (curr->task == nullptr) {
-                if (curr->native_cv != nullptr) {
-                    *curr->native_check = true;
-                    curr->native_cv->notify_all();
-                }
-            } else {
-                fast_task::lock_guard guard_loc(get_data(curr->task));
-                if (get_data(curr->task).awake_check == curr->awake_check) {
-                    if (!get_data(curr->task).get_time_end()) {
-                        get_data(curr->task).set_awaked(true);
-                        transfer_task(std::move(curr->task), reinterpret_cast<enter_state*>(curr));
-                    }
-                }
-            }
-            if (heap_allocated)
-                delete curr;
-            curr = next;
-        }
-        glob.tasks_notifier.notify_one();
-        if (task::max_running_tasks && get_loc().is_task_thread) {
-            if (can_be_scheduled_task_to_hot() && get_loc().curr_task && !get_data(get_loc().curr_task).is_ended())
-                to_yield = true;
         }
         no_race_guard.unlock();
         if (to_yield)

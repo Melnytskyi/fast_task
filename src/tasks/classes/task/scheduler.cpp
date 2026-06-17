@@ -170,16 +170,11 @@ namespace fast_task::scheduler {
             throw std::runtime_error("Binded worker not found");
         } else {
             auto& context = glob.binded_workers[id];
-            // Wait for all spawned executor threads to start before closing.
-            // They acquire binded_workers_safety before incrementing context.executors,
-            // so we must release our lock temporarily to avoid deadlock.
-            {
-                uint16_t expected = context.expected_executors;
-                while (context.executors < expected) {
-                    guard.unlock();
-                    std::this_thread::yield();
-                    guard.lock();
-                }
+            uint16_t expected = context.expected_executors;
+            while (context.executors < expected) {
+                guard.unlock();
+                std::this_thread::yield();
+                guard.lock();
             }
 
             fast_task::unique_lock context_lock(context.no_race);
@@ -230,7 +225,7 @@ namespace fast_task::scheduler {
             if (should_decrement) {
                 --glob.executing_tasks;
                 fast_task::shared_lock notify_guard(glob.task_thread_safety);
-                glob.no_tasks_execute_notifier.notify_all_guarded();
+                glob.no_tasks_execute_notifier.notify_all();
             }
         }
     }
@@ -247,7 +242,6 @@ namespace fast_task::scheduler {
     }
 
     void reduce_executor(size_t count) {
-        fast_task::shared_lock notify_guard(glob.task_thread_safety);
         for (size_t i = 0; i < count; i++)
             transfer_task(task(nullptr));
     }

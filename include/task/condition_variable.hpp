@@ -36,12 +36,6 @@ namespace fast_task {
         void notify_all();
         bool has_waiters();
 
-        // For use when the caller already holds glob.task_thread_safety shared.
-        // Snapshotting resume_task under that shared lock closes the lost-wakeup
-        // window that exists when notify_all() is called without any outer
-        // synchronisation on glob.task_thread_safety.  Must NOT be called while
-        // holding glob.task_thread_safety exclusively.
-        FT_API_LOCAL void notify_all_guarded();
         void callback(fast_task::unique_lock<mutex_unify>& mut, const task& task);
         void callback(std::unique_lock<mutex_unify>& mut, const task& task);
 

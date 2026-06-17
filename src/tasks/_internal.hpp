@@ -38,16 +38,17 @@
     #include <cstdint>
     #include <exception>
     #include <queue>
-    #include <random>
     #include <unordered_set>
 
     #include <exceptions.hpp>
     #include <internal/task_object.hpp>
     #include <shared.hpp>
     #include <task.hpp>
+    #include <tasks/classes/synchronization/internal_sched_cv.hpp>
     #include <tasks/util/_dbg_macro.hpp>
     #include <tasks/util/fixed_block_allocator.hpp>
     #include <tasks/util/hashed_timing_wheel.hpp>
+    #include <tasks/util/pcg32.hpp>
     #include <tasks/util/work_stealing_deque.hpp>
 
 namespace fast_task {
@@ -267,6 +268,7 @@ namespace fast_task {
         std::exception_ptr ex_ptr;
         task curr_task = nullptr;
         boost::context::continuation* stack_current_context = nullptr;
+        pcg32 rand;
         scheduler::executor_policy policy = scheduler::executor_policy::default_policy;
         uint16_t binded_id = (uint16_t)-1;
         uint32_t registry_slot = UINT32_MAX;
@@ -308,7 +310,7 @@ namespace fast_task {
 
     struct FT_API_LOCAL executor_global {
         global_block_allocator gba;
-        task_condition_variable no_tasks_execute_notifier;
+        internal_sched_cv no_tasks_execute_notifier;
         fast_task::condition_variable time_notifier;
         fast_task::condition_variable_any tasks_notifier;
         fast_task::condition_variable_any executor_shutdown_notifier;
