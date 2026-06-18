@@ -330,7 +330,9 @@ namespace fast_task {
 
         std::atomic_size_t interrupts = 0; //debug counter of the usermode fast_task interrupts
         std::atomic_size_t executors = 0;
+    #ifndef NDEBUG
         std::atomic_size_t tasks_in_swap = 0;   //this means the tasks is stored outside the scheduler and excepted to be rescheduled later, ex. mutex
+    #endif
         std::atomic_size_t in_run_tasks = 0;    //count of tasks in run right now
         std::atomic_size_t executing_tasks = 0; //scheduled and in run tasks, including tasks in swap
 

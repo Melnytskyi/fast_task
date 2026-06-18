@@ -15,6 +15,9 @@
     #include <iostream>
 #endif
 
+#if defined(__x86_64__) || defined(__i386__) || defined(_M_IX86) || defined(_M_X64)
+    #define __IS_X86_OR_X64
+#endif
 namespace fast_task {
     NOINLINE executors_local& get_loc() noexcept {
         static thread_local executors_local loc;
@@ -296,11 +299,21 @@ namespace fast_task {
     }
 
     void task_object::lock() noexcept {
+        interrupt_unsafe_region::lock();
         state_f::f cur = state.load(std::memory_order_relaxed);
         for (;;) {
             cur = state_f::f(cur & ~state_f::spin_lock_locked);
             if (state.compare_exchange_weak(cur, state_f::f(cur | state_f::spin_lock_locked), std::memory_order_acquire, std::memory_order_relaxed))
                 return;
+#ifdef PLATFORM_WINDOWS
+    #ifdef __IS_X86_OR_X64
+            _mm_pause();
+    #endif
+#else
+    #if (defined(__GNUC__) || defined(__clang__)) && defined(__IS_X86_OR_X64)
+            __builtin_ia32_pause();
+    #endif
+#endif
         }
     }
 
@@ -309,6 +322,7 @@ namespace fast_task {
         do {
             next = state_f::f(cur & ~state_f::spin_lock_locked);
         } while (!state.compare_exchange_weak(cur, next, std::memory_order_release, std::memory_order_relaxed));
+        interrupt_unsafe_region::unlock();
     }
 
     void task_object::set_status(status_e s) noexcept {

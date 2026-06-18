@@ -129,7 +129,9 @@ namespace fast_task {
             preserve_interrupt_data;
 
             auto& stack_current_context = get_execution_data(&task_data).context;
-            ++glob.tasks_in_swap;
+#ifndef NDEBUG
+            glob.tasks_in_swap.fetch_add(1, std::memory_order_release);
+#endif
             ++get_execution_data(&task_data).context_switch_count;
 
 #ifdef FT_EXCEPTION_POLICY_CHECK
@@ -146,7 +148,9 @@ namespace fast_task {
             } catch (const boost::context::detail::forced_unwind&) {
                 flush_interrupt_data;
                 auto& post_switch_loc = get_loc();
-                --glob.tasks_in_swap;
+#ifndef NDEBUG
+                glob.tasks_in_swap.fetch_sub(1, std::memory_order_release);
+#endif
 
                 bool old_context_in_swap = post_switch_loc.context_in_swap;
                 post_switch_loc.context_in_swap = true;
@@ -166,14 +170,15 @@ namespace fast_task {
                 get_loc().context_in_swap = old_context_in_swap;
                 throw;
             }
-            auto& post_switch_loc = get_loc();
 #if defined(FT_EXCEPTION_POLICY_PRESERVE)
             if (get_execution_data(&task_data).switch_preserve)
                 std::rethrow_exception(std::move(get_execution_data(&task_data).switch_preserve));
 #endif
             preserve_interrupt_data;
-            --glob.tasks_in_swap;
-            post_switch_loc.context_in_swap = true;
+#ifndef NDEBUG
+            glob.tasks_in_swap.fetch_sub(1, std::memory_order_release);
+#endif
+            get_loc().context_in_swap = true;
             auto relock_state_0 = task_data.get_relock_0();
             auto relock_state_1 = task_data.get_relock_1();
             task_data.set_relock_0(nullptr);
@@ -183,16 +188,16 @@ namespace fast_task {
             relock_state_0.relock_end();
             relock_state_1.relock_end();
 
-            auto& post_relock_loc = get_loc();
             task_data.awake_check++;
             task_data.set_time_end(old_time_end_flag);
             task_data.set_awaked(old_awaked);
-            post_relock_loc.context_in_swap = false;
+            get_loc().context_in_swap = false;
             if (task_data.get_invalid_switch_caught()) {
                 task_data.set_invalid_switch_caught(false);
                 throw invalid_switch();
             }
-            if (get_execution_data(&task_data).timeout != std::chrono::high_resolution_clock::time_point::min().time_since_epoch().count())
+            constexpr auto timeout_disabled = std::chrono::high_resolution_clock::time_point::min().time_since_epoch().count();
+            if (get_execution_data(&task_data).timeout != timeout_disabled)
                 if (get_execution_data(&task_data).timeout <= std::chrono::high_resolution_clock::now().time_since_epoch().count())
                     throw task_cancellation();
             timer_reinit();
