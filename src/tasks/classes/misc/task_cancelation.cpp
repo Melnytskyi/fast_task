@@ -28,14 +28,16 @@ namespace fast_task {
     }
 
     bool checkCancellation() noexcept {
-        auto curr_task = &get_data(get_loc().curr_task);
-        if (!curr_task)
+        interrupt_unsafe_region reg;
+        auto& task = get_loc().curr_task;
+        if (!task)
             return false;
-        if (curr_task->get_cancellation_requested())
+        auto& curr_task = get_data(task);
+        if (curr_task.get_cancellation_requested())
             return true;
-        if (curr_task->exdata)
-            if (curr_task->exdata.load()->timeout != std::chrono::high_resolution_clock::time_point::min().time_since_epoch().count())
-                if (curr_task->exdata.load()->timeout <= std::chrono::high_resolution_clock::now().time_since_epoch().count())
+        if (curr_task.exdata)
+            if (curr_task.exdata.load()->timeout != std::chrono::high_resolution_clock::time_point::min().time_since_epoch().count())
+                if (curr_task.exdata.load()->timeout <= std::chrono::high_resolution_clock::now().time_since_epoch().count())
                     return true;
         return false;
     }

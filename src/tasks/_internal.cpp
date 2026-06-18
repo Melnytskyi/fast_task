@@ -106,8 +106,8 @@ namespace fast_task {
         task_alloc_cache.release();
         local_tasks.reset();
         ex_ptr = nullptr;
-        curr_task = task();
-        transfer_state.pending = task();
+        curr_task.reset();
+        transfer_state.pending.reset();
     }
 
     executor_global::executor_global() = default;
@@ -315,7 +315,7 @@ namespace fast_task {
         status.store(s, std::memory_order_release);
     }
 
-    bool task_object::is_started() const noexcept {
+    bool task_object::is_scheduled() const noexcept {
         return status.load(std::memory_order_acquire) != status_e::created;
     }
 
@@ -546,7 +546,7 @@ namespace fast_task {
             if (!obj)
                 return;
 
-            const bool started = obj->is_started();
+            const bool started = obj->is_scheduled();
             const bool ended = obj->is_ended();
 
             if (obj->vtable && obj->vtable->on_destruct)

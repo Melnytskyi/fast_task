@@ -25,7 +25,7 @@ namespace fast_task::scheduler {
 #endif
                 return;
             }
-            if (get_data(_task).is_started() && (!get_data(_task).is_suspended() && get_data(_task).get_is_on_scheduler())) {
+            if (get_data(_task).is_scheduled() && (!get_data(_task).is_suspended() && get_data(_task).get_is_on_scheduler())) {
 #ifdef FT_ENABLE_ABORT_IF_ALREADY_STARTED
                 assert(false && "The task is already started.");
                 std::abort();
@@ -33,7 +33,7 @@ namespace fast_task::scheduler {
                 return;
             }
         }
-        if (!get_data(lgr_task).is_started())
+        if (!get_data(lgr_task).is_scheduled())
             ++glob.executing_tasks;
 
         get_data(lgr_task).set_status(task_object::status_e::running);
@@ -89,7 +89,7 @@ namespace fast_task::scheduler {
             }
 
             // Reject if it is already scheduled but not yet executing
-            if (get_data(tsk).is_started() && !get_data(tsk).is_suspended()) {
+            if (get_data(tsk).is_scheduled() && !get_data(tsk).is_suspended()) {
 #ifdef FT_ENABLE_ABORT_IF_ALREADY_STARTED
                 assert(false && "The task is already started.");
                 std::abort();
@@ -97,9 +97,9 @@ namespace fast_task::scheduler {
                 return;
             }
 
-            if (!get_data(tsk).is_started())
+            if (!get_data(tsk).is_scheduled())
                 ++glob.executing_tasks;
-            get_data(tsk).set_status(task_object::status_e::running);
+            get_data(tsk).set_status(task_object::status_e::scheduled);
         }
 
         transfer_task(task(tsk));
@@ -238,7 +238,7 @@ namespace fast_task::scheduler {
     }
 
     size_t total_executors() {
-        return glob.executors;
+        return glob.executors.load(std::memory_order_relaxed);
     }
 
     void reduce_executor(size_t count) {

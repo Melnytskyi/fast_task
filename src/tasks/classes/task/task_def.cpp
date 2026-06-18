@@ -199,13 +199,13 @@ namespace fast_task {
         if (!scheduler::total_executors())
             scheduler::create_executor(1);
 
-        if (!obj->is_started() && obj->vtable && obj->vtable->on_start)
+        if (!obj->is_scheduled() && obj->vtable && obj->vtable->on_start)
             scheduler::start(*this);
         if (obj->vtable && obj->vtable->on_await)
             obj->vtable->on_await(obj->user_data());
         if (!obj->vtable || !obj->vtable->on_start)
             return;
-        if (!obj->is_started())
+        if (!obj->is_scheduled())
             return;
         obj->wait();
     }
@@ -227,7 +227,7 @@ namespace fast_task {
                 obj->unlock();
                 throw std::runtime_error("Task is running or completed and cannot be registered");
             }
-            if (cd.is_started() && (!cd.is_suspended() && cd.get_is_on_scheduler())) {
+            if (cd.is_scheduled() && (!cd.is_suspended() && cd.get_is_on_scheduler())) {
                 obj->unlock();
                 throw std::runtime_error("Task is already in the scheduler queue");
             }
@@ -244,9 +244,9 @@ namespace fast_task {
         node->next = obj->on_wait.load(std::memory_order_relaxed);
         obj->on_wait.store(node, std::memory_order_relaxed);
 
-        if (!cd.is_started()) {
+        if (!cd.is_scheduled()) {
             ++glob.executing_tasks;
-            cd.set_status(task_object::status_e::running);
+            cd.set_status(task_object::status_e::scheduled);
         }
         obj->unlock();
     }
@@ -259,7 +259,7 @@ namespace fast_task {
 
         fast_task::lock_guard guard(*obj);
         obj->set_cancellation_requested(true);
-        if (obj->is_suspended() && !obj->is_ended() && !obj->get_time_end()) {
+        if (obj->is_suspended() && !obj->is_scheduled() && !obj->get_time_end()) {
             obj->set_time_end(true);
             obj->set_awaked(true);
             fast_task::transfer_task(task(*this));
@@ -285,14 +285,14 @@ namespace fast_task {
             return;
         if (!scheduler::total_executors())
             scheduler::create_executor(1);
-        if (!obj->is_started())
+        if (!obj->is_scheduled())
             scheduler::start(*this);
     }
 
     bool task::enter_wait(const task& waiter, enter_state& st) const {
         if (!obj)
             return true;
-        if (!obj->is_started() && obj->vtable && obj->vtable->on_start)
+        if (!obj->is_scheduled() && obj->vtable && obj->vtable->on_start)
             scheduler::start(*this);
         return obj->enter_wait(waiter, st);
     }
@@ -300,7 +300,7 @@ namespace fast_task {
     bool task::enter_wait_until(const task& waiter, enter_state& st, std::chrono::high_resolution_clock::time_point time_point) const {
         if (!obj)
             return true;
-        if (!obj->is_started() && obj->vtable && obj->vtable->on_start)
+        if (!obj->is_scheduled() && obj->vtable && obj->vtable->on_start)
             scheduler::start(*this);
         return obj->enter_wait_until(waiter, st, time_point);
     }
@@ -317,13 +317,13 @@ namespace fast_task {
             scheduler::create_executor(1);
 
         auto& d = get_data(lgr_task);
-        if (!d.is_started() && make_start)
+        if (!d.is_scheduled() && make_start)
             scheduler::start(lgr_task);
         if (d.vtable && d.vtable->on_await)
             d.vtable->on_await(lgr_task.obj->user_data());
         if (!d.vtable || !d.vtable->on_start)
             return;
-        if (!(make_start || d.is_started() || d.get_is_restartable()))
+        if (!(make_start || d.is_scheduled() || d.get_is_restartable()))
             return;
         d.wait();
     }
@@ -338,7 +338,7 @@ namespace fast_task {
             obj->vtable->on_await(obj->user_data());
         if (!obj->vtable || !obj->vtable->on_start)
             return true;
-        if (!obj->is_started() && !obj->get_is_restartable())
+        if (!obj->is_scheduled() && !obj->get_is_restartable())
             return true;
         obj->wait_until(time_point);
         return obj->is_ended();

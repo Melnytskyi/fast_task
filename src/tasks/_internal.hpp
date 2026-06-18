@@ -267,7 +267,6 @@ namespace fast_task {
         std::shared_ptr<work_stealing_deque<task_object*>> local_tasks = std::make_shared<work_stealing_deque<task_object*>>();
         std::exception_ptr ex_ptr;
         task curr_task = nullptr;
-        boost::context::continuation* stack_current_context = nullptr;
         pcg32 rand;
         scheduler::executor_policy policy = scheduler::executor_policy::default_policy;
         uint16_t binded_id = (uint16_t)-1;
@@ -433,9 +432,6 @@ namespace fast_task {
     FT_DEBUG_ONLY(void FT_API_LOCAL unregister_object(task_limiter*));
     FT_DEBUG_ONLY(void FT_API_LOCAL unregister_object(task_query*));
     FT_DEBUG_ONLY(void FT_API_LOCAL unregister_object(deadline_timer*));
-
-
-    NOINLINE std::default_random_engine& FT_API_LOCAL get_thread_local_random_engine();
 }
 
 #endif

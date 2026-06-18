@@ -19,12 +19,6 @@ constexpr std::size_t hardware_destructive_interference_size = std::hardware_des
 constexpr std::size_t hardware_destructive_interference_size = 64;
 #endif
 
-#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
-    #define FT_DEQUE_STORE_LOAD_FENCE() std::atomic_signal_fence(std::memory_order_seq_cst)
-#else
-    #define FT_DEQUE_STORE_LOAD_FENCE() std::atomic_thread_fence(std::memory_order_seq_cst)
-#endif
-
 template <typename T>
 class work_stealing_deque {
 public:
@@ -81,12 +75,13 @@ public:
         b--;
         _bottom.store(b, std::memory_order_relaxed);
 
-        FT_DEQUE_STORE_LOAD_FENCE();
+        std::atomic_thread_fence(std::memory_order_seq_cst);
 
         t = _top.load(std::memory_order_relaxed);
 
         if (t < b) {
             item = std::move(_buffer[b & _mask]);
+            _buffer[b & _mask].~T();
             return true;
         }
 
@@ -95,9 +90,10 @@ public:
             return false;
         }
 
-        if (_top.compare_exchange_strong(t, t + 1, std::memory_order_acq_rel, std::memory_order_relaxed)) {
+        if (_top.compare_exchange_strong(t, t + 1, std::memory_order_seq_cst, std::memory_order_relaxed)) {
             _bottom.store(b + 1, std::memory_order_relaxed);
             item = std::move(_buffer[b & _mask]);
+            _buffer[b & _mask].~T();
             return true;
         } else {
             _bottom.store(b + 1, std::memory_order_relaxed);
@@ -115,7 +111,7 @@ public:
                 return false;
             }
 
-            if (_top.compare_exchange_strong(t, t + 1, std::memory_order_acq_rel, std::memory_order_relaxed)) {
+            if (_top.compare_exchange_strong(t, t + 1, std::memory_order_seq_cst, std::memory_order_relaxed)) {
                 item = std::move(_buffer[t & _mask]);
                 return true;
             }

@@ -66,7 +66,7 @@ namespace fast_task {
             fast_task::lock_guard guard(get_data(querying_task));
             if (get_data(querying_task).is_running() || get_data(querying_task).is_ended())
                 throw std::runtime_error("Task is running or completed and cannot be added");
-            if (get_data(querying_task).is_started() && (!get_data(querying_task).is_suspended() && get_data(querying_task).get_is_on_scheduler()))
+            if (get_data(querying_task).is_scheduled() && (!get_data(querying_task).is_suspended() && get_data(querying_task).get_is_on_scheduler()))
                 throw std::runtime_error("Task is already in the scheduler queue");
             if (!get_data(querying_task).vtable || !get_data(querying_task).vtable->on_start)
                 throw std::logic_error("task_query::add requires the on_start callback to be set");
@@ -87,7 +87,7 @@ namespace fast_task {
             fast_task::lock_guard guard(get_data(querying_task));
             if (get_data(querying_task).is_running() || get_data(querying_task).is_ended())
                 throw std::runtime_error("Task is running or completed and cannot be added");
-            if (get_data(querying_task).is_started() && (!get_data(querying_task).is_suspended() && get_data(querying_task).get_is_on_scheduler()))
+            if (get_data(querying_task).is_scheduled() && (!get_data(querying_task).is_suspended() && get_data(querying_task).get_is_on_scheduler()))
                 throw std::runtime_error("Task is already in the scheduler queue");
             if (!get_data(querying_task).vtable || !get_data(querying_task).vtable->on_start)
                 throw std::logic_error("task_query::add requires the on_start callback to be set");
@@ -124,7 +124,7 @@ namespace fast_task {
             fast_task::lock_guard guard(get_data(task));
             if (get_data(task).is_running() || get_data(task).is_ended())
                 return false;
-            if (get_data(task).is_started() && (!get_data(task).is_suspended() && get_data(task).get_is_on_scheduler()))
+            if (get_data(task).is_scheduled() && (!get_data(task).is_suspended() && get_data(task).get_is_on_scheduler()))
                 return false;
         }
         fast_task::lock_guard lock(handle->no_race);

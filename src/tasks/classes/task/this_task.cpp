@@ -59,7 +59,7 @@ namespace fast_task::this_task {
             if (!(
                     get_data(get_loc().curr_task).get_is_on_scheduler() == true &&
                     get_data(target).get_is_on_scheduler() == true &&
-                    (get_data(target).is_started() == false || (get_data(target).is_suspended() == true && get_data(target).get_is_restartable() == true))
+                    (get_data(target).is_scheduled() == false || (get_data(target).is_suspended() == true && get_data(target).get_is_restartable() == true))
                 ))
                 return false;
 
@@ -72,9 +72,9 @@ namespace fast_task::this_task {
                 return false;
             ++get_loc().transfer_state.transfers;
 #endif
-            if (!get_data(target).is_started())
+            if (!get_data(target).is_scheduled())
                 ++glob.executing_tasks;
-            get_data(target).set_status(task_object::status_e::running);
+            get_data(target).set_status(task_object::status_e::scheduled);
 
             get_loc().transfer_state.pending = target;
             return true;

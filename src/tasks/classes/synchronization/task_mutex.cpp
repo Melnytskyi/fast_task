@@ -236,7 +236,7 @@ namespace fast_task {
             fast_task::lock_guard guard(get_data(lock_task));
             if (get_data(lock_task).is_running() || get_data(lock_task).is_ended())
                 throw std::runtime_error("Task is running or completed and cannot be registered");
-            if (get_data(lock_task).is_started() && (!get_data(lock_task).is_suspended() && get_data(lock_task).get_is_on_scheduler()))
+            if (get_data(lock_task).is_scheduled() && (!get_data(lock_task).is_suspended() && get_data(lock_task).get_is_on_scheduler()))
                 throw std::runtime_error("Task is already in the scheduler queue");
             if (!get_data(lock_task).vtable || !get_data(lock_task).vtable->on_start)
                 throw std::logic_error("task_mutex::lifecycle_lock requires the on_start callback to be set");

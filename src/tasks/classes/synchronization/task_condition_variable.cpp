@@ -296,7 +296,7 @@ namespace fast_task {
             fast_task::lock_guard guard(get_data(task));
             if (get_data(task).is_running() || get_data(task).is_ended())
                 throw std::runtime_error("Task is running or completed and cannot be registered");
-            if (get_data(task).is_started() && (!get_data(task).is_suspended() && get_data(task).get_is_on_scheduler()))
+            if (get_data(task).is_scheduled() && (!get_data(task).is_suspended() && get_data(task).get_is_on_scheduler()))
                 throw std::runtime_error("Task is already in the scheduler queue");
             if (!get_data(task).vtable || !get_data(task).vtable->on_start)
                 throw std::logic_error("task_condition_variable::callback requires the on_start callback to be set");
@@ -312,10 +312,10 @@ namespace fast_task {
             fast_task::lock_guard guard(values.no_race);
             push_back(values, node);
         }
-        if (!get_data(task).is_started())
+        if (!get_data(task).is_scheduled())
             ++glob.executing_tasks;
 
-        get_data(task).set_status(task_object::status_e::running);
+        get_data(task).set_status(task_object::status_e::scheduled);
     }
 
     void task_condition_variable::callback(std::unique_lock<mutex_unify>& mut, const task& task) {
@@ -323,7 +323,7 @@ namespace fast_task {
             fast_task::lock_guard guard(get_data(task));
             if (get_data(task).is_running() || get_data(task).is_ended())
                 throw std::runtime_error("Task is running or completed and cannot be registered");
-            if (get_data(task).is_started() && (!get_data(task).is_suspended() && get_data(task).get_is_on_scheduler()))
+            if (get_data(task).is_scheduled() && (!get_data(task).is_suspended() && get_data(task).get_is_on_scheduler()))
                 throw std::runtime_error("Task is already in the scheduler queue");
             if (!get_data(task).vtable || !get_data(task).vtable->on_start)
                 throw std::logic_error("task_condition_variable::callback requires the on_start callback to be set");
@@ -339,10 +339,10 @@ namespace fast_task {
             fast_task::lock_guard guard(values.no_race);
             push_back(values, node);
         }
-        if (!get_data(task).is_started())
+        if (!get_data(task).is_scheduled())
             ++glob.executing_tasks;
 
-        get_data(task).set_status(task_object::status_e::running);
+        get_data(task).set_status(task_object::status_e::scheduled);
     }
 
     bool task_condition_variable::enter_wait(mutex_unify& mut, const task& task, enter_state& st) {

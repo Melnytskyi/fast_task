@@ -12,6 +12,7 @@ namespace fast_task {
         enum class status_e : uint8_t {
             released, //internal, used for allocation
             created,
+            scheduled,
             running,
             suspending,
             suspended,
@@ -81,7 +82,7 @@ namespace fast_task {
 
         void set_status(status_e) noexcept;
 
-        bool is_started() const noexcept;   // status != created
+        bool is_scheduled() const noexcept; // status != created
         bool is_running() const noexcept;   // status == running
         bool is_suspended() const noexcept; // status == suspended
         bool is_ended() const noexcept;     // status == ended

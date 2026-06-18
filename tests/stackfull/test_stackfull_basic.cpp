@@ -65,3 +65,17 @@ TEST_F(StackfullBasicTest, NestedTaskAwaitedFromParent) {
     });
     EXPECT_EQ(order.load(), 2);
 }
+
+TEST_F(StackfullBasicTest, Yield) {
+    std::atomic<int> order{0};
+    run_task([&] {
+        auto child = fast_task::task::create([&] {
+            fast_task::this_task::yield();
+            ++order;
+        });
+        fast_task::scheduler::start(child);
+        child.await_task();
+        ++order;
+    });
+    EXPECT_EQ(order.load(), 2);
+}
