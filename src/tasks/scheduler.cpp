@@ -531,17 +531,19 @@ namespace fast_task {
                 return;
         }
 
-        if (get_data(task).bind_to_worker_id == (uint16_t)-1) {
-            if (get_data(task).get_auto_bind()) {
+        task_object* raw_task = task.release(); // Extract once
+        if (raw_task->bind_to_worker_id == (uint16_t)-1) {
+            if (raw_task->get_auto_bind()) {
                 fast_task::shared_lock global_guard(glob.binded_workers_safety);
                 for (auto& [id, context] : glob.binded_workers) {
                     if (context.allow_implicit_start) {
                         if (context.in_close)
                             continue;
                         global_guard.unlock();
-                        get_data(task).bind_to_worker_id = id;
+                        raw_task->bind_to_worker_id = id;
+                        raw_task->set_auto_bind(false);
                         fast_task::shared_lock guard(context.no_race);
-                        context.tasks.enqueue(task.release());
+                        context.tasks.enqueue(raw_task);
                         context.new_task_notifier.notify_one();
                         return;
                     }
@@ -549,7 +551,7 @@ namespace fast_task {
             }
             auto& loc = get_loc();
             if (loc.binded_id == (uint16_t)-1 && loc.is_task_thread) {
-                if (loc.local_tasks->emplace(task.release())) {
+                if (loc.local_tasks->emplace(raw_task)) {
                     if (loc.local_tasks->size() > 1) //if there only one task the notification not passed to avoid redundant concurency
                         glob.tasks_notifier.unsafe_notify_one();
                     return;
@@ -557,33 +559,33 @@ namespace fast_task {
             }
 
             if (can_be_scheduled_task_to_hot())
-                glob.tasks.enqueue(task.release());
+                glob.tasks.enqueue(raw_task);
             else
-                glob.cold_tasks.enqueue(task.release());
+                glob.cold_tasks.enqueue(raw_task);
             glob.tasks_notifier.unsafe_notify_one();
         } else {
             fast_task::shared_lock initializer_guard(glob.binded_workers_safety);
-            if (!glob.binded_workers.contains(get_data(task).bind_to_worker_id)) {
+            if (!glob.binded_workers.contains(raw_task->bind_to_worker_id)) {
                 initializer_guard.unlock();
                 assert("Binded worker context not found");
                 std::abort();
             }
-            binded_context& extern_context = glob.binded_workers[get_data(task).bind_to_worker_id];
+            binded_context& extern_context = glob.binded_workers[raw_task->bind_to_worker_id];
             initializer_guard.unlock();
             if (extern_context.in_close) {
                 assert("Binded worker context is closed");
                 std::abort();
             }
             auto& loc = get_loc();
-            if (get_data(task).bind_to_worker_id == loc.binded_id) {
-                if (loc.local_tasks->emplace(task.release())) {
+            if (raw_task->bind_to_worker_id == loc.binded_id) {
+                if (loc.local_tasks->emplace(raw_task)) {
                     if (loc.local_tasks->size() > 1) //if there only one task the notification not passed to avoid redundant concurency
                         extern_context.new_task_notifier.unsafe_notify_one();
                     return;
                 }
             }
             fast_task::shared_lock guard(extern_context.no_race);
-            extern_context.tasks.enqueue(task.release());
+            extern_context.tasks.enqueue(raw_task);
             extern_context.new_task_notifier.notify_one();
         }
     }
