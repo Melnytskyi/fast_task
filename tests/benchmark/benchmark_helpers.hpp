@@ -18,6 +18,39 @@
 #include <vector>
 using Clock = std::chrono::high_resolution_clock;
 
+#if defined(__linux__) || defined(__unix__)
+    #define BENCH_KEEP_ALIVE __attribute__((used))
+#elif defined(_MSC_VER)
+    #define BENCH_KEEP_ALIVE
+#else
+    #define BENCH_KEEP_ALIVE
+#endif
+
+namespace benchmark_registry {
+    struct benchmark_entry {
+        const char* name;
+        void (*run_fn)();
+        bool tracks_memory;
+
+        benchmark_entry(const char* name, void (*run_fn)(), bool tracks_memory)
+            : name(name), run_fn(run_fn), tracks_memory(tracks_memory) {}
+
+        benchmark_entry() = default;
+        benchmark_entry(const benchmark_entry&) = default;
+        benchmark_entry& operator=(const benchmark_entry&) = default;
+    };
+
+    inline std::vector<benchmark_entry>& get_registry() {
+        static std::vector<benchmark_entry> registry;
+        return registry;
+    }
+
+    inline int add(const char* name, void (*run_fn)(), bool tracks_memory) {
+        get_registry().push_back({name, run_fn, tracks_memory});
+        return 0;
+    }
+}
+
 struct benchmark_timer {
     Clock::time_point start;
 
@@ -171,9 +204,40 @@ inline size_t avg_bench_mem(size_t (&usage)[size]) {
                 }                                                                \
                 print_bench_row(sp.label, sp.iterations, avg_bench_time(times)); \
             }                                                                    \
+            fast_task::scheduler::shut_down();                                   \
             std::cout << std::endl;                                              \
         }                                                                        \
     };                                                                           \
+    namespace {                                                                  \
+        BENCH_KEEP_ALIVE static const int _reg_##name =                          \
+            (benchmark_registry::add(#name, [] { name(); }, false), 0);          \
+    }                                                                            \
+    void name::run(size_t scale)
+
+#define BENCHMARK_CPU(name, scales, ...)                                  \
+    struct name {                                                         \
+        void run(size_t scale);                                           \
+        name() {                                                          \
+            size_t n = std::max(2u, std::thread::hardware_concurrency()); \
+            fast_task::scheduler::create_executor(n);                     \
+            while (fast_task::scheduler::total_executors() < n)           \
+                std::this_thread::yield();                                \
+            print_bench_header(#name);                                    \
+            warm_up();                                                    \
+            for (auto const& sp : (scales)) {                             \
+                benchmark_timer timer;                                    \
+                run(sp.iterations);                                       \
+                auto time = timer.elapsed_ms(__VA_ARGS__);                \
+                print_bench_row(sp.label, sp.iterations, time);           \
+            }                                                             \
+            fast_task::scheduler::shut_down();                            \
+            std::cout << std::endl;                                       \
+        }                                                                 \
+    };                                                                    \
+    namespace {                                                           \
+        BENCH_KEEP_ALIVE static const int _reg_##name =                   \
+            (benchmark_registry::add(#name, [] { name(); }, false), 0);   \
+    }                                                                     \
     void name::run(size_t scale)
 
 #define BENCHMARK_MEM(name, scales, ...)                                                                \
@@ -205,6 +269,10 @@ inline size_t avg_bench_mem(size_t (&usage)[size]) {
             std::cout << std::endl;                                                                     \
         }                                                                                               \
     };                                                                                                  \
+    namespace {                                                                                         \
+        BENCH_KEEP_ALIVE static const int _reg_##name =                                                 \
+            (benchmark_registry::add(#name, [] { name(); }, true), 0);                                  \
+    }                                                                                                   \
     void name::run(size_t scale)
 
 inline const scale_point scales_small[] = {

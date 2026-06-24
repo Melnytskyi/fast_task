@@ -124,12 +124,3 @@ BENCHMARK_MEM(bench_per_task_overhead_stackful, scales_xxl_large) {
         t.await_task();
 }
 
-int main() {
-    bench_idle_task_footprint_multithreaded();
-    bench_task_footprint_multithreaded();
-    bench_idle_task_footprint();
-    bench_per_task_overhead();
-    bench_idle_task_footprint_stackful();
-    bench_per_task_overhead_stackful();
-    return 0;
-}

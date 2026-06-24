@@ -10,187 +10,114 @@
 #include <thread>
 #include <vector>
 
-static void bench_spawn_complete() {
-    const scale_point scales[] = {
-        {"1K", 1'000},
-        {"10K", 10'000},
-        {"50K", 50'000},
-        {"100K", 100'000},
-        {"1M", 1'000'000},
-    };
+static const scale_point bench_spawn_scales[] = {
+    {"1K", 1'000},
+    {"10K", 10'000},
+    {"50K", 50'000},
+    {"100K", 100'000},
+    {"1M", 1'000'000},
+};
 
-    print_bench_header("Scheduler — Spawn + Complete (empty work)");
-    warm_up();
+BENCHMARK(bench_spawn_complete, bench_spawn_scales) {
+    std::vector<fast_task::task> tasks;
+    tasks.reserve(scale);
 
-    for (auto const& sp : scales) {
-        benchmark_timer timer;
+    for (uint64_t i = 0; i < scale; ++i)
+        tasks.push_back(fast_task::task::run([] { /* empty */ }));
 
-        std::vector<fast_task::task> tasks;
-        tasks.reserve(sp.iterations);
-
-        for (uint64_t i = 0; i < sp.iterations; ++i)
-            tasks.push_back(fast_task::task::run([]{ /* empty */ }));
-
-        for (auto& t : tasks)
-            t.await_task();
-
-        double ms = timer.elapsed_ms();
-        print_bench_row(sp.label, sp.iterations, ms);
-    }
+    for (auto& t : tasks)
+        t.await_task();
 }
 
-static void bench_compute_bound() {
-    const scale_point scales[] = {
-        {"1K", 1'000},
-        {"10K", 10'000},
-        {"50K", 50'000},
-        {"100K", 100'000},
-        {"1M", 1'000'000},
-    };
+static const scale_point bench_compute_scales[] = {
+    {"1K", 1'000},
+    {"10K", 10'000},
+    {"50K", 50'000},
+    {"100K", 100'000},
+    {"1M", 1'000'000},
+};
 
-    print_bench_header("Scheduler — Compute-bound tasks (10k iters each)");
-    warm_up();
+BENCHMARK(bench_compute_bound, bench_compute_scales) {
+    std::vector<fast_task::task> tasks;
+    tasks.reserve(scale);
 
-    for (auto const& sp : scales) {
-        benchmark_timer timer;
-
-        std::vector<fast_task::task> tasks;
-        tasks.reserve(sp.iterations);
-
-        for (uint64_t i = 0; i < sp.iterations; ++i) {
-            tasks.push_back(fast_task::task::run([] {
-                volatile uint64_t sum = 0;
-                for (int j = 0; j < 10'000; ++j)
-                    sum += j;
-                (void)sum;
-            }));
-        }
-
-        for (auto& t : tasks)
-            t.await_task();
-
-        double ms = timer.elapsed_ms();
-        print_bench_row(sp.label, sp.iterations, ms);
+    for (uint64_t i = 0; i < scale; ++i) {
+        tasks.push_back(fast_task::task::run([] {
+            volatile uint64_t sum = 0;
+            for (int j = 0; j < 10'000; ++j)
+                sum += j;
+            (void)sum;
+        }));
     }
+
+    for (auto& t : tasks)
+        t.await_task();
 }
 
-static void bench_yielding_tasks() {
-    const scale_point scales[] = {
-        {"1K", 1'000},
-        {"10K", 10'000},
-        {"50K", 50'000},
-        {"100K", 100'000},
-        {"1M", 1'000'000},
-    };
+static const scale_point bench_yield_scales[] = {
+    {"1K", 1'000},
+    {"10K", 10'000},
+    {"50K", 50'000},
+    {"100K", 100'000},
+    {"1M", 1'000'000},
+};
 
-    print_bench_header("Scheduler — Yielding tasks (10 yields each)");
-    warm_up();
+BENCHMARK(bench_yielding_tasks, bench_yield_scales) {
+    std::vector<fast_task::task> tasks;
+    tasks.reserve(scale);
 
-    for (auto const& sp : scales) {
-        benchmark_timer timer;
-
-        std::vector<fast_task::task> tasks;
-        tasks.reserve(sp.iterations);
-
-        for (uint64_t i = 0; i < sp.iterations; ++i) {
-            tasks.push_back(fast_task::task::run([] {
-                for (int j = 0; j < 10; ++j)
-                    fast_task::this_task::yield();
-            }));
-        }
-
-        for (auto& t : tasks)
-            t.await_task();
-
-        double ms = timer.elapsed_ms();
-        print_bench_row(sp.label, sp.iterations, ms);
+    for (uint64_t i = 0; i < scale; ++i) {
+        tasks.push_back(fast_task::task::run([] {
+            for (int j = 0; j < 10; ++j)
+                fast_task::this_task::yield();
+        }));
     }
+
+    for (auto& t : tasks)
+        t.await_task();
 }
 
-static void bench_staggered_sleep() {
-    const scale_point scales[] = {
-        {"1K", 1'000},
-        {"10K", 10'000},
-        {"50K", 50'000},
-        {"100K", 100'000},
-        {"1M", 1'000'000},
-    };
+static const scale_point bench_staggered_scales[] = {
+    {"1K", 1'000},
+    {"10K", 10'000},
+    {"50K", 50'000},
+    {"100K", 100'000},
+    {"1M", 1'000'000},
+};
 
-    print_bench_header("Timing Wheel — Staggered sleep_until", true);
-    warm_up();
+BENCHMARK_MEM(bench_staggered_sleep, bench_staggered_scales) {
+    std::vector<fast_task::task> tasks;
+    tasks.reserve(scale);
 
-    size_t baseline_kb = current_rss_kb();
-    for (auto const& sp : scales) {
-        benchmark_timer timer;
-
-        std::vector<fast_task::task> tasks;
-        tasks.reserve(sp.iterations);
-
-        auto base = std::chrono::high_resolution_clock::now();
-        for (uint64_t i = 0; i < sp.iterations; ++i) {
-            auto tp = base + std::chrono::microseconds(1 * i);
-            tasks.push_back(fast_task::task::run([tp] {
-                fast_task::this_task::sleep_until(tp);
-            }));
-        }
-
-        for (auto& t : tasks)
-            t.await_task();
-
-
-        size_t rss_kb = current_rss_kb();
-        size_t delta_kb = (baseline_kb > 0) ? (rss_kb - baseline_kb) : 0;
-
-        double ms = timer.elapsed_ms();
-        print_bench_row(sp.label, sp.iterations, ms, delta_kb * 1024);
+    auto base = std::chrono::high_resolution_clock::now();
+    for (uint64_t i = 0; i < scale; ++i) {
+        auto tp = base + std::chrono::microseconds(1 * i);
+        tasks.push_back(fast_task::task::run([tp] {
+            fast_task::this_task::sleep_until(tp);
+        }));
     }
+
+    for (auto& t : tasks)
+        t.await_task();
 }
 
-static void bench_schedule_until() {
-    const scale_point scales[] = {
-        {"1K", 1'000},
-        {"10K", 10'000},
-        {"50K", 50'000},
-        {"100K", 100'000},
-        {"1M", 1'000'000},
-    };
+static const scale_point bench_schedule_scales[] = {
+    {"1K", 1'000},
+    {"10K", 10'000},
+    {"50K", 50'000},
+    {"100K", 100'000},
+    {"1M", 1'000'000},
+};
 
-    print_bench_header("Timing Wheel — schedule_until (staggered deadlines)");
-    warm_up();
-
-    for (auto const& sp : scales) {
-        benchmark_timer timer;
-
-        auto base = std::chrono::high_resolution_clock::now();
-        for (uint64_t i = 0; i < sp.iterations; ++i) {
-            auto tp = base + std::chrono::microseconds(200 * i);
-            fast_task::scheduler::schedule_until(
-                fast_task::task::create([]{ /* empty */ }),
-                tp
-            );
-        }
-
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
-
-        double ms = timer.elapsed_ms();
-        print_bench_row(sp.label, sp.iterations, ms);
+BENCHMARK(bench_schedule_until, bench_schedule_scales) {
+    auto base = std::chrono::high_resolution_clock::now();
+    for (uint64_t i = 0; i < scale; ++i) {
+        auto tp = base + std::chrono::microseconds(200 * i);
+        fast_task::scheduler::schedule_until(
+            fast_task::task::create([] { /* empty */ }),
+            tp
+        );
     }
-}
 
-int main() {
-    size_t n = std::max(2u, std::thread::hardware_concurrency());
-    fast_task::scheduler::create_executor(n);
-    while (fast_task::scheduler::total_executors() < n)
-        std::this_thread::yield();
-
-    bench_spawn_complete();
-    bench_compute_bound();
-
-    bench_staggered_sleep();
-    bench_schedule_until();
-
-    bench_yielding_tasks();
-
-    fast_task::scheduler::shut_down();
-    return 0;
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
 }
