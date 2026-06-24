@@ -636,8 +636,10 @@ namespace fast_task {
 
             if (count > 0) {
                 for (size_t i = 1; i < count; ++i)
-                    if (!loc.local_tasks->emplace(temp_tasks[i]))
+                    if (!loc.local_tasks->emplace(temp_tasks[i])) {
                         glob.tasks.enqueue(temp_tasks[i]);
+                        glob.tasks_notifier.unsafe_notify_one();
+                    }
                 loc.curr_task = task::adopt(temp_tasks[0]);
                 return false;
             }
@@ -648,8 +650,10 @@ namespace fast_task {
 
             if (count > 0) {
                 for (size_t i = 1; i < count; ++i)
-                    if (!loc.local_tasks->emplace(temp_tasks[i]))
+                    if (!loc.local_tasks->emplace(temp_tasks[i])) {
                         glob.cold_tasks.enqueue(temp_tasks[i]);
+                        glob.tasks_notifier.unsafe_notify_one();
+                    }
                 loc.curr_task = task::adopt(temp_tasks[0]);
                 return false;
             }
@@ -775,8 +779,10 @@ namespace fast_task {
 
             if (count > 0) {
                 for (size_t i = 1; i < count; ++i)
-                    if (!loc.local_tasks->emplace(temp_tasks[i]))
+                    if (!loc.local_tasks->emplace(temp_tasks[i])) {
                         glob.tasks.enqueue(temp_tasks[i]);
+                        glob.tasks_notifier.unsafe_notify_one();
+                    }
                 loc.curr_task = task::adopt(temp_tasks[0]);
                 return true;
             }

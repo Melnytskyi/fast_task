@@ -13,12 +13,35 @@
 #include <vector>
 
 BENCHMARK_MEM(bench_idle_task_footprint_multithreaded, scales_xxl_large) {
+    size_t factored_scale = scale / 4;
     fast_task::task tasks[4];
     for (auto& i : tasks)
-        i = fast_task::task::run([&] {
+        i = fast_task::task::create([factored_scale] {
             std::vector<fast_task::task> tasks;
-            tasks.reserve(scale);
-            for (uint64_t i = 0; i < scale; ++i) {
+            tasks.reserve(factored_scale);
+            for (uint64_t i = 0; i < factored_scale; ++i) {
+                tasks.push_back(
+                    fast_task::task::run(
+                        [] {},
+                        nullptr,
+                        std::chrono::high_resolution_clock::time_point::min(),
+                        fast_task::task_priority::high,
+                        true
+                    )
+                );
+            }
+        });
+    fast_task::task::await_multiple(tasks);
+}
+
+BENCHMARK_MEM(bench_task_footprint_multithreaded, scales_xxl_large) {
+    size_t factored_scale = scale / 4;
+    fast_task::task tasks[4];
+    for (auto& i : tasks)
+        i = fast_task::task::create([factored_scale] {
+            std::vector<fast_task::task> tasks;
+            tasks.reserve(factored_scale);
+            for (uint64_t i = 0; i < factored_scale; ++i) {
                 tasks.push_back(
                     fast_task::task::run(
                         [] {},
@@ -43,7 +66,7 @@ BENCHMARK_MEM(bench_idle_task_footprint, scales_xxl_large) {
 
     for (uint64_t i = 0; i < scale; ++i) {
         tasks.push_back(
-            fast_task::task::run(
+            fast_task::task::create(
                 [] {},
                 nullptr,
                 std::chrono::high_resolution_clock::time_point::min(),
@@ -52,14 +75,9 @@ BENCHMARK_MEM(bench_idle_task_footprint, scales_xxl_large) {
             )
         );
     }
-
-    //for (auto& t : tasks)
-    //    t.notify_cancel();
-    for (auto& t : tasks)
-        t.await_task();
 }
 
-BENCHMARK_MEM(bench_per_task_overhead, scales_xxl_large, std::chrono::milliseconds(500)) {
+BENCHMARK_MEM(bench_per_task_overhead, scales_xxl_large) {
     std::vector<fast_task::task> tasks;
     tasks.reserve(scale);
     for (uint64_t i = 0; i < scale; ++i) {
@@ -74,35 +92,23 @@ BENCHMARK_MEM(bench_per_task_overhead, scales_xxl_large, std::chrono::millisecon
             )
         );
     }
-
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
-
-    //for (auto& t : tasks)
-    //    t.notify_cancel();
     for (auto& t : tasks)
         t.await_task();
 }
 
-BENCHMARK_MEM(bench_idle_task_footprint_stackful, scales_xxl_large, std::chrono::milliseconds(500)) {
+BENCHMARK_MEM(bench_idle_task_footprint_stackful, scales_xxl_large) {
     std::vector<fast_task::task> tasks;
     tasks.reserve(scale);
 
     for (uint64_t i = 0; i < scale; ++i) {
-        tasks.push_back(fast_task::task::run([] {
+        tasks.push_back(fast_task::task::create([] {
             while (!fast_task::this_task::is_cancellation_requested())
                 fast_task::this_task::yield();
         }));
     }
-
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
-
-    for (auto& t : tasks)
-        t.notify_cancel();
-    for (auto& t : tasks)
-        t.await_task();
 }
 
-BENCHMARK_MEM(bench_per_task_overhead_stackful, scales_xxl_large, std::chrono::milliseconds(500)) {
+BENCHMARK_MEM(bench_per_task_overhead_stackful, scales_xxl_large) {
     std::vector<fast_task::task> tasks;
     tasks.reserve(scale);
     for (uint64_t i = 0; i < scale; ++i) {
@@ -111,8 +117,6 @@ BENCHMARK_MEM(bench_per_task_overhead_stackful, scales_xxl_large, std::chrono::m
                 fast_task::this_task::yield();
         }));
     }
-
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
     for (auto& t : tasks)
         t.notify_cancel();
@@ -121,7 +125,8 @@ BENCHMARK_MEM(bench_per_task_overhead_stackful, scales_xxl_large, std::chrono::m
 }
 
 int main() {
-    //bench_idle_task_footprint_multithreaded();
+    bench_idle_task_footprint_multithreaded();
+    bench_task_footprint_multithreaded();
     bench_idle_task_footprint();
     bench_per_task_overhead();
     bench_idle_task_footprint_stackful();

@@ -1,3 +1,9 @@
+// Copyright Danyil Melnytskyi 2026-Present
+//
+// Distributed under the Boost Software License, Version 1.0.
+// (See accompanying file LICENSE or copy at
+// http://www.boost.org/LICENSE_1_0.txt)
+
 #include <tasks/_internal.hpp>
 #include <tasks/classes/synchronization/internal_sched_cv.hpp>
 
@@ -73,6 +79,8 @@ namespace fast_task {
 
     void internal_sched_cv::notify_one() {
         resume_task* popped_node = pop_one();
+        if (!popped_node)
+            return;
         if (popped_node->task == nullptr) {
             if (popped_node->native_cv != nullptr) {
                 *popped_node->native_check = true;
@@ -87,7 +95,7 @@ namespace fast_task {
 
     void internal_sched_cv::notify_all() {
         resume_task* popped_node = pop_all();
-        while (popped_node){
+        while (popped_node) {
             if (popped_node->task == nullptr) {
                 if (popped_node->native_cv != nullptr) {
                     *popped_node->native_check = true;

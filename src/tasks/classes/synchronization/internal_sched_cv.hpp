@@ -1,3 +1,9 @@
+// Copyright Danyil Melnytskyi 2026-Present
+//
+// Distributed under the Boost Software License, Version 1.0.
+// (See accompanying file LICENSE or copy at
+// http://www.boost.org/LICENSE_1_0.txt)
+
 #ifndef SRC_TASKS_CLASSES_SYNCHRONIZATION_INTERNAL_SCHED_NOTIFY
 #define SRC_TASKS_CLASSES_SYNCHRONIZATION_INTERNAL_SCHED_NOTIFY
 #include "threading.hpp"
