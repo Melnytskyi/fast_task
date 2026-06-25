@@ -312,7 +312,7 @@ namespace fast_task {
             fast_task::lock_guard guard(values.no_race);
             push_back(values, node);
         }
-        if (!get_data(task).is_scheduled())
+        if (get_data(task).is_created())
             ++glob.executing_tasks;
 
         get_data(task).set_status(task_object::status_e::scheduled);
@@ -339,7 +339,7 @@ namespace fast_task {
             fast_task::lock_guard guard(values.no_race);
             push_back(values, node);
         }
-        if (!get_data(task).is_scheduled())
+        if (get_data(task).is_created())
             ++glob.executing_tasks;
 
         get_data(task).set_status(task_object::status_e::scheduled);

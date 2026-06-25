@@ -333,6 +333,10 @@ namespace fast_task {
         return status.load(std::memory_order_acquire) != status_e::created;
     }
 
+    bool task_object::is_created() const noexcept {
+        return status.load(std::memory_order_acquire) == status_e::created;
+    }
+
     bool task_object::is_running() const noexcept {
         return status.load(std::memory_order_acquire) == status_e::running;
     }

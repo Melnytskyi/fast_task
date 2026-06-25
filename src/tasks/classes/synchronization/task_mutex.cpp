@@ -74,7 +74,7 @@ namespace fast_task {
             if (values.current_task == ((size_t)_thread_id() | native_thread_flag))
                 throw std::logic_error("Tried lock mutex twice");
             while (values.current_task) {
-                bool has_res = false;
+                has_res = false;
                 push_back(values, &node);
                 while (!has_res) //-V654
                     cd.wait(ul);

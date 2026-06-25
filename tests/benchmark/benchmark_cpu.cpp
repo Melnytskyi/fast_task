@@ -13,14 +13,14 @@
 #include <algorithm>
 
 static constexpr int fib_n = 30;
-static const scale_point bench_fib_scales[] = {
+static const scale_point cpu_fib_scales[] = {
     {"1K", 1'000},
     {"10K", 10'000},
     {"50K", 50'000},
     {"100K", 100'000},
 };
 
-BENCHMARK_CPU(bench_fibonacci_recursive, bench_fib_scales) {
+BENCHMARK_CPU(cpu_fibonacci_recursive, cpu_fib_scales) {
     auto fib_worker = [](int n) -> uint64_t {
         auto fib = [](int n, auto& self) -> uint64_t {
             if (n <= 1)
@@ -40,7 +40,7 @@ BENCHMARK_CPU(bench_fibonacci_recursive, bench_fib_scales) {
 }
 
 static constexpr int mat_dim = 128;
-static const scale_point bench_mat_scales[] = {
+static const scale_point cpu_mat_scales[] = {
     {"100", 100},
     {"500", 500},
     {"1K", 1'000},
@@ -48,7 +48,7 @@ static const scale_point bench_mat_scales[] = {
     {"10K", 10'000},
 };
 
-BENCHMARK_CPU(bench_matrix_multiply, bench_mat_scales) {
+BENCHMARK_CPU(cpu_matrix_multiply, cpu_mat_scales) {
     static const std::vector<double> mat_a(mat_dim * mat_dim, 1.0);
     static const std::vector<double> mat_b(mat_dim * mat_dim, 2.0);
 
@@ -75,7 +75,7 @@ BENCHMARK_CPU(bench_matrix_multiply, bench_mat_scales) {
 }
 
 static constexpr int prime_limit = 50'000;
-static const scale_point bench_prime_scales[] = {
+static const scale_point cpu_prime_scales[] = {
     {"1K", 1'000},
     {"5K", 5'000},
     {"10K", 10'000},
@@ -83,7 +83,7 @@ static const scale_point bench_prime_scales[] = {
     {"100K", 100'000},
 };
 
-BENCHMARK_CPU(bench_prime_count, bench_prime_scales) {
+BENCHMARK_CPU(cpu_prime_count, cpu_prime_scales) {
     std::vector<fast_task::task> tasks;
     tasks.reserve(scale);
     for (uint64_t i = 0; i < scale; ++i) {
@@ -111,7 +111,7 @@ BENCHMARK_CPU(bench_prime_count, bench_prime_scales) {
 }
 
 static constexpr int nq_board_size = 10;
-static const scale_point bench_nq_scales[] = {
+static const scale_point cpu_nq_scales[] = {
     {"100", 100},
     {"500", 500},
     {"1K", 1'000},
@@ -119,7 +119,7 @@ static const scale_point bench_nq_scales[] = {
     {"10K", 10'000},
 };
 
-BENCHMARK_CPU(bench_nqueens, bench_nq_scales) {
+BENCHMARK_CPU(cpu_nqueens, cpu_nq_scales) {
     std::vector<fast_task::task> tasks;
     tasks.reserve(scale);
     for (uint64_t i = 0; i < scale; ++i) {
@@ -160,7 +160,7 @@ BENCHMARK_CPU(bench_nqueens, bench_nq_scales) {
 }
 
 static constexpr int64_t pi_iters = 5'000'000;
-static const scale_point bench_pi_scales[] = {
+static const scale_point cpu_pi_scales[] = {
     {"100", 100},
     {"500", 500},
     {"1K", 1'000},
@@ -168,7 +168,7 @@ static const scale_point bench_pi_scales[] = {
     {"10K", 10'000},
 };
 
-BENCHMARK_CPU(bench_pi_approximation, bench_pi_scales) {
+BENCHMARK_CPU(cpu_pi_approximation, cpu_pi_scales) {
     std::vector<fast_task::task> tasks;
     tasks.reserve(scale);
     for (uint64_t i = 0; i < scale; ++i) {
@@ -188,7 +188,7 @@ BENCHMARK_CPU(bench_pi_approximation, bench_pi_scales) {
 }
 
 static constexpr int sort_array_size = 10'000;
-static const scale_point bench_sort_scales[] = {
+static const scale_point cpu_sort_scales[] = {
     {"1K", 1'000},
     {"5K", 5'000},
     {"10K", 10'000},
@@ -196,7 +196,7 @@ static const scale_point bench_sort_scales[] = {
     {"100K", 100'000},
 };
 
-BENCHMARK_CPU(bench_sorted_insertion, bench_sort_scales) {
+BENCHMARK_CPU(cpu_sorted_insertion, cpu_sort_scales) {
     std::vector<fast_task::task> tasks;
     tasks.reserve(scale);
     for (uint64_t i = 0; i < scale; ++i) {
@@ -221,7 +221,7 @@ BENCHMARK_CPU(bench_sorted_insertion, bench_sort_scales) {
 static constexpr int mandel_width = 200;
 static constexpr int mandel_height = 200;
 static constexpr int mandel_max_iter = 500;
-static const scale_point bench_mandel_scales[] = {
+static const scale_point cpu_mandel_scales[] = {
     {"100", 100},
     {"500", 500},
     {"1K", 1'000},
@@ -229,7 +229,7 @@ static const scale_point bench_mandel_scales[] = {
     {"10K", 10'000},
 };
 
-BENCHMARK_CPU(bench_mandelbrot, bench_mandel_scales) {
+BENCHMARK_CPU(cpu_mandelbrot, cpu_mandel_scales) {
     std::vector<fast_task::task> tasks;
     tasks.reserve(scale);
     for (uint64_t i = 0; i < scale; ++i) {

@@ -6,6 +6,7 @@ add_executable(benchmark_runner
     benchmark_sync.cpp
     benchmark_memory.cpp
     benchmark_cpu.cpp
+    benchmark_io.cpp
 )
 
 target_link_libraries(benchmark_runner PRIVATE fast_task)

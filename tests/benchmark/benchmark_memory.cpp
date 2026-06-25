@@ -12,7 +12,7 @@
 #include <thread>
 #include <vector>
 
-BENCHMARK_MEM(bench_idle_task_footprint_multithreaded, scales_xxl_large) {
+BENCHMARK_MEM(memory_idle_task_footprint_multithreaded, scales_xxl_large) {
     size_t factored_scale = scale / 4;
     fast_task::task tasks[4];
     for (auto& i : tasks)
@@ -34,7 +34,7 @@ BENCHMARK_MEM(bench_idle_task_footprint_multithreaded, scales_xxl_large) {
     fast_task::task::await_multiple(tasks);
 }
 
-BENCHMARK_MEM(bench_task_footprint_multithreaded, scales_xxl_large) {
+BENCHMARK_MEM(memory_task_footprint_multithreaded, scales_xxl_large) {
     size_t factored_scale = scale / 4;
     fast_task::task tasks[4];
     for (auto& i : tasks)
@@ -60,7 +60,7 @@ BENCHMARK_MEM(bench_task_footprint_multithreaded, scales_xxl_large) {
     fast_task::task::await_multiple(tasks);
 }
 
-BENCHMARK_MEM(bench_idle_task_footprint, scales_xxl_large) {
+BENCHMARK_MEM(memory_idle_task_footprint, scales_xxl_large) {
     std::vector<fast_task::task> tasks;
     tasks.reserve(scale);
 
@@ -77,7 +77,7 @@ BENCHMARK_MEM(bench_idle_task_footprint, scales_xxl_large) {
     }
 }
 
-BENCHMARK_MEM(bench_per_task_overhead, scales_xxl_large) {
+BENCHMARK_MEM(memory_per_task_overhead, scales_xxl_large) {
     std::vector<fast_task::task> tasks;
     tasks.reserve(scale);
     for (uint64_t i = 0; i < scale; ++i) {
@@ -96,7 +96,7 @@ BENCHMARK_MEM(bench_per_task_overhead, scales_xxl_large) {
         t.await_task();
 }
 
-BENCHMARK_MEM(bench_idle_task_footprint_stackful, scales_xxl_large) {
+BENCHMARK_MEM(memory_idle_task_footprint_stackful, scales_xxl_large) {
     std::vector<fast_task::task> tasks;
     tasks.reserve(scale);
 
@@ -108,7 +108,7 @@ BENCHMARK_MEM(bench_idle_task_footprint_stackful, scales_xxl_large) {
     }
 }
 
-BENCHMARK_MEM(bench_per_task_overhead_stackful, scales_xxl_large) {
+BENCHMARK_MEM(memory_per_task_overhead_stackful, scales_xxl_large) {
     std::vector<fast_task::task> tasks;
     tasks.reserve(scale);
     for (uint64_t i = 0; i < scale; ++i) {
@@ -123,4 +123,3 @@ BENCHMARK_MEM(bench_per_task_overhead_stackful, scales_xxl_large) {
     for (auto& t : tasks)
         t.await_task();
 }
-

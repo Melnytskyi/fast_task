@@ -83,6 +83,7 @@ namespace fast_task {
         void set_status(status_e) noexcept;
 
         bool is_scheduled() const noexcept; // status != created
+        bool is_created() const noexcept;   // status == created
         bool is_running() const noexcept;   // status == running
         bool is_suspended() const noexcept; // status == suspended
         bool is_ended() const noexcept;     // status == ended

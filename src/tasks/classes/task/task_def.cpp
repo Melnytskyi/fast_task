@@ -244,7 +244,7 @@ namespace fast_task {
         node->next = obj->on_wait.load(std::memory_order_relaxed);
         obj->on_wait.store(node, std::memory_order_relaxed);
 
-        if (!cd.is_scheduled()) {
+        if (cd.is_created()) {
             ++glob.executing_tasks;
             cd.set_status(task_object::status_e::scheduled);
         }
@@ -317,7 +317,7 @@ namespace fast_task {
             scheduler::create_executor(1);
 
         auto& d = get_data(lgr_task);
-        if (!d.is_scheduled() && make_start)
+        if (d.is_created() && make_start)
             scheduler::start(lgr_task);
         if (d.vtable && d.vtable->on_await)
             d.vtable->on_await(lgr_task.obj->user_data());

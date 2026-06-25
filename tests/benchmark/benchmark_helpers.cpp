@@ -74,7 +74,6 @@ static bool spawn_child(const char* prog, const char* name) {
 #endif
 
 static void run_benchmark_child(const char* prog, const benchmark_registry::benchmark_entry& entry) {
-    std::cout << "\n=== Running benchmark: " << entry.name << " ===\n";
     bool ok = spawn_child(prog, entry.name);
     if (!ok)
         std::cerr << "Benchmark " << entry.name << " failed.\n";

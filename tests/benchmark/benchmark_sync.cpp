@@ -12,7 +12,7 @@
 #include <thread>
 #include <vector>
 
-static const scale_point bench_mutex_scales[] = {
+static const scale_point sync_mutex_scales[] = {
     {"1K", 1'000},
     {"10K", 10'000},
     {"50K", 50'000},
@@ -20,7 +20,7 @@ static const scale_point bench_mutex_scales[] = {
     {"1M", 1'000'000},
 };
 
-BENCHMARK(bench_mutex_lock_unlock, bench_mutex_scales) {
+BENCHMARK(sync_mutex_lock_unlock, sync_mutex_scales) {
     fast_task::task t = fast_task::task::run([scale = scale] {
         fast_task::task_mutex mtx;
         for (uint64_t i = 0; i < scale; ++i) {
@@ -32,7 +32,7 @@ BENCHMARK(bench_mutex_lock_unlock, bench_mutex_scales) {
     t.await_task();
 }
 
-BENCHMARK(bench_mutex_contention, bench_mutex_scales) {
+BENCHMARK(sync_mutex_contention, sync_mutex_scales) {
     fast_task::task_mutex mtx;
     std::atomic<uint64_t> counter{0};
 
@@ -51,7 +51,7 @@ BENCHMARK(bench_mutex_contention, bench_mutex_scales) {
     t2.await_task();
 }
 
-BENCHMARK(bench_semaphore_lock_release, bench_mutex_scales) {
+BENCHMARK(sync_semaphore_lock_release, sync_mutex_scales) {
     fast_task::task t = fast_task::task::run([scale = scale] {
         fast_task::task_semaphore sem;
         sem.set_max_threshold(1);
@@ -64,7 +64,7 @@ BENCHMARK(bench_semaphore_lock_release, bench_mutex_scales) {
     t.await_task();
 }
 
-BENCHMARK(bench_limiter_lock_unlock, bench_mutex_scales) {
+BENCHMARK(sync_limiter_lock_unlock, sync_mutex_scales) {
     fast_task::task t = fast_task::task::run([scale = scale] {
         fast_task::task_limiter lim;
         lim.set_max_threshold(1);

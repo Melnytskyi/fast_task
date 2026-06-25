@@ -72,10 +72,7 @@ namespace fast_task::this_task {
                 return false;
             ++get_loc().transfer_state.transfers;
 #endif
-            if (!get_data(target).is_scheduled())
-                ++glob.executing_tasks;
             get_data(target).set_status(task_object::status_e::scheduled);
-
             get_loc().transfer_state.pending = target;
             return true;
         } else

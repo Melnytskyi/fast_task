@@ -33,10 +33,10 @@ namespace fast_task::scheduler {
                 return;
             }
         }
-        if (!get_data(lgr_task).is_scheduled())
+        if (get_data(lgr_task).is_created())
             ++glob.executing_tasks;
 
-        get_data(lgr_task).set_status(task_object::status_e::running);
+        get_data(lgr_task).set_status(task_object::status_e::scheduled);
 
 
         if (glob.shutdown_requested.load(std::memory_order_acquire)) {
@@ -97,7 +97,7 @@ namespace fast_task::scheduler {
                 return;
             }
 
-            if (!get_data(tsk).is_scheduled())
+            if (get_data(tsk).is_created())
                 ++glob.executing_tasks;
             get_data(tsk).set_status(task_object::status_e::scheduled);
         }

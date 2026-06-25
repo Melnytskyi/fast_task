@@ -10,7 +10,7 @@
 #include <thread>
 #include <vector>
 
-static const scale_point bench_spawn_scales[] = {
+static const scale_point scheduler_spawn_scales[] = {
     {"1K", 1'000},
     {"10K", 10'000},
     {"50K", 50'000},
@@ -18,7 +18,7 @@ static const scale_point bench_spawn_scales[] = {
     {"1M", 1'000'000},
 };
 
-BENCHMARK(bench_spawn_complete, bench_spawn_scales) {
+BENCHMARK(scheduler_spawn_complete, scheduler_spawn_scales) {
     std::vector<fast_task::task> tasks;
     tasks.reserve(scale);
 
@@ -29,7 +29,7 @@ BENCHMARK(bench_spawn_complete, bench_spawn_scales) {
         t.await_task();
 }
 
-static const scale_point bench_compute_scales[] = {
+static const scale_point scheduler_compute_scales[] = {
     {"1K", 1'000},
     {"10K", 10'000},
     {"50K", 50'000},
@@ -37,7 +37,7 @@ static const scale_point bench_compute_scales[] = {
     {"1M", 1'000'000},
 };
 
-BENCHMARK(bench_compute_bound, bench_compute_scales) {
+BENCHMARK(scheduler_compute_bound, scheduler_compute_scales) {
     std::vector<fast_task::task> tasks;
     tasks.reserve(scale);
 
@@ -54,7 +54,7 @@ BENCHMARK(bench_compute_bound, bench_compute_scales) {
         t.await_task();
 }
 
-static const scale_point bench_yield_scales[] = {
+static const scale_point scheduler_yield_scales[] = {
     {"1K", 1'000},
     {"10K", 10'000},
     {"50K", 50'000},
@@ -62,7 +62,7 @@ static const scale_point bench_yield_scales[] = {
     {"1M", 1'000'000},
 };
 
-BENCHMARK(bench_yielding_tasks, bench_yield_scales) {
+BENCHMARK(scheduler_yielding_tasks, scheduler_yield_scales) {
     std::vector<fast_task::task> tasks;
     tasks.reserve(scale);
 
@@ -77,7 +77,7 @@ BENCHMARK(bench_yielding_tasks, bench_yield_scales) {
         t.await_task();
 }
 
-static const scale_point bench_staggered_scales[] = {
+static const scale_point scheduler_staggered_scales[] = {
     {"1K", 1'000},
     {"10K", 10'000},
     {"50K", 50'000},
@@ -85,7 +85,7 @@ static const scale_point bench_staggered_scales[] = {
     {"1M", 1'000'000},
 };
 
-BENCHMARK_MEM(bench_staggered_sleep, bench_staggered_scales) {
+BENCHMARK_MEM(scheduler_staggered_sleep, scheduler_staggered_scales) {
     std::vector<fast_task::task> tasks;
     tasks.reserve(scale);
 
@@ -101,7 +101,7 @@ BENCHMARK_MEM(bench_staggered_sleep, bench_staggered_scales) {
         t.await_task();
 }
 
-static const scale_point bench_schedule_scales[] = {
+static const scale_point scheduler_schedule_scales[] = {
     {"1K", 1'000},
     {"10K", 10'000},
     {"50K", 50'000},
@@ -109,7 +109,7 @@ static const scale_point bench_schedule_scales[] = {
     {"1M", 1'000'000},
 };
 
-BENCHMARK(bench_schedule_until, bench_schedule_scales) {
+BENCHMARK(scheduler_schedule_until, scheduler_schedule_scales) {
     auto base = std::chrono::high_resolution_clock::now();
     for (uint64_t i = 0; i < scale; ++i) {
         auto tp = base + std::chrono::microseconds(200 * i);

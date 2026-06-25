@@ -211,6 +211,7 @@ namespace fast_task::file {
         }
 
         void ststd() {
+            get_data(awaiter).set_status(task_object::status_e::scheduled);
             if (is_read) {
                 if (!ReadFile(handle, buffer, buffer_size, NULL, &overlapped)) {
                     auto err = GetLastError();

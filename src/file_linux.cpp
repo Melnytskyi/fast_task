@@ -216,6 +216,7 @@ namespace fast_task::file {
         }
 
         void ststd() {
+            get_data(awaiter).set_status(task_object::status_e::scheduled);
             if (is_read)
                 util::native_workers_singleton::post_read(this, handle, buffer, buffer_size, offset);
             else

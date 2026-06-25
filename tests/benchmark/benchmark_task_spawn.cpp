@@ -10,7 +10,7 @@
 #include <thread>
 #include <vector>
 
-static void bench_empty_task_create_start_await() {
+static void task_spawn_empty_task_create_start_await() {
     const scale_point scales[] = {
         {"1K", 1'000},
         {"10K", 10'000},
@@ -61,20 +61,20 @@ static void bench_empty_task_create_start_await() {
     }
 }
 
-struct bench_empty_task_create_start_await_wrapper {
-    bench_empty_task_create_start_await_wrapper() {
+struct task_spawn_empty_task_create_start_await_wrapper {
+    task_spawn_empty_task_create_start_await_wrapper() {
         size_t n = std::max(2u, std::thread::hardware_concurrency());
         fast_task::scheduler::create_executor(n);
         while (fast_task::scheduler::total_executors() < n)
             std::this_thread::yield();
-        bench_empty_task_create_start_await();
+        task_spawn_empty_task_create_start_await();
         fast_task::scheduler::shut_down();
     }
 };
 
 namespace {
-    BENCH_KEEP_ALIVE static const int _reg_bench_empty_task_create_start_await =
-        (benchmark_registry::add("bench_empty_task_create_start_await", [] { bench_empty_task_create_start_await_wrapper(); }, false), 0);
+    BENCH_KEEP_ALIVE static const int _reg_task_spawn_empty_task_create_start_await =
+        (benchmark_registry::add("task_spawn_empty_task_create_start_await", [] { task_spawn_empty_task_create_start_await_wrapper(); }, false), 0);
 }
 
 struct big_payload {
@@ -87,7 +87,7 @@ struct big_payload {
     }
 };
 
-static const scale_point bench_large_scales[] = {
+static const scale_point task_spawn_large_scales[] = {
     {"1K", 1'000},
     {"10K", 10'000},
     {"50K", 50'000},
@@ -95,7 +95,7 @@ static const scale_point bench_large_scales[] = {
     {"1M", 1'000'000},
 };
 
-BENCHMARK(bench_task_large_payload, bench_large_scales) {
+BENCHMARK(task_spawn_task_large_payload, task_spawn_large_scales) {
     std::vector<fast_task::task> tasks;
     tasks.reserve(scale);
 
@@ -110,7 +110,7 @@ BENCHMARK(bench_task_large_payload, bench_large_scales) {
         t.await_task();
 }
 
-static const scale_point bench_run_await_scales[] = {
+static const scale_point task_spawn_run_await_scales[] = {
     {"1K", 1'000},
     {"10K", 10'000},
     {"50K", 50'000},
@@ -118,7 +118,7 @@ static const scale_point bench_run_await_scales[] = {
     {"1M", 1'000'000},
 };
 
-BENCHMARK(bench_run_and_await, bench_run_await_scales) {
+BENCHMARK(task_spawn_run_and_await, task_spawn_run_await_scales) {
     std::vector<fast_task::task> tasks;
     tasks.reserve(scale);
 

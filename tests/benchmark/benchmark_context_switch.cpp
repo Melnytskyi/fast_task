@@ -10,7 +10,7 @@
 #include <thread>
 #include <vector>
 
-static const scale_point bench_yield_burst_scales[] = {
+static const scale_point c_switch_yield_burst_scales[] = {
     {"1K", 1'000},
     {"10K", 10'000},
     {"50K", 50'000},
@@ -19,7 +19,7 @@ static const scale_point bench_yield_burst_scales[] = {
     {"10M", 10'000'000},
 };
 
-BENCHMARK(bench_yield_burst, bench_yield_burst_scales) {
+BENCHMARK(c_switch_yield_burst, c_switch_yield_burst_scales) {
     fast_task::task t = fast_task::task::run([scale = scale] {
         for (uint64_t i = 0; i < scale; ++i)
             fast_task::this_task::yield();
@@ -28,7 +28,7 @@ BENCHMARK(bench_yield_burst, bench_yield_burst_scales) {
     t.await_task();
 }
 
-static const scale_point bench_stackful_scales[] = {
+static const scale_point c_switch_stackful_scales[] = {
     {"1K", 1'000},
     {"10K", 10'000},
     {"50K", 50'000},
@@ -37,7 +37,7 @@ static const scale_point bench_stackful_scales[] = {
     {"10M", 10'000'000},
 };
 
-BENCHMARK(bench_stackful_yield_concurrent, bench_stackful_scales) {
+BENCHMARK(c_switch_stackful_yield_concurrent, c_switch_stackful_scales) {
     unsigned int hardware_threads = std::max(2u, std::thread::hardware_concurrency());
     unsigned int multiplier = 2;
     unsigned int task_count = hardware_threads * multiplier;
@@ -60,7 +60,7 @@ BENCHMARK(bench_stackful_yield_concurrent, bench_stackful_scales) {
         t.await_task();
 }
 
-static const scale_point bench_pingpong_scales[] = {
+static const scale_point c_switch_pingpong_scales[] = {
     {"1K", 1'000},
     {"10K", 10'000},
     {"50K", 50'000},
@@ -69,7 +69,7 @@ static const scale_point bench_pingpong_scales[] = {
     {"10M", 10'000'000},
 };
 
-static fast_task::task_vtable bench_transfer_vt{
+static fast_task::task_vtable c_switch_transfer_vt{
     nullptr,
     nullptr,
     [](void* ptr) {
@@ -99,7 +99,7 @@ static fast_task::task_vtable bench_transfer_vt{
     false
 };
 
-BENCHMARK(bench_transfer_pingpong, bench_pingpong_scales) {
+BENCHMARK(c_switch_transfer_pingpong, c_switch_pingpong_scales) {
     struct shared_state {
         fast_task::task partner;
         int64_t remaining;
@@ -111,8 +111,8 @@ BENCHMARK(bench_transfer_pingpong, bench_pingpong_scales) {
     state_a.remaining = scale;
     state_b.remaining = scale;
 
-    auto task_a = fast_task::task(&state_a, &bench_transfer_vt, true, true);
-    auto task_b = fast_task::task(&state_b, &bench_transfer_vt, true, true);
+    auto task_a = fast_task::task(&state_a, &c_switch_transfer_vt, true, true);
+    auto task_b = fast_task::task(&state_b, &c_switch_transfer_vt, true, true);
 
     state_a.partner = fast_task::task(task_b);
     state_b.partner = fast_task::task(task_a);

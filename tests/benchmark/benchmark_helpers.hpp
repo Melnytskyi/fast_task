@@ -185,6 +185,10 @@ inline size_t avg_bench_mem(size_t (&usage)[size]) {
     return res / size;
 }
 
+#define BENCH_MAKE_CALL ()
+
+#define BENCH_MAKE_CUSTOM_CALL (sp.iterations)
+
 #define BENCHMARK(name, scales, ...)                                             \
     struct name {                                                                \
         void run(size_t scale);                                                  \
@@ -214,7 +218,7 @@ inline size_t avg_bench_mem(size_t (&usage)[size]) {
     }                                                                            \
     void name::run(size_t scale)
 
-#define BENCHMARK_CPU(name, scales, ...)                                  \
+#define BENCHMARK_CPU(name, scales)                                       \
     struct name {                                                         \
         void run(size_t scale);                                           \
         name() {                                                          \
@@ -227,7 +231,7 @@ inline size_t avg_bench_mem(size_t (&usage)[size]) {
             for (auto const& sp : (scales)) {                             \
                 benchmark_timer timer;                                    \
                 run(sp.iterations);                                       \
-                auto time = timer.elapsed_ms(__VA_ARGS__);                \
+                auto time = timer.elapsed_ms();                           \
                 print_bench_row(sp.label, sp.iterations, time);           \
             }                                                             \
             fast_task::scheduler::shut_down();                            \
@@ -239,6 +243,63 @@ inline size_t avg_bench_mem(size_t (&usage)[size]) {
             (benchmark_registry::add(#name, [] { name(); }, false), 0);   \
     }                                                                     \
     void name::run(size_t scale)
+
+#define BENCHMARK_IO(name, scales, prepare)                               \
+    struct name {                                                         \
+        void run(size_t scale, const std::filesystem::path& path);        \
+        name() {                                                          \
+            size_t n = std::max(2u, std::thread::hardware_concurrency()); \
+            fast_task::scheduler::create_executor(n);                     \
+            while (fast_task::scheduler::total_executors() < n)           \
+                std::this_thread::yield();                                \
+            print_bench_header(#name);                                    \
+            warm_up();                                                    \
+            for (auto const& sp : (scales)) {                             \
+                auto path = prepare BENCH_MAKE_CALL;                      \
+                benchmark_timer timer;                                    \
+                run(sp.iterations, path);                                 \
+                auto time = timer.elapsed_ms();                           \
+                print_bench_row(sp.label, sp.iterations, time);           \
+                std::filesystem::remove_all(path);                        \
+            }                                                             \
+            fast_task::scheduler::shut_down();                            \
+            std::cout << std::endl;                                       \
+        }                                                                 \
+    };                                                                    \
+    namespace {                                                           \
+        BENCH_KEEP_ALIVE static const int _reg_##name =                   \
+            (benchmark_registry::add(#name, [] { name(); }, false), 0);   \
+    }                                                                     \
+    void name::run(size_t scale, const std::filesystem::path& path)
+
+#define BENCHMARK_CUSTOM(name, scales, prepare)                           \
+    struct name {                                                         \
+        template <class T>                                                \
+        void run(size_t scale, T&& item);                                 \
+        name() {                                                          \
+            size_t n = std::max(2u, std::thread::hardware_concurrency()); \
+            fast_task::scheduler::create_executor(n);                     \
+            while (fast_task::scheduler::total_executors() < n)           \
+                std::this_thread::yield();                                \
+            print_bench_header(#name);                                    \
+            warm_up();                                                    \
+            for (auto const& sp : (scales)) {                             \
+                auto item = prepare BENCH_MAKE_CUSTOM_CALL;               \
+                benchmark_timer timer;                                    \
+                run(sp.iterations, item);                                 \
+                auto time = timer.elapsed_ms();                           \
+                print_bench_row(sp.label, sp.iterations, time);           \
+            }                                                             \
+            fast_task::scheduler::shut_down();                            \
+            std::cout << std::endl;                                       \
+        }                                                                 \
+    };                                                                    \
+    namespace {                                                           \
+        BENCH_KEEP_ALIVE static const int _reg_##name =                   \
+            (benchmark_registry::add(#name, [] { name(); }, false), 0);   \
+    }                                                                     \
+    template <class T>                                                    \
+    void name::run(size_t scale, T&& item)
 
 #define BENCHMARK_MEM(name, scales, ...)                                                                \
     struct name {                                                                                       \
