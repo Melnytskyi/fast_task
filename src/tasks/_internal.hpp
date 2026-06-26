@@ -7,28 +7,6 @@
 #pragma once
 #ifndef FAST_TASK_INTERNAL
     #define FAST_TASK_INTERNAL
-    //platforms: windows, linux, macos, ios, android, unknown
-    #if defined(_WIN32) || defined(_WIN64)
-        #define PLATFORM_WINDOWS 1
-    #elif defined(__linux__) || defined(__unix__) || defined(__posix__) || defined(__LINUX__) || defined(__linux) || defined(__gnu_linux__)
-        #define PLATFORM_LINUX 1
-    #elif defined(__APPLE__) || defined(__MACH__)
-        #define PLATFORM_MACOS 1
-    #elif defined(__ANDROID__) || defined(__ANDROID_API__) || defined(ANDROID)
-        #define PLATFORM_ANDROID 1
-    #elif defined(__IPHONE_OS_VERSION_MIN_REQUIRED) || defined(__IPHONE_OS_VERSION_MAX_ALLOWED) || defined(__IPHONE_OS_VERSION_MAX_REQUIRED) || defined(__IPHONE_OS_VERSION_MAX_ALLOWED)
-        #define PLATFORM_IOS 1
-    #else
-        #define PLATFORM_UNKNOWN
-    #endif
-
-    #if defined(_MSC_VER)
-        #define NOINLINE __declspec(noinline)
-    #elif defined(__GNUC__) || defined(__clang__)
-        #define NOINLINE __attribute__((noinline))
-    #else
-        #define NOINLINE
-    #endif
 
 
     #include <atomic>
@@ -46,8 +24,9 @@
     #include <task.hpp>
     #include <tasks/classes/synchronization/internal_sched_cv.hpp>
     #include <tasks/util/_dbg_macro.hpp>
-    #include <tasks/util/fixed_block_allocator.hpp>
+    #include <tasks/util/fixed_task_allocator.hpp>
     #include <tasks/util/hashed_timing_wheel.hpp>
+    #include <tasks/util/macro.hpp>
     #include <tasks/util/pcg32.hpp>
     #include <tasks/util/work_stealing_deque.hpp>
 
@@ -84,6 +63,7 @@ namespace fast_task {
 
     using global_executor_registry = executor_registry<FT_MAX_EXECUTORS>;
     using binded_executor_registry = executor_registry<FT_BINDED_MAX_SLOTS>;
+
     struct FT_API_LOCAL task_object::execution_data {
         std::chrono::high_resolution_clock::time_point::rep timeout = std::chrono::high_resolution_clock::time_point::min().time_since_epoch().count();
         boost::context::continuation context;
@@ -263,7 +243,7 @@ namespace fast_task {
     std::chrono::nanoseconds FT_API_LOCAL init_quantum(task_priority priority);
 
     struct FT_API_LOCAL executors_local {
-        thread_local_block_cache task_alloc_cache;
+        tl_task_alloc_cache task_alloc_cache;
         std::shared_ptr<work_stealing_deque<task_object*>> local_tasks = std::make_shared<work_stealing_deque<task_object*>>();
         std::exception_ptr ex_ptr;
         task curr_task = nullptr;
@@ -308,7 +288,7 @@ namespace fast_task {
     };
 
     struct FT_API_LOCAL executor_global {
-        global_block_allocator gba;
+        global_task_allocator gba;
         internal_sched_cv no_tasks_execute_notifier;
         fast_task::condition_variable time_notifier;
         fast_task::condition_variable_any tasks_notifier;
@@ -331,7 +311,7 @@ namespace fast_task {
         std::atomic_size_t interrupts = 0; //debug counter of the usermode fast_task interrupts
         std::atomic_size_t executors = 0;
     #ifndef NDEBUG
-        std::atomic_size_t tasks_in_swap = 0;   //this means the tasks is stored outside the scheduler and excepted to be rescheduled later, ex. mutex
+        std::atomic_size_t tasks_in_swap = 0; //this means the tasks is stored outside the scheduler and excepted to be rescheduled later, ex. mutex
     #endif
         std::atomic_size_t in_run_tasks = 0;    //count of tasks in run right now
         std::atomic_size_t executing_tasks = 0; //scheduled and in run tasks, including tasks in swap

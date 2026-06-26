@@ -521,7 +521,7 @@ namespace fast_task {
         relock1_type = mutex_unify_relock_access::raw_type(mut);
     }
 
-    global_block_allocator g_block_allocator;
+    global_task_allocator g_block_allocator;
 
     task_object* task_object::alloc() {
         auto obj = static_cast<task_object*>(get_loc().task_alloc_cache.allocate());

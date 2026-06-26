@@ -4,40 +4,12 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
-#include "fixed_block_allocator.hpp"
+#include "fixed_task_allocator.hpp"
 #include <tasks/_internal.hpp>
+#include <tasks/util/os_alloc.hpp>
 
-#if PLATFORM_LINUX
-    #include <sys/mman.h>
-    #include <unistd.h>
-#elif PLATFORM_WINDOWS
-    #define NOMINMAX
-    #include <Windows.h>
-#endif
 namespace fast_task {
-    void* os_alloc(size_t size) noexcept {
-#if PLATFORM_LINUX
-        void* ptr = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-        return (ptr == MAP_FAILED) ? nullptr : ptr;
-#elif PLATFORM_WINDOWS
-        return VirtualAlloc(nullptr, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
-#else
-        return nullptr;
-#endif
-    }
-
-    void os_free(void* ptr, size_t size) noexcept {
-        if (!ptr)
-            return;
-#if PLATFORM_LINUX
-        munmap(ptr, size);
-#elif PLATFORM_WINDOWS
-        (void)size;
-        VirtualFree(ptr, 0, MEM_RELEASE);
-#endif
-    }
-
-    void global_block_allocator::expand() {
+    void global_task_allocator::expand() {
         interrupt_unsafe_region ir;
 
         size_t num_blocks = min_arena_blocks;
@@ -88,7 +60,7 @@ namespace fast_task {
         global_available_.fetch_add(num_blocks, std::memory_order_relaxed);
     }
 
-    free_node* global_block_allocator::advance(free_node* head, size_t count, free_node** out_batch_tail = nullptr) {
+    global_task_allocator::free_node* global_task_allocator::advance(free_node* head, size_t count, free_node** out_batch_tail = nullptr) {
         auto* cur = head;
         auto* prev = static_cast<free_node*>(nullptr);
         for (size_t i = 0; i < count && cur; ++i) {
@@ -100,12 +72,12 @@ namespace fast_task {
         return cur;
     }
 
-    global_block_allocator::global_block_allocator() noexcept {
+    global_task_allocator::global_task_allocator() noexcept {
         tagged_node init{nullptr, 0};
         global_stack_.store(init, std::memory_order_relaxed);
     }
 
-    global_block_allocator::~global_block_allocator() {
+    global_task_allocator::~global_task_allocator() {
         std::lock_guard guard(arena_lock);
         auto* a = arena_list_;
         while (a) {
@@ -122,7 +94,7 @@ namespace fast_task {
         arena_list_ = nullptr;
     }
 
-    free_node* global_block_allocator::pop_batch(size_t count) {
+    global_task_allocator::free_node* global_task_allocator::pop_batch(size_t count) {
         tagged_node old = global_stack_.load(std::memory_order_acquire);
         while (old.ptr) {
             free_node* batch_tail = nullptr;
@@ -137,7 +109,7 @@ namespace fast_task {
         return pop_batch(count);
     }
 
-    void global_block_allocator::push_batch(free_node* head, free_node* tail, size_t count) {
+    void global_task_allocator::push_batch(free_node* head, free_node* tail, size_t count) {
         tagged_node old = global_stack_.load(std::memory_order_acquire);
         while (true) {
             tail->next = old.ptr;
@@ -149,7 +121,7 @@ namespace fast_task {
         global_available_.fetch_add(count, std::memory_order_relaxed);
     }
 
-    void global_block_allocator::iterate_all(void (*callback)(void* item, void* data), void* data) {
+    void global_task_allocator::iterate_all(void (*callback)(void* item, void* data), void* data) {
         auto* a = arena_list_;
         while (a) {
             auto* next = a->next;
@@ -159,8 +131,8 @@ namespace fast_task {
         }
     }
 
-    void thread_local_block_cache::allocate_batch() {
-        auto* batch = glob.gba.pop_batch(global_block_allocator::init_batch);
+    void tl_task_alloc_cache::allocate_batch() {
+        auto* batch = glob.gba.pop_batch(global_task_allocator::init_batch);
         if (!batch)
             throw std::bad_alloc();
 
@@ -175,7 +147,7 @@ namespace fast_task {
         free_count = actual;
     }
 
-    void* thread_local_block_cache::allocate() {
+    void* tl_task_alloc_cache::allocate() {
         if (!free_list)
             allocate_batch();
 
@@ -185,8 +157,8 @@ namespace fast_task {
         return node;
     }
 
-    void thread_local_block_cache::deallocate(void* p) {
-        auto* node = static_cast<free_node*>(p);
+    void tl_task_alloc_cache::deallocate(void* p) {
+        auto* node = static_cast<global_task_allocator::free_node*>(p);
 #ifndef NDEBUG
         reinterpret_cast<fast_task::task_object*>(node)->status.store(fast_task::task_object::status_e::released, std::memory_order_relaxed);
 #endif
@@ -194,10 +166,10 @@ namespace fast_task {
         free_list = node;
         ++free_count;
 
-        if (free_count > global_block_allocator::max_local) {
+        if (free_count > global_task_allocator::max_local) {
             auto* head = free_list;
             auto* cur = head;
-            size_t count = global_block_allocator::init_batch;
+            size_t count = global_task_allocator::init_batch;
             for (size_t i = 1; i < count; ++i)
                 cur = cur->next;
             free_list = cur->next;
@@ -212,7 +184,7 @@ namespace fast_task {
         }
     }
 
-    void thread_local_block_cache::release() {
+    void tl_task_alloc_cache::release() {
         if (free_list) {
             auto* head = free_list;
             auto* cur = head;
@@ -225,15 +197,15 @@ namespace fast_task {
         }
     }
 
-    void* task_alloc_data::allocate() {
+    void* task_alloc::allocate() {
         return get_loc().task_alloc_cache.allocate();
     }
 
-    void task_alloc_data::deallocate(void* p) {
+    void task_alloc::deallocate(void* p) {
         get_loc().task_alloc_cache.deallocate(p);
     }
 
-    void global_block_allocator::claim_unused() {
+    void global_task_allocator::claim_unused() {
         tagged_node old = global_stack_.load(std::memory_order_acquire);
         while (true) {
             tagged_node desired{nullptr, old.counter + 1};

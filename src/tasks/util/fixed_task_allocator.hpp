@@ -5,8 +5,8 @@
 // http://www.boost.org/LICENSE_1_0.txt)
 
 #pragma once
-#ifndef FAST_TASK_FIXED_BLOCK_ALLOCATOR
-    #define FAST_TASK_FIXED_BLOCK_ALLOCATOR
+#ifndef FAST_TASK_FIXED_TASK_ALLOCATOR
+    #define FAST_TASK_FIXED_TASK_ALLOCATOR
 
     #include <atomic>
     #include <cstddef>
@@ -19,19 +19,7 @@
     #include <threading.hpp>
 
 namespace fast_task {
-
-    struct free_node {
-        free_node* next;
-    };
-
-    struct alignas(16) tagged_node {
-        free_node* ptr;
-        uint64_t counter;
-    };
-
-    static_assert(sizeof(tagged_node) == 16, "tagged_node must be exactly 16 bytes for DWCAS");
-
-    class FT_API_LOCAL global_block_allocator {
+    class FT_API_LOCAL global_task_allocator {
     public:
         static constexpr size_t block_size = 128;
         static constexpr size_t block_alignment = 64;
@@ -39,6 +27,17 @@ namespace fast_task {
         static constexpr size_t max_local = 256;
         static constexpr size_t min_arena_blocks = 512;
         static constexpr size_t max_arena_blocks = 65536; //8MB
+
+        struct free_node {
+            free_node* next;
+        };
+
+        struct alignas(16) tagged_node {
+            free_node* ptr;
+            uint64_t counter;
+        };
+
+        static_assert(sizeof(tagged_node) == 16, "tagged_node must be exactly 16 bytes for DWCAS");
 
     private:
         std::atomic<tagged_node> global_stack_;
@@ -59,10 +58,10 @@ namespace fast_task {
         static free_node* advance(free_node* head, size_t count, free_node** out_batch_tail);
 
     public:
-        global_block_allocator() noexcept;
-        ~global_block_allocator();
-        global_block_allocator(const global_block_allocator&) = delete;
-        global_block_allocator& operator=(const global_block_allocator&) = delete;
+        global_task_allocator() noexcept;
+        ~global_task_allocator();
+        global_task_allocator(const global_task_allocator&) = delete;
+        global_task_allocator& operator=(const global_task_allocator&) = delete;
 
         free_node* pop_batch(size_t count);
         void push_batch(free_node* head, free_node* tail, size_t count);
@@ -72,8 +71,8 @@ namespace fast_task {
         void claim_unused();
     };
 
-    struct FT_API_LOCAL thread_local_block_cache {
-        free_node* free_list = nullptr;
+    struct FT_API_LOCAL tl_task_alloc_cache {
+        global_task_allocator::free_node* free_list = nullptr;
         size_t free_count = 0;
 
         void allocate_batch();
@@ -82,7 +81,7 @@ namespace fast_task {
         void release();
     };
 
-    struct FT_API_LOCAL task_alloc_data {
+    struct FT_API_LOCAL task_alloc {
         static void* allocate();
 
         static void deallocate(void* p);
@@ -90,4 +89,4 @@ namespace fast_task {
     };
 }
 
-#endif // FAST_TASK_FIXED_BLOCK_ALLOCATOR
+#endif // FAST_TASK_FIXED_TASK_ALLOCATOR
