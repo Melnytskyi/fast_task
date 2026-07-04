@@ -107,10 +107,11 @@ namespace fast_task {
 
     void executors_local::reset() {
         task_alloc_cache.release();
-        local_tasks.reset();
+        timing_alloc_cache.release();
         ex_ptr = nullptr;
         curr_task.reset();
         transfer_state.pending.reset();
+        pending_timer = std::chrono::high_resolution_clock::time_point::min();
     }
 
     executor_global::executor_global() = default;
@@ -363,7 +364,6 @@ namespace fast_task {
         if (!head)
             return;
 
-        fast_task::shared_lock guard(glob.task_thread_safety);
         size_t to_wake = 0;
         while (head) {
             auto* next = head->next;
@@ -373,7 +373,6 @@ namespace fast_task {
                 fast_task::lock_guard guard_loc(wd);
                 if (wd.awake_check == head->awake_check && !wd.get_time_end()) {
                     wd.set_awaked(true);
-                    fast_task::relock_guard guard_relock(guard);
                     transfer_task(std::move(head->waiter));
                     ++to_wake;
                 }
@@ -433,9 +432,11 @@ namespace fast_task {
             node.next = on_wait.load(std::memory_order_relaxed);
             on_wait.store(&node, std::memory_order_relaxed);
             {
-                fast_task::lock_guard guard(glob.task_timer_safety);
-                makeTimeWait_unsafe(time_point);
-                swapCtxRelock(self, glob.task_timer_safety);
+                // Delegate timer insert to the scheduler.
+                get_loc().pending_timer = time_point;
+                swapCtxRelock(self);
+                // The scheduler called makeTimeWait and resetTimeWait
+                // after swapCtx returned.
             }
             bool timed = get_data(get_loc().curr_task).get_time_end();
             resetTimeWait();

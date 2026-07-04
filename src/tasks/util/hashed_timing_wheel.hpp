@@ -5,59 +5,99 @@
 // http://www.boost.org/LICENSE_1_0.txt)
 
 #pragma once
+#include <atomic>
 #include <chrono>
+#include <concurrentqueue/moodycamel/concurrentqueue.h>
 #include <cstddef>
 #include <cstdint>
-#include <queue>
 #include <task.hpp>
-#include <vector>
+#include <tasks/util/macro.hpp>
+#include <tasks/util/os_alloc.hpp>
 
 namespace fast_task {
     struct task_object;
 
-    struct timing {
-        std::chrono::high_resolution_clock::time_point wait_timepoint;
+    struct alignas(32) timing {
+        uint64_t wait_ticks;
         task awake_task;
 
-        timing* wheel_next = nullptr;
-        timing* wheel_prev = nullptr;
+        std::atomic<timing*> wheel_next;
         uint16_t check_id;
         uint8_t wheel_level = 0;
         uint8_t wheel_slot = 0;
         bool in_overflow = false;
+        bool is_cold = false;
+        std::atomic<bool> cancelled{false};
 
         timing() = default;
 
-        timing(std::chrono::high_resolution_clock::time_point tp, task t, uint16_t cid) noexcept
-            : wait_timepoint(tp), awake_task(std::move(t)), check_id(cid) {}
-
-        bool operator>(const timing& other) const {
-            return wait_timepoint > other.wait_timepoint;
+        timing(uint64_t ticks, task t, uint16_t cid, bool cold = false) noexcept
+            : wait_ticks(ticks), awake_task(std::move(t)), check_id(cid), is_cold(cold) {
+            wheel_next.store(nullptr, std::memory_order_relaxed);
         }
     };
 
-    class timing_pool {
-    public:
-        static constexpr size_t CHUNK_SIZE = 64;
+    static_assert(sizeof(timing) <= 32, "timing must fit in 32 bytes");
 
-        struct chunk {
-            chunk* next;
-            timing nodes[CHUNK_SIZE];
+    class timing_allocator {
+    public:
+        static constexpr size_t block_size = 32;
+        static constexpr size_t block_alignment = 32;
+        static constexpr size_t init_batch = 128;
+        static constexpr size_t max_local = 256;
+        static constexpr size_t min_arena_blocks = 1024;
+        static constexpr size_t max_arena_blocks = 131072;
+
+        struct alignas(32) free_node {
+            free_node* next;
         };
 
-        timing_pool() noexcept;
-        ~timing_pool();
+        struct alignas(16) tagged_node {
+            free_node* ptr;
+            uint64_t counter;
+        };
 
-        timing_pool(const timing_pool&) = delete;
-        timing_pool& operator=(const timing_pool&) = delete;
-
-        timing* allocate();
-        void deallocate(timing* t) noexcept;
+        static_assert(sizeof(tagged_node) == 16, "tagged_node must be 16 bytes for DWCAS");
 
     private:
-        chunk* chunks_ = nullptr;
-        timing* freelist_ = nullptr;
-        size_t count_ = 0;
+        std::atomic<tagged_node> global_stack_;
+        std::atomic<size_t> global_available_{0};
+        std::atomic<bool> expanding_{false};
+
+        struct alignas(block_alignment) arena {
+            arena* next;
+            void* base;
+            size_t size;
+        };
+
+        fast_task::spin_lock arena_lock;
+        arena* arena_list_ = nullptr;
+        size_t last_arena_size_ = 0;
+
+        void expand();
+
+    public:
+        timing_allocator() noexcept;
+        ~timing_allocator();
+        timing_allocator(const timing_allocator&) = delete;
+        timing_allocator& operator=(const timing_allocator&) = delete;
+
+        free_node* pop_batch(size_t count);
+        void push_batch(free_node* head, free_node* tail, size_t count);
+        void claim_unused();
+
+        size_t available() const noexcept {
+            return global_available_.load(std::memory_order_relaxed);
+        }
+    };
+
+    struct FT_API_LOCAL tl_timing_alloc_cache {
+        timing_allocator::free_node* free_list = nullptr;
+        size_t free_count = 0;
+
+        void* allocate();
+        void deallocate(void* p);
+        void release();
     };
 
     class hashed_timing_wheel {
@@ -65,7 +105,8 @@ namespace fast_task {
         static constexpr size_t LEVELS = 4;
         static constexpr size_t SLOT_BITS = 8;
         static constexpr size_t SLOTS = 1u << SLOT_BITS;
-        static constexpr uint64_t MAX_TICK_RANGE = uint64_t(1) << (LEVELS * SLOT_BITS);
+        static constexpr uint64_t MAX_TICK_RANGE =
+            uint64_t(1) << (LEVELS * SLOT_BITS);
 
         hashed_timing_wheel();
         ~hashed_timing_wheel();
@@ -73,8 +114,12 @@ namespace fast_task {
         hashed_timing_wheel(const hashed_timing_wheel&) = delete;
         hashed_timing_wheel& operator=(const hashed_timing_wheel&) = delete;
 
-        timing* insert(timing&& t);
+        timing* insert(uint64_t wait_ticks, task awake_task, uint16_t check_id, bool is_cold);
+
         void remove(timing* handle);
+
+        uint64_t to_ticks(std::chrono::high_resolution_clock::time_point tp) const;
+        std::chrono::high_resolution_clock::time_point to_timepoint(uint64_t ticks) const;
 
         template <typename F>
         void collect_expired(std::chrono::high_resolution_clock::time_point now, F&& handler) {
@@ -90,9 +135,11 @@ namespace fast_task {
                 advance_one_tick(handler);
             }
 
-            collect_slot(static_cast<size_t>(current_tick_ & 0xFF), handler);
-            drain_overflow_to(now, handler);
+            collect_slot(static_cast<size_t>(current_tick_ & (SLOTS - 1)), handler);
+            drain_expired_overflow(now, handler);
         }
+
+        void drain_overflow();
 
         std::chrono::high_resolution_clock::time_point next_deadline() const;
 
@@ -103,58 +150,48 @@ namespace fast_task {
         void clear(F&& handler) {
             for (size_t level = 0; level < LEVELS; ++level) {
                 for (size_t slot = 0; slot < SLOTS; ++slot) {
-                    timing* t = slots_[level][slot];
+                    timing* t =
+                        slots_[level][slot].exchange(nullptr, std::memory_order_acquire);
                     while (t) {
-                        timing* next = t->wheel_next;
-                        t->wheel_next = nullptr;
-                        t->wheel_prev = nullptr;
-                        handler(*t);
-                        pool_.deallocate(t);
+                        timing* next =
+                            t->wheel_next.load(std::memory_order_relaxed);
+                        t->wheel_next.store(nullptr, std::memory_order_relaxed);
+                        if (!t->cancelled.load(std::memory_order_relaxed))
+                            handler(*t);
+                        deallocate_node(t);
                         t = next;
                     }
-                    slots_[level][slot] = nullptr;
                 }
             }
-            while (!overflow_.empty()) {
-                timing* t = overflow_.top();
-                overflow_.pop();
-                t->in_overflow = false;
-                handler(*t);
-                pool_.deallocate(t);
+
+            timing* batch[256];
+            size_t n;
+            while ((n = overflow_.try_dequeue_bulk(batch, 256)) > 0) {
+                for (size_t i = 0; i < n; ++i) {
+                    if (!batch[i]->cancelled.load(std::memory_order_relaxed))
+                        handler(*batch[i]);
+                    deallocate_node(batch[i]);
+                }
             }
-            has_overflow_ = false;
-            overflow_drain_head_ = nullptr;
+            has_overflow_.store(false, std::memory_order_relaxed);
 
             epoch_ = std::chrono::high_resolution_clock::now();
             current_tick_ = 0;
         }
 
     private:
-        timing* slots_[LEVELS][SLOTS];
+        std::atomic<timing*> slots_[LEVELS][SLOTS];
 
         uint64_t current_tick_ = 0;
         std::chrono::high_resolution_clock::time_point epoch_;
 
-        timing_pool pool_;
-
-        struct overflow_cmp {
-            bool operator()(const timing* a, const timing* b) const {
-                return a->wait_timepoint > b->wait_timepoint;
-            }
-        };
-
-        std::priority_queue<timing*, std::vector<timing*>, overflow_cmp> overflow_;
-        timing* overflow_drain_head_ = nullptr;
-        bool has_overflow_ = false;
+        moodycamel::ConcurrentQueue<timing*> overflow_;
+        std::atomic<bool> has_overflow_{false};
 
         static size_t slot_of(uint64_t tick, size_t level);
         static uint64_t ticks_per_level(size_t level);
 
-        uint64_t to_ticks(std::chrono::high_resolution_clock::time_point tp) const;
-        std::chrono::high_resolution_clock::time_point to_timepoint(uint64_t ticks) const;
-
-        void link(timing& t, size_t level, uint64_t use_tick);
-        void unlink(timing& t);
+        void push_slot(size_t level, size_t slot, timing* node);
 
         template <typename F>
         void advance_one_tick(F& handler) {
@@ -167,43 +204,56 @@ namespace fast_task {
                 else
                     break;
             }
-            collect_slot(static_cast<size_t>(current_tick_ & 0xFF), handler);
+            collect_slot(static_cast<size_t>(current_tick_ & (SLOTS - 1)), handler);
         }
 
         void cascade_from(size_t level);
 
         template <typename F>
         void collect_slot(size_t slot, F& handler) {
-            timing* t = slots_[0][slot];
-            slots_[0][slot] = nullptr;
-            while (t) {
-                timing* next = t->wheel_next;
-                t->wheel_next = nullptr;
-                t->wheel_prev = nullptr;
-                handler(*t);
-                pool_.deallocate(t);
-                t = next;
+            timing* chain = slots_[0][slot].exchange(nullptr, std::memory_order_acquire);
+            while (chain) {
+                timing* next =
+                    chain->wheel_next.load(std::memory_order_relaxed);
+                chain->wheel_next.store(nullptr, std::memory_order_relaxed);
+                if (!chain->cancelled.load(std::memory_order_acquire))
+                    handler(*chain);
+                deallocate_node(chain);
+                chain = next;
             }
         }
-
-        void drain_overflow();
 
         template <typename F>
-        void drain_overflow_to(std::chrono::high_resolution_clock::time_point now, F& handler) {
-            if (!has_overflow_)
+        void drain_expired_overflow(std::chrono::high_resolution_clock::time_point now, F& handler) {
+            if (!has_overflow_.load(std::memory_order_relaxed))
                 return;
-            while (!overflow_.empty()) {
-                timing* t = overflow_.top();
-                if (t->wait_timepoint > now)
-                    break;
-                overflow_.pop();
-                t->in_overflow = false;
-                handler(*t);
-                pool_.deallocate(t);
+
+            timing* batch[256];
+            size_t n = overflow_.try_dequeue_bulk(batch, 256);
+            size_t requeue = 0;
+
+            for (size_t i = 0; i < n; ++i) {
+                timing* t = batch[i];
+                if (t->cancelled.load(std::memory_order_acquire)) {
+                    deallocate_node(t);
+                    continue;
+                }
+
+                auto tp = to_timepoint(t->wait_ticks);
+                if (tp <= now) {
+                    t->in_overflow = false;
+                    handler(*t);
+                    deallocate_node(t);
+                } else
+                    batch[requeue++] = t;
             }
-            if (overflow_.empty())
-                has_overflow_ = false;
+
+            if (requeue > 0)
+                overflow_.enqueue_bulk(batch, requeue);
         }
+
+        static timing* allocate_node();
+        static void deallocate_node(timing* t);
     };
 
 } // namespace fast_task

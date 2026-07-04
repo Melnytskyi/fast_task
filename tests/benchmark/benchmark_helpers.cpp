@@ -6,6 +6,7 @@
 
 #include "benchmark_helpers.hpp"
 
+#include <algorithm>
 #include <cstring>
 #include <iostream>
 #include <string>
@@ -79,7 +80,22 @@ static void run_benchmark_child(const char* prog, const benchmark_registry::benc
         std::cerr << "Benchmark " << entry.name << " failed.\n";
 }
 
+class number_sep : public std::numpunct<char> {
+    virtual char do_thousands_sep() const {
+        return '\'';
+    }
+
+    virtual char do_decimal_point() const {
+        return '.';
+    }
+
+    virtual std::string do_grouping() const {
+        return "\03";
+    }
+};
+
 int main(int argc, char** argv) {
+    std::cout.imbue(std::locale(std::locale::classic(), new number_sep()));
     if (argc == 3 && std::strcmp(argv[1], "--_run_child") == 0) {
         const char* name = argv[2];
         auto& registry = benchmark_registry::get_registry();
@@ -93,12 +109,9 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    auto registry = benchmark_registry::get_registry();
+    auto registry = auto(benchmark_registry::get_registry());
     std::sort(registry.begin(), registry.end(), [](auto& it, auto& it2) {
-        if (it.name == nullptr || it2.name == nullptr)
-            return 0;
-        else
-            return std::strcmp(it.name, it2.name);
+        return std::strcmp(it.name, it2.name) > 0;
     });
     if (argc < 2) {
         for (auto& entry : registry)

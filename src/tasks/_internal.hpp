@@ -22,6 +22,7 @@
     #include <internal/task_object.hpp>
     #include <shared.hpp>
     #include <task.hpp>
+    #include <tasks/classes/synchronization/futex_waiter.hpp>
     #include <tasks/classes/synchronization/internal_sched_cv.hpp>
     #include <tasks/util/_dbg_macro.hpp>
     #include <tasks/util/fixed_task_allocator.hpp>
@@ -244,7 +245,8 @@ namespace fast_task {
 
     struct FT_API_LOCAL executors_local {
         tl_task_alloc_cache task_alloc_cache;
-        std::shared_ptr<work_stealing_deque<task_object*>> local_tasks = std::make_shared<work_stealing_deque<task_object*>>();
+        tl_timing_alloc_cache timing_alloc_cache;
+        std::unique_ptr<work_stealing_deque<task_object*>> local_tasks = std::make_unique<work_stealing_deque<task_object*>>();
         std::exception_ptr ex_ptr;
         task curr_task = nullptr;
         pcg32 rand;
@@ -268,6 +270,8 @@ namespace fast_task {
     #endif
         } transfer_state;
 
+        std::chrono::high_resolution_clock::time_point pending_timer = std::chrono::high_resolution_clock::time_point::min();
+
         void reset();
     };
 
@@ -290,7 +294,7 @@ namespace fast_task {
     struct FT_API_LOCAL executor_global {
         global_task_allocator gba;
         internal_sched_cv no_tasks_execute_notifier;
-        fast_task::condition_variable time_notifier;
+        futex_waiter timer_waiter;
         fast_task::condition_variable_any tasks_notifier;
         fast_task::condition_variable_any executor_shutdown_notifier;
 
@@ -298,10 +302,8 @@ namespace fast_task {
         moodycamel::ConcurrentQueue<task_object*> tasks;
         moodycamel::ConcurrentQueue<task_object*> cold_tasks;
         hashed_timing_wheel timed_wheel;
-        hashed_timing_wheel cold_timed_wheel;
 
         fast_task::rw_mutex task_thread_safety;
-        fast_task::mutex task_timer_safety;
 
 
         std::atomic<bool> time_control_enabled{false};
@@ -347,7 +349,7 @@ namespace fast_task {
         glob.stw_barrier_enter = std::make_unique<std::barrier<>>(thread_count + 1); // +1 for this thread
         glob.stw_barrier_exit = std::make_unique<std::barrier<>>(thread_count + 1);
         glob.stw_request.store(true, std::memory_order_release);
-        glob.time_notifier.notify_all();
+        glob.timer_waiter.notify_one();
         glob.tasks_notifier.notify_all();
         glob.stw_barrier_enter->arrive_and_wait(); // Wait for all executors to pause
         work();                                    // Execute the dump
@@ -379,13 +381,10 @@ namespace fast_task {
     void FT_API_LOCAL transfer_task(task&&, enter_state* stat = nullptr);
     void FT_API_LOCAL makeTimeWait(std::chrono::high_resolution_clock::time_point t);
     void FT_API_LOCAL makeTimeWait_extern(task, std::chrono::high_resolution_clock::time_point time_point);
-
-    void FT_API_LOCAL makeTimeWait_unsafe(std::chrono::high_resolution_clock::time_point t);
     void FT_API_LOCAL resetTimeWait();
 
     void FT_API_LOCAL taskExecutor(bool end_in_task_out = false, bool prevent_naming = false);
     void FT_API_LOCAL bindedTaskExecutor(uint16_t id);
-    void FT_API_LOCAL unsafe_put_task_to_timed_queue(hashed_timing_wheel& wheel, std::chrono::high_resolution_clock::time_point t, task&);
     bool FT_API_LOCAL can_be_scheduled_task_to_hot();
     void FT_API_LOCAL forceCancelCancellation(const task_cancellation& restart);
 

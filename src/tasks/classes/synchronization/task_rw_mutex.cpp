@@ -304,11 +304,10 @@ namespace fast_task {
             get_data(get_loc().curr_task).set_awaked(false);
             get_data(get_loc().curr_task).set_time_end(false);
             while (values.current_writer_task) {
-                fast_task::lock_guard guard(glob.task_timer_safety);
-                makeTimeWait_unsafe(time_point);
+                get_loc().pending_timer = time_point;
                 node.awake_check = get_data(node.task).awake_check;
                 push_back(values, &node);
-                swapCtxRelock(glob.task_timer_safety, values.no_race);
+                swapCtxRelock(values.no_race);
                 auto awaked = get_data(get_loc().curr_task).get_awaked();
                 resetTimeWait();
                 if (!awaked) {
@@ -319,11 +318,10 @@ namespace fast_task {
             values.current_writer_task = get_loc().curr_task.get_id();
 
             while (!values.readers.empty()) {
-                fast_task::lock_guard guard(glob.task_timer_safety);
-                makeTimeWait_unsafe(time_point);
+                get_loc().pending_timer = time_point;
                 node.awake_check = get_data(node.task).awake_check;
                 push_back(values, &node);
-                swapCtxRelock(glob.task_timer_safety, values.no_race);
+                swapCtxRelock(values.no_race);
                 auto awaked = get_data(get_loc().curr_task).get_awaked();
                 resetTimeWait();
                 if (!awaked) {

@@ -446,6 +446,10 @@ namespace fast_task {
             default:
                 break;
             }
+            if (loc.pending_timer != std::chrono::high_resolution_clock::time_point::min()) {
+                makeTimeWait(loc.pending_timer);
+                loc.pending_timer = std::chrono::high_resolution_clock::time_point::min();
+            }
             if (loc.transfer_state.pending == nullptr)
                 break;
 #if FT_TASK_TRANSFERS_LIMIT > 0
@@ -531,7 +535,7 @@ namespace fast_task {
                 return;
         }
 
-        task_object* raw_task = task.release(); // Extract once
+        task_object* raw_task = task.release();
         if (raw_task->bind_to_worker_id == (uint16_t)-1) {
             if (raw_task->get_auto_bind()) {
                 fast_task::shared_lock global_guard(glob.binded_workers_safety);

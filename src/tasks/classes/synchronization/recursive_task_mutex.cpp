@@ -125,49 +125,42 @@ namespace fast_task {
                 mutex.values.current_task = 0;
                 if (!head)
                     return;
-                {
-                    fast_task::shared_lock guard(glob.task_thread_safety);
-                    task_mutex::resume_task* curr = head;
-                    while (curr) {
-                        task_mutex::resume_task* next = curr->next;
-                        if (curr->task == nullptr) {
-                            if (curr->native_cv != nullptr) {
-                                *curr->native_check = true;
-                                curr->native_cv->notify_all();
-                            }
-                        } else {
-                            fast_task::lock_guard guard_loc(get_data(curr->task));
-                            if (get_data(curr->task).awake_check == curr->awake_check) {
-                                if (!get_data(curr->task).get_time_end()) {
-                                    bool on_scheduler = get_data(curr->task).get_is_on_scheduler();
-                                    if (on_scheduler) {
-                                        mutex.values.current_task = curr->task.get_id();
-                                        ++recursive_count;
+                task_mutex::resume_task* curr = head;
+                while (curr) {
+                    task_mutex::resume_task* next = curr->next;
+                    if (curr->task == nullptr) {
+                        if (curr->native_cv != nullptr) {
+                            *curr->native_check = true;
+                            curr->native_cv->notify_all();
+                        }
+                    } else {
+                        fast_task::lock_guard guard_loc(get_data(curr->task));
+                        if (get_data(curr->task).awake_check == curr->awake_check) {
+                            if (!get_data(curr->task).get_time_end()) {
+                                bool on_scheduler = get_data(curr->task).get_is_on_scheduler();
+                                if (on_scheduler) {
+                                    mutex.values.current_task = curr->task.get_id();
+                                    ++recursive_count;
 
-                                        if (next) {
-                                            next->prev = nullptr;
-                                            mutex.values.begin = next;
-                                            mutex.values.end = next->next ? end : next;
-                                        }
+                                    if (next) {
+                                        next->prev = nullptr;
+                                        mutex.values.begin = next;
+                                        mutex.values.end = next->next ? end : next;
                                     }
-                                    get_data(curr->task).set_awaked(true);
-                                    task rescheduled = curr->task;
-                                    {
-                                        fast_task::relock_guard guard_relock(guard);
-                                        transfer_task(std::move(rescheduled));
-                                    }
-                                    if (on_scheduler)
-                                        break;
                                 }
+                                get_data(curr->task).set_awaked(true);
+                                transfer_task(task(curr->task));
+                                if (on_scheduler)
+                                    break;
                             }
                         }
-                        curr = next;
                     }
-                    glob.tasks_notifier.notify_one();
-                    if (task::max_running_tasks && get_loc().is_task_thread)
-                        if (can_be_scheduled_task_to_hot() && get_loc().curr_task && !get_data(get_loc().curr_task).is_ended())
-                            to_yield = true;
+                    curr = next;
                 }
+                if (task::max_running_tasks && get_loc().is_task_thread)
+                    if (can_be_scheduled_task_to_hot() && get_loc().curr_task && !get_data(get_loc().curr_task).is_ended())
+                        to_yield = true;
+
                 no_race_guard.unlock();
                 if (to_yield)
                     this_task::yield();

@@ -81,15 +81,13 @@ namespace fast_task {
             node.task = get_loc().curr_task;
             node.awake_check = get_data(get_loc().curr_task).awake_check;
 
-            fast_task::unique_lock guard_tim(glob.task_timer_safety);
-            makeTimeWait_unsafe(time_point);
+            get_loc().pending_timer = time_point;
             fast_task::unique_lock guard(values.no_race);
             relock_guard relock(mut);
             push_back(values, &node);
-            swapCtxRelock(values.no_race, glob.task_timer_safety);
+            swapCtxRelock(values.no_race);
             auto timed = get_data(get_loc().curr_task).get_time_end();
             guard.unlock();
-            guard_tim.unlock();
 
             resetTimeWait();
             if (timed) {
@@ -149,20 +147,18 @@ namespace fast_task {
     }
 
     bool task_condition_variable::wait_until(std::unique_lock<mutex_unify>& mut, std::chrono::high_resolution_clock::time_point time_point) {
+        resume_task node;
         if (get_loc().is_task_thread) {
-            resume_task node;
             node.task = get_loc().curr_task;
             node.awake_check = get_data(get_loc().curr_task).awake_check;
 
-            fast_task::unique_lock guard_tim(glob.task_timer_safety);
-            makeTimeWait_unsafe(time_point);
+            get_loc().pending_timer = time_point;
             fast_task::unique_lock guard(values.no_race);
             relock_guard relock(mut);
             push_back(values, &node);
-            swapCtxRelock(values.no_race, glob.task_timer_safety);
+            swapCtxRelock(values.no_race);
             auto timed = get_data(get_loc().curr_task).get_time_end();
             guard.unlock();
-            guard_tim.unlock();
 
             resetTimeWait();
             if (timed) {
@@ -173,7 +169,6 @@ namespace fast_task {
         } else {
             fast_task::condition_variable_any cd;
             bool has_res = false;
-            resume_task node;
             node.task = nullptr;
             node.awake_check = 0;
             node.native_cv = &cd;
@@ -203,36 +198,32 @@ namespace fast_task {
         if (!head)
             return;
         bool to_yield = false;
-        {
-            fast_task::shared_lock guard(glob.task_thread_safety);
-            resume_task* curr = head;
-            while (curr) {
-                resume_task* next = curr->next;
-                if (curr->task == nullptr) {
-                    if (curr->native_cv != nullptr) {
-                        *curr->native_check = true;
-                        curr->native_cv->notify_all();
-                    }
-                } else {
-                    fast_task::lock_guard guard_loc(get_data(curr->task));
-                    if (get_data(curr->task).awake_check == curr->awake_check) {
-                        if (!get_data(curr->task).get_time_end()) {
-                            get_data(curr->task).set_awaked(true);
-                            fast_task::relock_guard guard_relock(guard);
-                            transfer_task(std::move(curr->task));
-                        }
+
+        resume_task* curr = head;
+        while (curr) {
+            resume_task* next = curr->next;
+            if (curr->task == nullptr) {
+                if (curr->native_cv != nullptr) {
+                    *curr->native_check = true;
+                    curr->native_cv->notify_all();
+                }
+            } else {
+                fast_task::lock_guard guard_loc(get_data(curr->task));
+                if (get_data(curr->task).awake_check == curr->awake_check) {
+                    if (!get_data(curr->task).get_time_end()) {
+                        get_data(curr->task).set_awaked(true);
+                        transfer_task(std::move(curr->task));
                     }
                 }
-                if (curr->heap_allocated)
-                    delete curr;
-                curr = next;
             }
-            glob.tasks_notifier.notify_one();
-            if (task::max_running_tasks && get_loc().is_task_thread)
-                if (can_be_scheduled_task_to_hot() && get_loc().curr_task && !get_data(get_loc().curr_task).is_ended())
-                    to_yield = true;
+            if (curr->heap_allocated)
+                delete curr;
+            curr = next;
         }
-        no_race_guard.unlock();
+        if (task::max_running_tasks && get_loc().is_task_thread)
+            if (can_be_scheduled_task_to_hot() && get_loc().curr_task && !get_data(get_loc().curr_task).is_ended())
+                to_yield = true;
+
         if (to_yield)
             this_task::yield();
     }

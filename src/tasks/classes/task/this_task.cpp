@@ -81,9 +81,8 @@ namespace fast_task::this_task {
 
     void sleep_until(std::chrono::high_resolution_clock::time_point time_point) {
         if (get_loc().is_task_thread) {
-            fast_task::lock_guard guard(glob.task_timer_safety);
-            makeTimeWait_unsafe(time_point);
-            swapCtxRelock(glob.task_timer_safety);
+            get_loc().pending_timer = time_point;
+            swapCtx();
             resetTimeWait();
         } else
             this_thread::sleep_until(time_point);
@@ -93,8 +92,7 @@ namespace fast_task::this_task {
         if (get_loc().is_task_thread) {
             if (std::chrono::high_resolution_clock::now() >= time_point)
                 return true;
-            fast_task::lock_guard guard(glob.task_timer_safety);
-            makeTimeWait_unsafe(time_point);
+            get_loc().pending_timer = time_point;
             return false;
         } else
             throw invalid_context();

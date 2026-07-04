@@ -111,11 +111,10 @@ namespace fast_task {
 
         while (!values.allow_threshold) {
             if (get_loc().is_task_thread) {
-                fast_task::lock_guard guard(glob.task_timer_safety);
+                get_loc().pending_timer = time_point;
                 node.awake_check = get_data(node.task).awake_check;
                 push_back(values, &node);
-                makeTimeWait_unsafe(time_point);
-                swapCtxRelock(glob.task_timer_safety, values.no_race);
+                swapCtxRelock(values.no_race);
                 auto awaked = get_data(get_loc().curr_task).get_awaked();
                 resetTimeWait();
                 if (!awaked) {
@@ -169,7 +168,6 @@ namespace fast_task {
         if (!head)
             return;
 
-        fast_task::shared_lock guard(glob.task_thread_safety);
         resume_task* curr = head;
         while (curr) {
             resume_task* next = curr->next;
@@ -177,7 +175,6 @@ namespace fast_task {
             if (get_data(curr->task).awake_check == curr->awake_check) {
                 if (!get_data(curr->task).get_time_end()) {
                     get_data(curr->task).set_awaked(true);
-                    fast_task::relock_guard guard_relock(guard);
                     transfer_task(std::move(curr->task));
                 }
             }

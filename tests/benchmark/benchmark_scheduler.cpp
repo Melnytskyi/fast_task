@@ -5,6 +5,7 @@
 // http://www.boost.org/LICENSE_1_0.txt)
 
 #include "benchmark_helpers.hpp"
+#include <coroutine.hpp>
 #include <helpers.hpp>
 #include <task.hpp>
 #include <thread>
@@ -85,16 +86,19 @@ static const scale_point scheduler_staggered_scales[] = {
     {"1M", 1'000'000},
 };
 
-BENCHMARK_MEM(scheduler_staggered_sleep, scheduler_staggered_scales) {
+BENCHMARK_MEM(scheduler_staggered_sleep, scheduler_staggered_scales, std::chrono::milliseconds(50)) {
     std::vector<fast_task::task> tasks;
     tasks.reserve(scale);
+    auto coro = [](std::chrono::system_clock::time_point tp) -> fast_task::task_coro<void> {
+        co_await fast_task::this_task::async_sleep_until(tp);
+        co_return;
+    };
 
-    auto base = std::chrono::high_resolution_clock::now();
+    auto tp = std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(50);
     for (uint64_t i = 0; i < scale; ++i) {
-        auto tp = base + std::chrono::microseconds(1 * i);
-        tasks.push_back(fast_task::task::run([tp] {
-            fast_task::this_task::sleep_until(tp);
-        }));
+        auto task = coro(tp);
+        task->start();
+        tasks.push_back(task);
     }
 
     for (auto& t : tasks)
@@ -109,7 +113,7 @@ static const scale_point scheduler_schedule_scales[] = {
     {"1M", 1'000'000},
 };
 
-BENCHMARK(scheduler_schedule_until, scheduler_schedule_scales) {
+BENCHMARK_MEM(scheduler_schedule_until, scheduler_schedule_scales, std::chrono::milliseconds(50)) {
     auto base = std::chrono::high_resolution_clock::now();
     for (uint64_t i = 0; i < scale; ++i) {
         auto tp = base + std::chrono::microseconds(200 * i);

@@ -15,6 +15,7 @@ target_link_libraries(fast_task PRIVATE fast_task_flags)
 target_link_libraries(fast_task PRIVATE fast_task_dependencies)
 target_include_directories(fast_task PUBLIC "include")
 target_include_directories(fast_task PRIVATE "src")
+target_compile_options(fast_task PUBLIC -g)
 
 if(FAST_TASK_BUILD_TESTS)
   enable_testing()

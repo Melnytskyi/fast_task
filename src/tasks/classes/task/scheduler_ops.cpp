@@ -44,16 +44,14 @@ namespace fast_task::scheduler {
             return;
         }
 
-        if (!glob.time_control_enabled)
-            startTimeController();
-        fast_task::unique_lock guard(glob.task_timer_safety);
-        if (can_be_scheduled_task_to_hot())
-            unsafe_put_task_to_timed_queue(glob.timed_wheel, time_point, lgr_task);
-        else
-            unsafe_put_task_to_timed_queue(glob.cold_timed_wheel, time_point, lgr_task);
-        glob.time_notifier.notify_all();
+        startTimeController();
+
+
+        uint64_t ticks = glob.timed_wheel.to_ticks(time_point);
+        glob.timed_wheel.insert(ticks, lgr_task, get_data(lgr_task).awake_check, !can_be_scheduled_task_to_hot());
+
+        glob.timer_waiter.notify_one();
         glob.tasks_notifier.notify_one();
-        guard.unlock();
     }
 
     void start(std::list<task>& tasks) {
@@ -297,7 +295,7 @@ namespace fast_task::scheduler {
                 return false;
             };
 
-            while (tasks_present() || glob.cold_tasks.size_approx() || !glob.timed_wheel.empty() || !glob.cold_timed_wheel.empty() || glob.executing_tasks) {
+            while (tasks_present() || glob.cold_tasks.size_approx() || !glob.timed_wheel.empty() || glob.executing_tasks) {
                 if (!total_executors())
                     create_executor(1);
 
@@ -342,9 +340,8 @@ namespace fast_task::scheduler {
     void shut_down() {
         {
             fast_task::unique_lock guard(glob.task_thread_safety);
-            fast_task::unique_lock lock(glob.task_timer_safety);
             glob.shutdown_requested.store(true, std::memory_order_release);
-            glob.time_notifier.notify_all();
+            glob.timer_waiter.notify_one();
         }
         await_no_tasks();
         glob.shutdown_requested.store(false, std::memory_order_release);
@@ -358,11 +355,10 @@ namespace fast_task::scheduler {
             while (glob.executors)
                 glob.executor_shutdown_notifier.wait(guard);
         }
-        {
-            fast_task::unique_lock guard(glob.task_timer_safety);
-            glob.time_control_enabled = false;
-            glob.time_notifier.notify_all();
-        }
+
+        glob.time_control_enabled.store(false);
+        glob.timer_waiter.notify_one();
+
         {
             fast_task::unique_lock guard(glob.task_thread_safety);
             while (glob.thread_count.load())

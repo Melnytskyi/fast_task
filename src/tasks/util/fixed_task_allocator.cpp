@@ -95,18 +95,39 @@ namespace fast_task {
     }
 
     global_task_allocator::free_node* global_task_allocator::pop_batch(size_t count) {
-        tagged_node old = global_stack_.load(std::memory_order_acquire);
-        while (old.ptr) {
-            free_node* batch_tail = nullptr;
-            free_node* new_head = advance(old.ptr, count, &batch_tail);
-            tagged_node desired{new_head, old.counter + 1};
-            if (global_stack_.compare_exchange_weak(old, desired, std::memory_order_release, std::memory_order_acquire)) {
-                batch_tail->next = nullptr;
-                return old.ptr;
+        free_node* head = nullptr;
+        free_node* tail = nullptr;
+        size_t popped = 0;
+
+        while (popped < count) {
+            tagged_node old = global_stack_.load(std::memory_order_acquire);
+            if (!old.ptr) {
+                if (popped == 0) {
+                    expand();
+                    continue;
+                }
+                break;
+            }
+            tagged_node desired{old.ptr->next, old.counter + 1};
+            if (global_stack_.compare_exchange_weak(
+                    old,
+                    desired,
+                    std::memory_order_release,
+                    std::memory_order_acquire
+                )) {
+                old.ptr->next = nullptr;
+                if (!head)
+                    head = tail = old.ptr;
+                else {
+                    tail->next = old.ptr;
+                    tail = old.ptr;
+                }
+                ++popped;
             }
         }
-        expand();
-        return pop_batch(count);
+
+        global_available_.fetch_sub(popped, std::memory_order_relaxed);
+        return head;
     }
 
     void global_task_allocator::push_batch(free_node* head, free_node* tail, size_t count) {
