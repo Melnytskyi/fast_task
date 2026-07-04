@@ -99,11 +99,9 @@ namespace fast_task {
             if (!old.ptr) {
                 if (popped == 0) {
                     expand();
-                    // After expand, retry from scratch:
-                    // stack now has fresh nodes
                     continue;
                 }
-                break; // partial batch
+                break;
             }
             tagged_node desired{old.ptr->next, old.counter + 1};
             if (global_stack_.compare_exchange_weak(
@@ -121,7 +119,6 @@ namespace fast_task {
                 }
                 ++popped;
             }
-            // CAS failed → old reloaded, retry
         }
 
         global_available_.fetch_sub(popped, std::memory_order_relaxed);

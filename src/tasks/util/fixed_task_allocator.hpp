@@ -42,6 +42,7 @@ namespace fast_task {
     private:
         std::atomic<tagged_node> global_stack_;
         std::atomic<size_t> global_available_{0};
+        std::atomic<bool> expanding_{false};
 
         struct alignas(block_alignment) arena {
             arena* next;

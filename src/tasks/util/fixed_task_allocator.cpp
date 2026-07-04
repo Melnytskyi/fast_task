@@ -10,6 +10,9 @@
 
 namespace fast_task {
     void global_task_allocator::expand() {
+        bool expected = false;
+        if (!expanding_.compare_exchange_strong(expected, true, std::memory_order_acquire))
+            return;
         interrupt_unsafe_region ir;
 
         size_t num_blocks = min_arena_blocks;
@@ -21,8 +24,10 @@ namespace fast_task {
         size_t arena_size = num_blocks * block_size;
 
         void* base = os_alloc(arena_size + sizeof(arena));
-        if (!base)
+        if (!base) {
+            expanding_.store(false, std::memory_order_release);
             throw std::bad_alloc();
+        }
         auto* begin = static_cast<std::byte*>(base) + 64;
         auto* end = begin + arena_size;
 
@@ -58,6 +63,7 @@ namespace fast_task {
             }
         }
         global_available_.fetch_add(num_blocks, std::memory_order_relaxed);
+        expanding_.store(false, std::memory_order_release);
     }
 
     global_task_allocator::free_node* global_task_allocator::advance(free_node* head, size_t count, free_node** out_batch_tail = nullptr) {
