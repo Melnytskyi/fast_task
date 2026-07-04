@@ -113,15 +113,17 @@ static const scale_point scheduler_schedule_scales[] = {
     {"1M", 1'000'000},
 };
 
-BENCHMARK_MEM(scheduler_schedule_until, scheduler_schedule_scales, std::chrono::milliseconds(50)) {
-    auto base = std::chrono::high_resolution_clock::now();
+BENCHMARK_MEM(scheduler_schedule_until, scheduler_schedule_scales, std::chrono::milliseconds(100)) {
+    auto tp = std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(100);
+    auto coro = []() -> fast_task::task_coro<void> {
+        co_return;
+    };
     for (uint64_t i = 0; i < scale; ++i) {
-        auto tp = base + std::chrono::microseconds(200 * i);
         fast_task::scheduler::schedule_until(
-            fast_task::task::create([] { /* empty */ }),
+            coro(),
             tp
         );
     }
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    fast_task::scheduler::await_no_tasks();
 }

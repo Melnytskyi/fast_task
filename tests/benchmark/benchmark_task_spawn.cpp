@@ -19,7 +19,7 @@ static void task_spawn_empty_task_create_start_await() {
         {"1M", 1'000'000},
     };
 
-    std::cout << "# Task — Create, Start, Await (empty lambda)\n\n";
+    std::cout << "#task_spawn_empty_task_create_start_await\n\n";
     std::cout << "|Scale        |   Create/ms  |   Start/ms   |     Await/ms    |     Total/ms    |   Tasks/s  |\n";
     std::cout << "|:------------|-------------:|-------------:|----------------:|----------------:|-----------:|\n";
 
@@ -50,7 +50,7 @@ static void task_spawn_empty_task_create_start_await() {
 
         // clang-format off
     std::cout << '|' << std::left << std::setw(13) << sp.label 
-              << '|' << std::right << std::fixed << std::setw(14) << create_ms
+              << '|' << std::right << std::fixed << std::setw(14) << std::setprecision(2) << create_ms
               << '|' << std::setw(14) << std::right << std::fixed << std::setprecision(2) << start_ms
               << '|' << std::setw(17) << std::right << std::fixed << std::setprecision(2) << await_ms
               << '|' << std::setw(17) << std::right << std::fixed << std::setprecision(2) << create_ms + (start_ms + await_ms)
