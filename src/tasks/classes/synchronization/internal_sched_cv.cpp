@@ -69,7 +69,7 @@ namespace fast_task {
     }
 
     bool internal_sched_cv::enter_wait(mutex_unify& mut, const task& task, enter_state& st) {
-        get_data(task).set_relock_0(mut);
+        get_data(task).set_relock(mut);
         auto node = st.template use<resume_task>();
         node->task = task;
         node->awake_check = get_data(task).awake_check;

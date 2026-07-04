@@ -44,19 +44,36 @@ namespace fast_task {
         else if (get_data(task).on_start_override)
             throw std::logic_error("task_query::add requires the on_start_override variable to be unset");
         else {
-            get_data(task).on_start_override_data = tqh;
-            get_data(task).on_start_override = [](auto* cb) {
-                auto* tqh = reinterpret_cast<task_query_handle*>(cb->on_start_override_data);
-                try {
-                    cb->vtable->on_start(cb->user_data());
-                } catch (...) {
+            class redefine_start_query : public to_start_override {
+                task_query_handle* tqh;
+
+            public:
+                redefine_start_query(task_query_handle* tqh) : tqh(tqh) {}
+
+                virtual void callback(task_object* cb) {
+                    try {
+                        cb->vtable->on_start(cb->user_data());
+                    } catch (...) {
+                        __TaskQuery_add_task_leave(tqh);
+                        tqh = nullptr;
+                        cb->on_start_override = nullptr;
+                        throw;
+                    }
                     __TaskQuery_add_task_leave(tqh);
+                    tqh = nullptr;
                     cb->on_start_override = nullptr;
-                    throw;
                 }
-                __TaskQuery_add_task_leave(tqh);
-                cb->on_start_override = nullptr;
+
+                virtual void on_destruct(to_start_override* self) {
+                    if (tqh)
+                        __TaskQuery_add_task_leave(tqh);
+                    delete self;
+                }
+
+                virtual ~redefine_start_query() = default;
             };
+
+            get_data(task).on_start_override = new redefine_start_query(tqh);
             return task;
         }
     }

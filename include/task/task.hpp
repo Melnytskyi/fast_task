@@ -92,7 +92,7 @@ namespace fast_task {
     public:
         static size_t max_running_tasks;
         static bool enable_task_naming;
-        static constexpr size_t sbo_size = 48; // must match task_object::sbo_buffer size
+        static constexpr size_t sbo_size = 64; // must match task_object::sbo_buffer size
 
         task(void* data, task_vtable* vtable, bool is_restartable = false, bool is_on_scheduler = false);
 

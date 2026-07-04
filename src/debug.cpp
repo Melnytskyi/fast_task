@@ -826,7 +826,7 @@ namespace fast_task::debug {
                 [](void* item, void* d) {
                     auto obj = reinterpret_cast<task_object*>(item);
                     auto dat = reinterpret_cast<iterate_task_objects_data*>(d);
-                    if (obj->status.load(std::memory_order_relaxed) != task_object::status_e::released)
+                    if (!obj->is_released())
                         dat->callback(*obj, dat->data);
                 },
                 &d
@@ -844,7 +844,7 @@ __attribute__((used, retain)) std::vector<fast_task::task_object*> collect_task_
         [](void* item, void* d) {
             auto obj = reinterpret_cast<fast_task::task_object*>(item);
             auto dat = reinterpret_cast<std::vector<fast_task::task_object*>*>(d);
-            if (obj->status.load(std::memory_order_relaxed) != fast_task::task_object::status_e::released && obj->status.load(std::memory_order_relaxed) != fast_task::task_object::status_e::ended)
+            if (!obj->is_released() && !obj->is_ended())
                 dat->push_back(obj);
         },
         &collect

@@ -338,7 +338,7 @@ namespace fast_task {
 
     bool task_condition_variable::enter_wait(mutex_unify& mut, const task& task, enter_state& st) {
         fast_task::lock_guard l(values.no_race);
-        get_data(task).set_relock_0(mut);
+        get_data(task).set_relock(mut);
         auto node = st.template use<resume_task>();
         node->task = task;
         node->awake_check = get_data(task).awake_check;
@@ -350,7 +350,7 @@ namespace fast_task {
         if (std::chrono::high_resolution_clock::now() >= time_point)
             return true;
         fast_task::lock_guard l(values.no_race);
-        get_data(task).set_relock_0(mut);
+        get_data(task).set_relock(mut);
         auto node = st.template use<resume_task>();
         node->task = task;
         node->awake_check = get_data(task).awake_check;

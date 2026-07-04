@@ -9,7 +9,6 @@
 > Directly transfers the scheduler's current executing task to target after completion
 >
 > Both current task(c) and target(t) must:
->   - (c, t)have is_on_scheduler = true
 >   - (c, t)have the same worker binding
 >   - (t) The target could be scheduled (is_restartable = true or started = false)
 >   - (c) the scheduler is executing on_start callback(no exception)

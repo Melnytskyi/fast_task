@@ -13,8 +13,6 @@ namespace fast_task {
     void task::init_pointer(void* heap_state, task_vtable* vtable, bool is_restartable, bool is_on_scheduler) {
         obj = task_object::alloc();
         obj->vtable = vtable;
-        obj->status.store(task_object::status_e::created, std::memory_order_relaxed);
-        obj->bind_to_worker_id = (uint16_t)-1;
         obj->set_is_restartable(is_restartable);
         obj->set_is_on_scheduler(is_on_scheduler);
         obj->set_is_sbo(false);
@@ -24,8 +22,6 @@ namespace fast_task {
     void* task::init_inplace(task_vtable* vtable, bool is_restartable, bool is_on_scheduler) {
         obj = task_object::alloc();
         obj->vtable = vtable;
-        obj->status.store(task_object::status_e::created, std::memory_order_relaxed);
-        obj->bind_to_worker_id = (uint16_t)-1;
         obj->set_is_restartable(is_restartable);
         obj->set_is_on_scheduler(is_on_scheduler);
         obj->set_is_sbo(true);

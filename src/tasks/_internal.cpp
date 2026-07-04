@@ -350,6 +350,11 @@ namespace fast_task {
         return status.load(std::memory_order_acquire) == status_e::ended;
     }
 
+    bool task_object::is_released() const noexcept {
+        return status.load(std::memory_order_acquire) == status_e::released;
+    }
+
+
     void* task_object::user_data() const noexcept {
         if ((state.load(std::memory_order_acquire) & state_f::is_sbo) != 0)
             return const_cast<std::byte*>(sbo_buffer);
@@ -431,13 +436,8 @@ namespace fast_task {
             node.awake_check = get_data(get_loc().curr_task).awake_check;
             node.next = on_wait.load(std::memory_order_relaxed);
             on_wait.store(&node, std::memory_order_relaxed);
-            {
-                // Delegate timer insert to the scheduler.
-                get_loc().pending_timer = time_point;
-                swapCtxRelock(self);
-                // The scheduler called makeTimeWait and resetTimeWait
-                // after swapCtx returned.
-            }
+            get_loc().pending_timer = time_point;
+            swapCtxRelock(self);
             bool timed = get_data(get_loc().curr_task).get_time_end();
             resetTimeWait();
             if (timed)
@@ -504,23 +504,15 @@ namespace fast_task {
         return enter_wait(waiter, st);
     }
 
-    mutex_unify task_object::get_relock_0() const noexcept {
-        return mutex_unify_relock_access::from_raw(relock0, relock0_type);
+    mutex_unify task_object::get_relock() const noexcept {
+        return mutex_unify_relock_access::from_raw(relock, relock_type);
     }
 
-    mutex_unify task_object::get_relock_1() const noexcept {
-        return mutex_unify_relock_access::from_raw(relock1, relock1_type);
+    void task_object::set_relock(mutex_unify mut) noexcept {
+        relock = mutex_unify_relock_access::raw_ptr(mut);
+        relock_type = mutex_unify_relock_access::raw_type(mut);
     }
 
-    void task_object::set_relock_0(mutex_unify mut) noexcept {
-        relock0 = mutex_unify_relock_access::raw_ptr(mut);
-        relock0_type = mutex_unify_relock_access::raw_type(mut);
-    }
-
-    void task_object::set_relock_1(mutex_unify mut) noexcept {
-        relock1 = mutex_unify_relock_access::raw_ptr(mut);
-        relock1_type = mutex_unify_relock_access::raw_type(mut);
-    }
 
     global_task_allocator g_block_allocator;
 
@@ -531,10 +523,8 @@ namespace fast_task {
         obj->on_wait.store(nullptr, std::memory_order_relaxed);
         obj->exdata.store(nullptr, std::memory_order_relaxed);
         obj->vtable = nullptr;
-        obj->relock0 = nullptr;
-        obj->relock1 = nullptr;
-        obj->relock0_type = 0;
-        obj->relock1_type = 0;
+        obj->relock = nullptr;
+        obj->relock_type = 0;
         obj->status.store(status_e::created, std::memory_order_relaxed);
         obj->state.store(static_cast<state_f::f>(0), std::memory_order_relaxed);
         obj->bind_to_worker_id = static_cast<uint16_t>(-1);
@@ -543,7 +533,6 @@ namespace fast_task {
         obj->reserved0 = 0;
         obj->link_counter.store(1, std::memory_order_relaxed);
         obj->on_start_override = nullptr;
-        obj->on_start_override_data = nullptr;
         FT_DEBUG_ONLY(register_object(obj));
         return obj;
     }
@@ -560,13 +549,15 @@ namespace fast_task {
     }
 
     void task_object::free(task_object* obj) {
+        if (!obj)
+            return;
         if (obj->link_counter.fetch_sub(1, std::memory_order_acq_rel) == 1) {
             FT_DEBUG_ONLY(unregister_object(obj));
-            if (!obj)
-                return;
-
             const bool started = obj->is_scheduled();
             const bool ended = obj->is_ended();
+
+            if (obj->on_start_override)
+                obj->on_start_override->on_destruct(obj->on_start_override);
 
             if (obj->vtable && obj->vtable->on_destruct)
                 obj->vtable->on_destruct(obj->user_data());

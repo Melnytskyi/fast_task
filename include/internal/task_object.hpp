@@ -6,6 +6,14 @@
 #include <task/task.hpp>
 
 namespace fast_task {
+    class to_start_override {
+    public:
+        virtual void callback(task_object*) = 0;
+        virtual void on_destruct(to_start_override*) = 0; //called when task is destructed and requires to_start_override to be freed
+
+        virtual ~to_start_override() = default;
+    };
+
     struct alignas(64) FT_API_LOCAL task_object {
         struct FT_API_LOCAL wait_item;
         struct FT_API_LOCAL execution_data;
@@ -49,16 +57,15 @@ namespace fast_task {
         std::atomic<void*> tls_data;         // 8
         std::atomic<execution_data*> exdata; // 8
         const task_vtable* vtable;           // 8
-        void* relock0;                       // 8
-        void* relock1;                       // 8
-        uint8_t relock0_type, relock1_type;  // 2
+        void* relock;                        // 8
         uint16_t bind_to_worker_id;          // 2
         uint16_t tls_capacity;               // 2
         uint16_t awake_check;                // 2
+        uint8_t relock_type;                 // 1
+        uint8_t reserved1;                   // 1
+        to_start_override* on_start_override;
 
-        alignas(std::max_align_t) std::byte sbo_buffer[48];
-        void (*on_start_override)(task_object*);
-        void* on_start_override_data;
+        alignas(std::max_align_t) std::byte sbo_buffer[64];
 
         bool get_time_end() const noexcept;
         void set_time_end(bool state) noexcept;
@@ -87,6 +94,7 @@ namespace fast_task {
         bool is_running() const noexcept;   // status == running
         bool is_suspended() const noexcept; // status == suspended
         bool is_ended() const noexcept;     // status == ended
+        bool is_released() const noexcept;  // status == released
 
         void* user_data() const noexcept;
         void end_of_life_notify();
@@ -102,10 +110,8 @@ namespace fast_task {
         bool enter_wait_until(const task&, enter_state& state, std::chrono::high_resolution_clock::time_point);
         bool enter_cancel(const task&, enter_state& state);
 
-        mutex_unify get_relock_0() const noexcept;
-        mutex_unify get_relock_1() const noexcept;
-        void set_relock_0(mutex_unify) noexcept;
-        void set_relock_1(mutex_unify) noexcept;
+        mutex_unify get_relock() const noexcept;
+        void set_relock(mutex_unify) noexcept;
 
         static task_object* alloc();
         static task_object* use(task_object*) noexcept;

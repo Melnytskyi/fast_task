@@ -78,14 +78,11 @@ namespace fast_task {
         ++glob.interrupts;
         auto curr_task = get_loc().curr_task;
         ++get_execution_data(curr_task).interrupt_count;
-        auto old_relock_0 = get_data(curr_task).get_relock_0();
-        auto old_relock_1 = get_data(curr_task).get_relock_1();
-        get_data(curr_task).set_relock_0(nullptr);
-        get_data(curr_task).set_relock_1(nullptr);
+        auto old_relock = get_data(curr_task).get_relock();
+        get_data(curr_task).set_relock(nullptr);
         get_loc().yield_request = true;
         swapCtx();
-        get_data(curr_task).set_relock_0(old_relock_0);
-        get_data(curr_task).set_relock_1(old_relock_1);
+        get_data(curr_task).set_relock(old_relock);
     }
 
     void set_interruptTask() {
@@ -155,15 +152,12 @@ namespace fast_task {
                 bool old_context_in_swap = post_switch_loc.context_in_swap;
                 post_switch_loc.context_in_swap = true;
 
-                auto relock_state_0 = task_data.get_relock_0();
-                auto relock_state_1 = task_data.get_relock_1();
-                task_data.set_relock_0(nullptr);
-                task_data.set_relock_1(nullptr);
+                auto relock_state = task_data.get_relock();
+                task_data.set_relock(nullptr);
                 auto old_time_end_flag = task_data.get_time_end();
                 auto old_awaked = task_data.get_awaked();
 
-                relock_state_0.relock_end();
-                relock_state_1.relock_end();
+                relock_state.relock_end();
                 task_data.set_time_end(old_time_end_flag);
                 task_data.set_awaked(old_awaked);
 
@@ -179,14 +173,11 @@ namespace fast_task {
             glob.tasks_in_swap.fetch_sub(1, std::memory_order_release);
 #endif
             get_loc().context_in_swap = true;
-            auto relock_state_0 = task_data.get_relock_0();
-            auto relock_state_1 = task_data.get_relock_1();
-            task_data.set_relock_0(nullptr);
-            task_data.set_relock_1(nullptr);
+            auto relock_state = task_data.get_relock();
+            task_data.set_relock(nullptr);
             auto old_time_end_flag = task_data.get_time_end();
             auto old_awaked = task_data.get_awaked();
-            relock_state_0.relock_end();
-            relock_state_1.relock_end();
+            relock_state.relock_end();
 
             task_data.awake_check++;
             task_data.set_time_end(old_time_end_flag);
@@ -206,14 +197,7 @@ namespace fast_task {
     }
 
     void swapCtxRelock(const mutex_unify& mut0) {
-        get_data(get_loc().curr_task).set_relock_0(mut0);
-        swapCtx();
-    }
-
-    void swapCtxRelock(const mutex_unify& mut0, const mutex_unify& mut1) {
-        auto& curr_task = get_loc().curr_task;
-        get_data(curr_task).set_relock_0(mut0);
-        get_data(curr_task).set_relock_1(mut1);
+        get_data(get_loc().curr_task).set_relock(mut0);
         swapCtx();
     }
 
@@ -227,7 +211,7 @@ namespace fast_task {
                 timer_reinit();
                 auto vtable = task_obj.vtable;
                 if (task_obj.on_start_override)
-                    task_obj.on_start_override(&task_obj);
+                    task_obj.on_start_override->callback(&task_obj);
                 else if (vtable && vtable->on_start)
                     vtable->on_start(task_obj.user_data());
             } else { //this_task::the_coroutine_ended(get_loc().curr_task); inline
@@ -303,7 +287,7 @@ namespace fast_task {
         try {
             if (!checkCancellation()) {
                 if (data->on_start_override)
-                    data->on_start_override(data);
+                    data->on_start_override->callback(data);
                 else if (data->vtable && data->vtable->on_start)
                     data->vtable->on_start(data->user_data());
             }
@@ -337,11 +321,10 @@ namespace fast_task {
         try {
             if (!checkCancellation()) {
                 if (data->on_start_override)
-                    data->on_start_override(data);
+                    data->on_start_override->callback(data);
                 else if (data->vtable && data->vtable->on_start)
                     data->vtable->on_start(data->user_data());
-                data->get_relock_0().relock_start();
-                data->get_relock_1().relock_start();
+                data->get_relock().relock_start();
                 data->set_status(task_object::status_e::suspended);
             } else
                 data->set_is_restartable(false);
@@ -374,8 +357,7 @@ namespace fast_task {
         auto& stack_current_context = get_execution_data(data).context;
         if (stack_current_context) {
             stack_current_context = std::move(stack_current_context).resume();
-            data->get_relock_0().relock_start();
-            data->get_relock_1().relock_start();
+            data->get_relock().relock_start();
         } else {
             light_stack stack_alloc(1048576 /*1 mb*/);
             auto ss = stack_alloc.allocate();
@@ -385,8 +367,7 @@ namespace fast_task {
 #endif
             ++glob.in_run_tasks;
             stack_current_context = boost::context::callcc(std::allocator_arg, boost::context::preallocated(ss.sp, ss.size, ss), stack_alloc, context_exec);
-            data->get_relock_0().relock_start();
-            data->get_relock_1().relock_start();
+            data->get_relock().relock_start();
         }
         if (loc.ex_ptr) {
             light_stack stack_alloc(1048576 /*1 mb*/);
@@ -397,8 +378,7 @@ namespace fast_task {
 #endif
             ++glob.in_run_tasks;
             stack_current_context = boost::context::callcc(std::allocator_arg, boost::context::preallocated(ss.sp, ss.size, ss), stack_alloc, context_ex_handle);
-            data->get_relock_0().relock_start();
-            data->get_relock_1().relock_start();
+            data->get_relock().relock_start();
             loc.ex_ptr = nullptr;
         }
     }
@@ -525,11 +505,10 @@ namespace fast_task {
             return;
         }
 
-        if (get_data(task).get_is_on_scheduler() && get_data(task).get_relock_0() && stat) {
-            auto mut = get_data(task).get_relock_0();
+        if (get_data(task).get_is_on_scheduler() && get_data(task).get_relock() && stat) {
+            auto mut = get_data(task).get_relock();
 
-            get_data(task).set_relock_0(nullptr);
-            get_data(task).set_relock_1(nullptr);
+            get_data(task).set_relock(nullptr);
 
             if (!mut.enter_wait(task, *stat))
                 return;
