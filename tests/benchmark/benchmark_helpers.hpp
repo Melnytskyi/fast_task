@@ -304,6 +304,14 @@ inline size_t avg_bench_mem(size_t (&usage)[size]) {
 #define BENCHMARK_MEM(name, scales, ...)                                                                \
     struct name {                                                                                       \
         void run(size_t scale);                                                                         \
+        void cleanup() {                                                                                \
+            fast_task::scheduler::shut_down();                                                          \
+            fast_task::scheduler::clean_up();                                                           \
+            size_t n = std::max(2u, std::thread::hardware_concurrency());                               \
+            fast_task::scheduler::create_executor(n);                                                   \
+            while (fast_task::scheduler::total_executors() < n)                                         \
+                std::this_thread::yield();                                                              \
+        }                                                                                               \
         name() {                                                                                        \
             size_t n = std::max(2u, std::thread::hardware_concurrency());                               \
             fast_task::scheduler::create_executor(n);                                                   \

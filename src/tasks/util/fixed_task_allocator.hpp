@@ -14,6 +14,7 @@
     #include <cstdlib>
     #include <new>
 
+    #include <internal/task_object.hpp>
     #include <interrupt.hpp>
     #include <shared.hpp>
     #include <threading.hpp>
@@ -43,12 +44,14 @@ namespace fast_task {
         std::atomic<tagged_node> global_stack_;
         std::atomic<size_t> global_available_{0};
         std::atomic<bool> expanding_{false};
+        std::atomic<bool> is_cleaning{false};
 
         struct alignas(block_alignment) arena {
             arena* next;
             void* base;
             size_t size;
-            arena* next_free;
+            size_t cleanup_current_free = 0;
+            bool to_release = false;
         };
 
         spin_lock arena_lock;
@@ -59,6 +62,7 @@ namespace fast_task {
         static free_node* advance(free_node* head, size_t count, free_node** out_batch_tail);
 
     public:
+        static arena* get_arena(void* any_node);
         global_task_allocator() noexcept;
         ~global_task_allocator();
         global_task_allocator(const global_task_allocator&) = delete;
@@ -67,25 +71,26 @@ namespace fast_task {
         free_node* pop_batch(size_t count);
         void push_batch(free_node* head, free_node* tail, size_t count);
 
-        void iterate_all(void (*)(void* item, void* data), void* data);
+        void iterate_all(void (*)(task_object* item, void* data), void* data);
 
         void claim_unused();
     };
 
     struct FT_API_LOCAL tl_task_alloc_cache {
+        global_task_allocator* parent = nullptr;
         global_task_allocator::free_node* free_list = nullptr;
         size_t free_count = 0;
 
         void allocate_batch();
-        void* allocate();
-        void deallocate(void* p);
+        task_object* allocate();
+        void deallocate(task_object* p);
         void release();
     };
 
     struct FT_API_LOCAL task_alloc {
-        static void* allocate();
+        static task_object* allocate();
 
-        static void deallocate(void* p);
+        static void deallocate(task_object* p);
         static void release();
     };
 }

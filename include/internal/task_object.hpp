@@ -53,7 +53,7 @@ namespace fast_task {
         std::atomic<uint32_t> link_counter;  // 4
         std::atomic<state_f::f> state;       // 2
         std::atomic<status_e> status;        // 1
-        uint8_t reserved0;                   // 1
+        uint8_t relock_type;                 // 1
         std::atomic<void*> tls_data;         // 8
         std::atomic<execution_data*> exdata; // 8
         const task_vtable* vtable;           // 8
@@ -61,8 +61,7 @@ namespace fast_task {
         uint16_t bind_to_worker_id;          // 2
         uint16_t tls_capacity;               // 2
         uint16_t awake_check;                // 2
-        uint8_t relock_type;                 // 1
-        uint8_t reserved1;                   // 1
+        uint16_t arena_offset_pages;         // 2[also used for allocator, do not modify!]
         to_start_override* on_start_override;
 
         alignas(std::max_align_t) std::byte sbo_buffer[64];

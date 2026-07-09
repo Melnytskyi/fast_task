@@ -103,7 +103,7 @@ namespace fast_task::scheduler {
         transfer_task(task(tsk));
     }
 
-    uint16_t create_bind_only_executor(uint16_t fixed_count, bool allow_implicit_start, executor_policy policy) {
+    uint16_t create_bind_only_executor(uint16_t fixed_count, bool allow_implicit_start, preemption_policy policy) {
         fast_task::lock_guard guard(glob.binded_workers_safety);
         uint16_t try_count = 0;
         uint16_t id = (uint16_t)glob.binded_workers.size();
@@ -127,7 +127,7 @@ namespace fast_task::scheduler {
         return id;
     }
 
-    void assign_bind_only_executor(uint16_t id, uint16_t fixed_count, bool allow_implicit_start, executor_policy policy) {
+    void assign_bind_only_executor(uint16_t id, uint16_t fixed_count, bool allow_implicit_start, preemption_policy policy) {
         fast_task::lock_guard guard(glob.binded_workers_safety);
         if (id == (uint16_t)-1)
             throw std::runtime_error("Invalid id");
@@ -387,8 +387,18 @@ namespace fast_task::scheduler {
 
     void clean_up() {
         await_no_tasks();
+        auto& loc = get_loc();
+        loc.task_alloc_cache.release();
         decltype(glob.cold_tasks) cold;
         glob.cold_tasks.swap(cold);
         glob.gba.claim_unused();
+    }
+
+    bool preemption_enabled() {
+#ifdef FT_ENABLE_PREEMPTIVE_SCHEDULER
+        return true;
+#else
+        return false;
+#endif
     }
 }

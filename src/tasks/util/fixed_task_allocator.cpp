@@ -6,9 +6,17 @@
 
 #include "fixed_task_allocator.hpp"
 #include <tasks/_internal.hpp>
+#include <tasks/util/cpu.hpp>
 #include <tasks/util/os_alloc.hpp>
 
 namespace fast_task {
+    auto global_task_allocator::get_arena(void* any_node) -> arena* {
+        return reinterpret_cast<arena*>(
+            (reinterpret_cast<uintptr_t>(any_node) & ~static_cast<uintptr_t>(0xFFF)) -
+            (reinterpret_cast<task_object*>(any_node)->arena_offset_pages << 12)
+        );
+    }
+
     void global_task_allocator::expand() {
         bool expected = false;
         if (!expanding_.compare_exchange_strong(expected, true, std::memory_order_acquire))
@@ -23,18 +31,19 @@ namespace fast_task {
         }
         size_t arena_size = num_blocks * block_size;
 
-        void* base = os_alloc(arena_size + sizeof(arena));
+        void* base = os_alloc(arena_size);
         if (!base) {
             expanding_.store(false, std::memory_order_release);
             throw std::bad_alloc();
         }
-        auto* begin = static_cast<std::byte*>(base) + 64;
-        auto* end = begin + arena_size;
+        auto* begin = static_cast<std::byte*>(base) + 128;
+        auto* end = begin + arena_size - 128;
 
         auto* a = static_cast<arena*>(base);
         a->base = begin;
-        a->size = arena_size;
-        a->next_free = nullptr;
+        a->size = arena_size - 128;
+        a->cleanup_current_free = 0;
+        a->to_release = false;
         {
             std::lock_guard guard(arena_lock);
             a->next = arena_list_;
@@ -43,10 +52,21 @@ namespace fast_task {
         }
         free_node* tail = nullptr;
         free_node* head = nullptr;
+
+        uintptr_t arena_base = reinterpret_cast<uintptr_t>(base);
+        static constexpr uintptr_t page_mask = ~static_cast<uintptr_t>(0xFFF);
+
+
         for (auto* pos = begin; pos < end; pos += block_size) {
             auto* node = reinterpret_cast<free_node*>(pos);
+            uintptr_t task_addr = reinterpret_cast<uintptr_t>(node);
+            uintptr_t page_base = task_addr & page_mask;
+
+            reinterpret_cast<fast_task::task_object*>(node)
+                ->arena_offset_pages = static_cast<uint16_t>((page_base - arena_base) >> 12);
 #ifndef NDEBUG
-            reinterpret_cast<fast_task::task_object*>(node)->status.store(fast_task::task_object::status_e::released, std::memory_order_relaxed);
+            reinterpret_cast<fast_task::task_object*>(node)
+                ->status.store(fast_task::task_object::status_e::released, std::memory_order_relaxed);
 #endif
             node->next = head;
             head = node;
@@ -94,7 +114,7 @@ namespace fast_task {
                 assert(obj->status.load(std::memory_order_relaxed) == fast_task::task_object::status_e::released && "The arena is still used");
             }
 #endif
-            os_free(a, a->size + sizeof(arena));
+            os_free(a, a->size + 128);
             a = next;
         }
         arena_list_ = nullptr;
@@ -148,12 +168,12 @@ namespace fast_task {
         global_available_.fetch_add(count, std::memory_order_relaxed);
     }
 
-    void global_task_allocator::iterate_all(void (*callback)(void* item, void* data), void* data) {
+    void global_task_allocator::iterate_all(void (*callback)(task_object* item, void* data), void* data) {
         auto* a = arena_list_;
         while (a) {
             auto* next = a->next;
             for (size_t i = 0; i < a->size; i += 128)
-                callback(static_cast<std::byte*>(a->base) + i, data);
+                callback(reinterpret_cast<task_object*>(static_cast<std::byte*>(a->base) + i), data);
             a = next;
         }
     }
@@ -174,20 +194,20 @@ namespace fast_task {
         free_count = actual;
     }
 
-    void* tl_task_alloc_cache::allocate() {
+    task_object* tl_task_alloc_cache::allocate() {
         if (!free_list)
             allocate_batch();
 
         auto* node = free_list;
         free_list = node->next;
         --free_count;
-        return node;
+        return reinterpret_cast<task_object*>(node);
     }
 
-    void tl_task_alloc_cache::deallocate(void* p) {
-        auto* node = static_cast<global_task_allocator::free_node*>(p);
+    void tl_task_alloc_cache::deallocate(task_object* p) {
+        auto* node = reinterpret_cast<global_task_allocator::free_node*>(p);
 #ifndef NDEBUG
-        reinterpret_cast<fast_task::task_object*>(node)->status.store(fast_task::task_object::status_e::released, std::memory_order_relaxed);
+        p->status.store(fast_task::task_object::status_e::released, std::memory_order_relaxed);
 #endif
         node->next = free_list;
         free_list = node;
@@ -224,15 +244,36 @@ namespace fast_task {
         }
     }
 
-    void* task_alloc::allocate() {
+    task_object* task_alloc::allocate() {
         return get_loc().task_alloc_cache.allocate();
     }
 
-    void task_alloc::deallocate(void* p) {
+    void task_alloc::deallocate(task_object* p) {
         get_loc().task_alloc_cache.deallocate(p);
     }
 
     void global_task_allocator::claim_unused() {
+        bool expected = false;
+        if (!is_cleaning.compare_exchange_strong(expected, true))
+            return;
+
+        struct claim_guard {
+            std::atomic<bool>& flag;
+            bool used = true;
+
+            ~claim_guard() {
+                if (used)
+                    flag.store(false, std::memory_order_release);
+            }
+
+            void unlock() {
+                if (used) {
+                    flag.store(false, std::memory_order_release);
+                    used = false;
+                }
+            }
+        } guard(is_cleaning);
+
         tagged_node old = global_stack_.load(std::memory_order_acquire);
         while (true) {
             tagged_node desired{nullptr, old.counter + 1};
@@ -244,90 +285,37 @@ namespace fast_task {
         if (!old.ptr)
             return;
 
+        for (auto cur = old.ptr; cur; cur = cur->next)
+            get_arena(cur)->cleanup_current_free++;
+
         arena* old_head;
         {
             std::lock_guard guard(arena_lock);
             old_head = arena_list_;
         }
-
-        if (!old_head) {
-            free_node* tail = old.ptr;
-            size_t cnt = 1;
-            while (tail->next) {
-                tail = tail->next;
-                ++cnt;
-            }
-            push_batch(old.ptr, tail, cnt);
-            return;
-        }
-
-        size_t n = 1;
-        for (free_node* cur = old.ptr; cur->next; cur = cur->next)
-            ++n;
-
-
-        auto nodes = std::make_unique<free_node*[]>(n);
-        if (!nodes) {
-            free_node* tail = old.ptr;
-            size_t cnt = 1;
-            while (tail->next) {
-                tail = tail->next;
-                ++cnt;
-            }
-            push_batch(old.ptr, tail, cnt);
-            return;
-        }
-
-        {
-            free_node* cur = old.ptr;
-            for (size_t i = 0; i < n; ++i) {
-                nodes[i] = cur;
-                cur = cur->next;
-            }
-        }
-
-        std::sort(nodes.get(), nodes.get() + n, [](free_node* a, free_node* b) noexcept { return a < b; });
-
-        size_t idx = 0;
-        size_t kept = 0;
-
-        arena* a = old_head;
-        while (a && idx < n) {
-            auto* begin = static_cast<std::byte*>(a->base);
-            auto* end = begin + a->size;
-            size_t total_blocks = a->size / block_size;
-
-            size_t start = idx;
-            while (idx < n && reinterpret_cast<std::byte*>(nodes[idx]) >= begin && reinterpret_cast<std::byte*>(nodes[idx]) < end)
-                ++idx;
-            size_t free_in_arena = idx - start;
-
-            a->next_free = (free_in_arena == total_blocks) ? a : nullptr;
-
-            if (a->next_free == nullptr) {
-                for (size_t j = start; j < idx; ++j)
-                    nodes[kept++] = nodes[j];
-            }
-            a = a->next;
-        }
-
-        while (a) {
-            a->next_free = nullptr;
-            a = a->next;
+        for (auto a = old_head; a; a = a->next) {
+            a->to_release = a->cleanup_current_free == a->size / block_size;
+            a->cleanup_current_free = 0;
         }
 
         free_node* push_head = nullptr;
         free_node* push_tail = nullptr;
-        if (kept) {
-            push_head = nodes[0];
-            for (size_t i = 0; i + 1 < kept; ++i)
-                nodes[i]->next = nodes[i + 1];
-            nodes[kept - 1]->next = nullptr;
-            push_tail = nodes[kept - 1];
+        size_t kept = 0;
+        for (auto cur = old.ptr; cur;) {
+            auto next = cur->next;
+            arena* a = get_arena(cur);
+            if (!a->to_release) {
+                if (!push_head)
+                    push_head = cur;
+                else
+                    push_tail->next = cur;
+                push_tail = cur;
+                kept++;
+            }
+            cur = next;
         }
-
-        nodes.release();
-
+        if (push_tail)
+            push_tail->next = nullptr;
         arena* to_free = nullptr;
         {
             std::lock_guard guard(arena_lock);
@@ -335,7 +323,7 @@ namespace fast_task {
             arena** prev_next = &arena_list_;
             arena* cur = arena_list_;
             while (cur) {
-                if (cur->next_free == cur) {
+                if (cur->to_release) {
                     *prev_next = cur->next;
                     cur->next = to_free;
                     to_free = cur;
@@ -355,14 +343,14 @@ namespace fast_task {
                 last_arena_size_ = 0;
             }
         }
+        guard.unlock();
+        if (push_head)
+            push_batch(push_head, push_tail, kept);
 
         while (to_free) {
             arena* next = to_free->next;
             os_free(to_free, to_free->size + sizeof(arena));
             to_free = next;
         }
-
-        if (push_head)
-            push_batch(push_head, push_tail, kept);
     }
 }

@@ -26,7 +26,7 @@ namespace fast_task {
     size_t task::max_running_tasks = 0;
 #ifdef FT_ENABLE_PREEMPTIVE_SCHEDULER
     void timer_reinit() {
-        if (get_loc().policy == scheduler::executor_policy::cooperative_only)
+        if (get_loc().policy == scheduler::preemption_policy::cooperative_only)
             return;
         std::chrono::nanoseconds interval = next_quantum(get_execution_data(get_loc().curr_task).priority, get_execution_data(get_loc().curr_task).current_available_quantum);
         interrupt::itimerval timer;
@@ -40,7 +40,7 @@ namespace fast_task {
     void swapCtx();
 
     void interruptTask() {
-        if (get_loc().policy == scheduler::executor_policy::cooperative_only)
+        if (get_loc().policy == scheduler::preemption_policy::cooperative_only)
             return;
     #ifdef FT_EXCEPTION_POLICY_CHECK
         if (std::uncaught_exceptions())

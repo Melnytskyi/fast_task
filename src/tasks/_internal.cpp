@@ -68,6 +68,26 @@ namespace fast_task {
         static_assert(sizeof(task_object::sbo_buffer) == task::sbo_size, "task::sbo_size must match task_object::sbo_buffer");
     };
 
+    inline static constexpr std::chrono::nanoseconds priority_quantum_basic[] = {
+        std::chrono::nanoseconds(FT_PREEMPT_BACKGROUND_BASIC_QUANTUM_NS),
+        std::chrono::nanoseconds(FT_PREEMPT_LOW_BASIC_QUANTUM_NS),
+        std::chrono::nanoseconds(FT_PREEMPT_LOWER_BASIC_QUANTUM_NS),
+        std::chrono::nanoseconds(FT_PREEMPT_NORMAL_BASIC_QUANTUM_NS),
+        std::chrono::nanoseconds(FT_PREEMPT_HIGHER_BASIC_QUANTUM_NS),
+        std::chrono::nanoseconds(FT_PREEMPT_HIGH_BASIC_QUANTUM_NS),
+        std::chrono::nanoseconds::min()
+    };
+
+    inline static constexpr std::chrono::nanoseconds priority_quantum_max[] = {
+        std::chrono::nanoseconds(FT_PREEMPT_BACKGROUND_MAX_QUANTUM_NS),
+        std::chrono::nanoseconds(FT_PREEMPT_LOW_MAX_QUANTUM_NS),
+        std::chrono::nanoseconds(FT_PREEMPT_LOWER_MAX_QUANTUM_NS),
+        std::chrono::nanoseconds(FT_PREEMPT_NORMAL_MAX_QUANTUM_NS),
+        std::chrono::nanoseconds(FT_PREEMPT_HIGHER_MAX_QUANTUM_NS),
+        std::chrono::nanoseconds(FT_PREEMPT_HIGH_MAX_QUANTUM_NS),
+        std::chrono::nanoseconds::min()
+    };
+
     std::chrono::nanoseconds next_quantum(task_priority priority, std::chrono::nanoseconds& current_available_quantum) {
         if (priority == task_priority::semi_realtime)
             return std::chrono::nanoseconds::min();
@@ -112,6 +132,10 @@ namespace fast_task {
         curr_task.reset();
         transfer_state.pending.reset();
         pending_timer = std::chrono::high_resolution_clock::time_point::min();
+    }
+
+    executors_local::~executors_local() {
+        reset();
     }
 
     executor_global::executor_global() = default;
@@ -354,7 +378,6 @@ namespace fast_task {
         return status.load(std::memory_order_acquire) == status_e::released;
     }
 
-
     void* task_object::user_data() const noexcept {
         if ((state.load(std::memory_order_acquire) & state_f::is_sbo) != 0)
             return const_cast<std::byte*>(sbo_buffer);
@@ -513,9 +536,6 @@ namespace fast_task {
         relock_type = mutex_unify_relock_access::raw_type(mut);
     }
 
-
-    global_task_allocator g_block_allocator;
-
     task_object* task_object::alloc() {
         auto obj = static_cast<task_object*>(get_loc().task_alloc_cache.allocate());
 
@@ -530,7 +550,6 @@ namespace fast_task {
         obj->bind_to_worker_id = static_cast<uint16_t>(-1);
         obj->awake_check = 0;
         obj->tls_capacity = 0;
-        obj->reserved0 = 0;
         obj->link_counter.store(1, std::memory_order_relaxed);
         obj->on_start_override = nullptr;
         FT_DEBUG_ONLY(register_object(obj));

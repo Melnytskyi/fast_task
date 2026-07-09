@@ -123,3 +123,12 @@ BENCHMARK_MEM(memory_per_task_overhead_stackful, scales_xxl_large) {
     for (auto& t : tasks)
         t.await_task();
 }
+
+BENCHMARK_MEM(memory_allocate_and_cleanup, scales_xxl_large) {
+    std::vector<fast_task::task> tasks;
+    tasks.reserve(scale);
+    for (uint64_t i = 0; i < scale; ++i)
+        tasks.push_back(fast_task::task::create([] {}));
+    tasks.clear();
+    cleanup();
+}

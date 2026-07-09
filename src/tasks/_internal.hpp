@@ -211,26 +211,6 @@ namespace fast_task {
         return get_execution_data(const_cast<class task*>(&task));
     }
 
-    inline static constexpr std::chrono::nanoseconds priority_quantum_basic[] = {
-        std::chrono::nanoseconds(scheduler::config::background_basic_quantum_ns),
-        std::chrono::nanoseconds(scheduler::config::low_basic_quantum_ns),
-        std::chrono::nanoseconds(scheduler::config::lower_basic_quantum_ns),
-        std::chrono::nanoseconds(scheduler::config::normal_basic_quantum_ns),
-        std::chrono::nanoseconds(scheduler::config::higher_basic_quantum_ns),
-        std::chrono::nanoseconds(scheduler::config::high_basic_quantum_ns),
-        std::chrono::nanoseconds::min()
-    };
-
-    inline static constexpr std::chrono::nanoseconds priority_quantum_max[] = {
-        std::chrono::nanoseconds(scheduler::config::background_max_quantum_ns),
-        std::chrono::nanoseconds(scheduler::config::low_max_quantum_ns),
-        std::chrono::nanoseconds(scheduler::config::lower_max_quantum_ns),
-        std::chrono::nanoseconds(scheduler::config::normal_max_quantum_ns),
-        std::chrono::nanoseconds(scheduler::config::higher_max_quantum_ns),
-        std::chrono::nanoseconds(scheduler::config::high_max_quantum_ns),
-        std::chrono::nanoseconds::min()
-    };
-
     //per task has n quantum(ms) to execute depends on priority
     //if task spend it all it will be suspended
     //if task not spend it all, unused quantum will be added to next task quantum(ms limited by priority)
@@ -250,7 +230,7 @@ namespace fast_task {
         std::exception_ptr ex_ptr;
         task curr_task = nullptr;
         pcg32 rand;
-        scheduler::executor_policy policy = scheduler::executor_policy::default_policy;
+        scheduler::preemption_policy policy = scheduler::preemption_policy::default_policy;
         uint16_t binded_id = (uint16_t)-1;
         uint32_t registry_slot = UINT32_MAX;
 
@@ -273,6 +253,8 @@ namespace fast_task {
         std::chrono::high_resolution_clock::time_point pending_timer = std::chrono::high_resolution_clock::time_point::min();
 
         void reset();
+
+        ~executors_local();
     };
 
     struct FT_API_LOCAL binded_context {
@@ -288,7 +270,7 @@ namespace fast_task {
         bool allow_implicit_start : 1 = false;
         bool fixed_size : 1 = false;
         bool abort_tasks_on_close : 1 = false;
-        scheduler::executor_policy policy = scheduler::executor_policy::default_policy;
+        scheduler::preemption_policy policy = scheduler::preemption_policy::default_policy;
     };
 
     struct FT_API_LOCAL executor_global {

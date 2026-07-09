@@ -823,8 +823,7 @@ namespace fast_task::debug {
             d.data = data;
 
             glob.gba.iterate_all(
-                [](void* item, void* d) {
-                    auto obj = reinterpret_cast<task_object*>(item);
+                [](fast_task::task_object* obj, void* d) {
                     auto dat = reinterpret_cast<iterate_task_objects_data*>(d);
                     if (!obj->is_released())
                         dat->callback(*obj, dat->data);
@@ -841,8 +840,7 @@ namespace fast_task::debug {
 __attribute__((used, retain)) std::vector<fast_task::task_object*> collect_task_objects() {
     std::vector<fast_task::task_object*> collect;
     fast_task::glob.gba.iterate_all(
-        [](void* item, void* d) {
-            auto obj = reinterpret_cast<fast_task::task_object*>(item);
+        [](fast_task::task_object* obj, void* d) {
             auto dat = reinterpret_cast<std::vector<fast_task::task_object*>*>(d);
             if (!obj->is_released() && !obj->is_ended())
                 dat->push_back(obj);
