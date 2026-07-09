@@ -324,8 +324,8 @@ namespace fast_task::debug {
         ~raw_limiter_info();
     };
 
-    struct FT_API raw_query_info {
-        uintptr_t query_id;
+    struct FT_API raw_queue_info {
+        uintptr_t queue_id;
         uintptr_t internal_condition_id;
         array<uintptr_t> waiting_tasks_ids;
         size_t current_in_run;
@@ -336,8 +336,8 @@ namespace fast_task::debug {
         uintptr_t created_by_id;
         bool created_by_is_native; //defines meanin of the created_by_id field, of false the id is the tasks id
 
-        raw_query_info();
-        ~raw_query_info();
+        raw_queue_info();
+        ~raw_queue_info();
     };
 
     struct FT_API raw_deadline_timer_info {
@@ -366,7 +366,7 @@ namespace fast_task::debug {
         array<raw_condition_info> condition_variables;
         array<raw_semaphore_info> semaphores;
         array<raw_limiter_info> limiters;
-        array<raw_query_info> queries;
+        array<raw_queue_info> queries;
         array<raw_deadline_timer_info> deadlines;
     };
 }

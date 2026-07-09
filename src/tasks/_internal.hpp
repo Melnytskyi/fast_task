@@ -120,11 +120,11 @@ namespace fast_task {
         resume_task* prev = nullptr;
     };
 
-    struct task_query_handle {                //96 [sizeof]
-        task_condition_variable end_of_query; //32
+    struct task_queue_handle {                //96 [sizeof]
+        task_condition_variable end_of_queue; //32
         std::list<task> tasks;                //24
         fast_task::spin_lock no_race;         //8
-        task_query* tq = nullptr;             //8
+        task_queue* tq = nullptr;             //8
         size_t now_at_execution = 0;          //8
         size_t at_execution_max = 0;          //8
         bool destructed = false;              //1
@@ -382,7 +382,7 @@ namespace fast_task {
     FT_DEBUG_ONLY(void FT_API_LOCAL register_object(task_object*));
     FT_DEBUG_ONLY(void FT_API_LOCAL register_object(task_semaphore*));
     FT_DEBUG_ONLY(void FT_API_LOCAL register_object(task_limiter*));
-    FT_DEBUG_ONLY(void FT_API_LOCAL register_object(task_query*));
+    FT_DEBUG_ONLY(void FT_API_LOCAL register_object(task_queue*));
     FT_DEBUG_ONLY(void FT_API_LOCAL register_object(deadline_timer*));
 
     FT_DEBUG_ONLY(void FT_API_LOCAL unregister_object(task_mutex*));
@@ -392,7 +392,7 @@ namespace fast_task {
     FT_DEBUG_ONLY(void FT_API_LOCAL unregister_object(task_object*));
     FT_DEBUG_ONLY(void FT_API_LOCAL unregister_object(task_semaphore*));
     FT_DEBUG_ONLY(void FT_API_LOCAL unregister_object(task_limiter*));
-    FT_DEBUG_ONLY(void FT_API_LOCAL unregister_object(task_query*));
+    FT_DEBUG_ONLY(void FT_API_LOCAL unregister_object(task_queue*));
     FT_DEBUG_ONLY(void FT_API_LOCAL unregister_object(deadline_timer*));
 }
 

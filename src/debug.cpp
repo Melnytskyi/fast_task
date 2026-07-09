@@ -53,7 +53,7 @@ namespace fast_task::debug {
         std::unordered_map<task*, debug_data> task_instances;
         std::unordered_map<task_semaphore*, debug_data> sem_instances;
         std::unordered_map<task_limiter*, debug_data> limiter_instances;
-        std::unordered_map<task_query*, debug_data> query_instances;
+        std::unordered_map<task_queue*, debug_data> queue_instances;
         std::unordered_map<deadline_timer*, debug_data> dtimer_instances;
 
         uintptr_t task_id_counter{0};
@@ -286,14 +286,14 @@ namespace fast_task::debug {
             }
         }
 
-        static void collect_query_inst(program_state_dump& dump, debug_registry& reg) {
+        static void collect_queue_inst(program_state_dump& dump, debug_registry& reg) {
             size_t i = 0;
-            dump.queries = array<raw_query_info>(reg.query_instances.size());
-            for (auto&& [mutd, ddata] : reg.query_instances) {
+            dump.queries = array<raw_queue_info>(reg.queue_instances.size());
+            for (auto&& [mutd, ddata] : reg.queue_instances) {
                 auto& [id, trace, created_by_id, created_by_is_native] = ddata;
-                raw_query_info& info = dump.queries[i++];
-                info.query_id = id;
-                info.internal_condition_id = reg.cv_instances.at(&mutd->handle->end_of_query).virtual_id;
+                raw_queue_info& info = dump.queries[i++];
+                info.queue_id = id;
+                info.internal_condition_id = reg.cv_instances.at(&mutd->handle->end_of_queue).virtual_id;
                 info.current_in_run = mutd->handle->now_at_execution;
                 info.max_on_execution = mutd->handle->at_execution_max;
                 info.enabled = mutd->handle->is_running;
@@ -342,7 +342,7 @@ namespace fast_task::debug {
             collect_cv_inst(dump, reg);
             collect_sem_inst(dump, reg);
             collect_limiter_inst(dump, reg);
-            collect_query_inst(dump, reg);
+            collect_queue_inst(dump, reg);
             collect_dtimer_inst(dump, reg);
         }
     };
@@ -468,9 +468,9 @@ namespace fast_task {
         });
     }
 
-    void register_object(task_query* val) {
+    void register_object(task_queue* val) {
         debug::dbg_registry().set([val](auto& reg) {
-            reg.query_instances.emplace(val, reg);
+            reg.queue_instances.emplace(val, reg);
         });
     }
 
@@ -522,9 +522,9 @@ namespace fast_task {
         });
     }
 
-    void unregister_object(task_query* val) {
+    void unregister_object(task_queue* val) {
         debug::dbg_registry().set([val](auto& reg) {
-            reg.query_instances.erase(val);
+            reg.queue_instances.erase(val);
         });
     }
 
@@ -631,9 +631,9 @@ namespace fast_task::debug {
             delete init_call_stack;
     }
 
-    raw_query_info::raw_query_info() {}
+    raw_queue_info::raw_queue_info() {}
 
-    raw_query_info::~raw_query_info() {
+    raw_queue_info::~raw_queue_info() {
         if (init_call_stack)
             delete init_call_stack;
     }
@@ -718,7 +718,7 @@ namespace fast_task::debug {
                 ii << (it.owner_is_native ? " thread" : " task") << std::endl;
         }
         for (auto& it : dump.queries) {
-            ii << "\tQuery " << it.query_id << std::endl;
+            ii << "\tQueue " << it.queue_id << std::endl;
             ii << "\t\tCreated by: " << it.created_by_id << (it.created_by_is_native ? " thread" : " task") << std::endl;
             if (it.init_call_stack)
                 dump_stack_(ii, *it.init_call_stack, 2);

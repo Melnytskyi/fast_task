@@ -10,17 +10,17 @@
 
 class CombinedScenariosTest : public SchedulerFixture {};
 
-// ---- task_query grouping stackful + stackless tasks ----
+// ---- task_queue grouping stackful + stackless tasks ----
 
 TEST_F(CombinedScenariosTest, TaskQueryMixedTasksAndCoroutines) {
-    fast_task::task_query query(3);
+    fast_task::task_queue queue(3);
     std::atomic<int> count{0};
 
     // Stackful tasks
     auto t1 = fast_task::task::create([&] { ++count; });
     auto t2 = fast_task::task::create([&] { ++count; });
-    query.add(t1);
-    query.add(t2);
+    queue.add(t1);
+    queue.add(t2);
 
     // Stackless coroutine
     auto make_coro = [&]() -> fast_task::task_coro<void> {
@@ -28,9 +28,9 @@ TEST_F(CombinedScenariosTest, TaskQueryMixedTasksAndCoroutines) {
         co_return;
     };
     auto c = make_coro();
-    query.add(c.get_task());
-    query.enable();
-    query.wait();
+    queue.add(c.get_task());
+    queue.enable();
+    queue.wait();
 
     t1.await_task();
     t2.await_task();

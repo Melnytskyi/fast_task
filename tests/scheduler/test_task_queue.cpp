@@ -7,10 +7,10 @@
 #include <helpers.hpp>
 #include <atomic>
 
-class TaskQueryTest : public SchedulerFixture {};
+class TaskQueueTest : public SchedulerFixture {};
 
-TEST_F(TaskQueryTest, AddAndWait) {
-    fast_task::task_query q;
+TEST_F(TaskQueueTest, AddAndWait) {
+    fast_task::task_queue q;
     q.enable();
     std::atomic<int> done{0};
 
@@ -30,8 +30,8 @@ TEST_F(TaskQueryTest, AddAndWait) {
     EXPECT_EQ(done.load(), 2);
 }
 
-TEST_F(TaskQueryTest, WaitFor) {
-    fast_task::task_query q;
+TEST_F(TaskQueueTest, WaitFor) {
+    fast_task::task_queue q;
     q.enable();
     auto t = fast_task::task::create([&] {
         fast_task::this_task::sleep_for(std::chrono::milliseconds(100));
@@ -43,20 +43,20 @@ TEST_F(TaskQueryTest, WaitFor) {
     q.wait();
 }
 
-TEST_F(TaskQueryTest, InQuery) {
-    fast_task::task_query q;
+TEST_F(TaskQueueTest, InQueue) {
+    fast_task::task_queue q;
     auto t = fast_task::task::create([&] {
         fast_task::this_task::sleep_for(std::chrono::milliseconds(50));
     });
     q.add(t);
-    EXPECT_TRUE(q.in_query(t));
+    EXPECT_TRUE(q.in_queue(t));
     q.enable();
     q.wait();
-    EXPECT_FALSE(q.in_query(t));
+    EXPECT_FALSE(q.in_queue(t));
 }
 
-TEST_F(TaskQueryTest, MaxAtExecution) {
-    fast_task::task_query q;
+TEST_F(TaskQueueTest, MaxAtExecution) {
+    fast_task::task_queue q;
     q.enable();
     q.set_max_at_execution(1);
     EXPECT_EQ(q.get_max_at_execution(), 1u);
@@ -83,14 +83,14 @@ TEST_F(TaskQueryTest, MaxAtExecution) {
     EXPECT_LE(max_concurrent.load(), 1);
 }
 
-TEST_F(TaskQueryTest, EnableDisable) {
-    fast_task::task_query q;
+TEST_F(TaskQueueTest, EnableDisable) {
+    fast_task::task_queue q;
     std::atomic<bool> ran{false};
     auto t = fast_task::task::create([&] { ran = true; });
     q.add(t);
 
     fast_task::this_thread::sleep_for(std::chrono::milliseconds(50));
-    // Disabled query shouldn't let tasks complete via query's throttle
+    // Disabled queue shouldn't let tasks complete via queue's throttle
     // re-enable and wait
     EXPECT_FALSE(ran.load());
     q.enable();

@@ -22,7 +22,7 @@ namespace fast_task {
     class task_condition_variable;
     class task_semaphore;
     class task_limiter;
-    class task_query;
+    class task_queue;
 
     struct task_promise_base;
     struct base_coro_handle;
