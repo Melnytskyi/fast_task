@@ -18,6 +18,15 @@ namespace fast_task {
     struct task_object;
 
     struct alignas(32) timing {
+        struct flags_f {
+            enum {
+                in_overflow = 0x1,
+                is_cold = 0x2,
+                is_cancelled = 0x3
+            };
+
+            using t = uint8_t;
+        };
         uint64_t wait_ticks;
         task awake_task;
 
@@ -25,15 +34,46 @@ namespace fast_task {
         uint16_t check_id;
         uint8_t wheel_level = 0;
         uint8_t wheel_slot = 0;
-        bool in_overflow = false;
-        bool is_cold = false;
-        std::atomic<bool> cancelled{false};
+        std::atomic<flags_f::t> flags{0};
+        uint16_t arena_offset_pages = 0;
 
         timing() = default;
 
         timing(uint64_t ticks, task t, uint16_t cid, bool cold = false) noexcept
-            : wait_ticks(ticks), awake_task(std::move(t)), check_id(cid), is_cold(cold) {
+            : wait_ticks(ticks), awake_task(std::move(t)), check_id(cid), flags(cold ? flags_f::is_cold : 0) {
             wheel_next.store(nullptr, std::memory_order_relaxed);
+        }
+
+        bool get_is_overflow() const noexcept {
+            return (flags.load(std::memory_order_relaxed) & flags_f::in_overflow) != 0;
+        }
+
+        bool get_is_cold() const noexcept {
+            return (flags.load(std::memory_order_relaxed) & flags_f::is_cold) != 0;
+        }
+
+        bool get_is_canceled() const noexcept {
+            return (flags.load(std::memory_order_acquire) & flags_f::is_cancelled) != 0;
+        }
+
+        void set_is_overflow(bool value) noexcept {
+            set_flag<flags_f::in_overflow>(flags, value);
+        }
+
+        void set_is_cold(bool value) noexcept {
+            set_flag<flags_f::is_cold>(flags, value);
+        }
+
+        void set_is_canceled(bool value) noexcept {
+            set_flag<flags_f::is_cold>(flags, value);
+        }
+
+        template <flags_f::t flag>
+        static void set_flag(std::atomic<flags_f::t>& state, bool on) noexcept {
+            flags_f::t cur = state.load(std::memory_order_relaxed), next;
+            do {
+                next = on ? flags_f::t(cur | (flag)) : flags_f::t(cur & ~(flag));
+            } while (!state.compare_exchange_weak(cur, next, std::memory_order_acq_rel, std::memory_order_relaxed));
         }
     };
 
@@ -63,11 +103,14 @@ namespace fast_task {
         std::atomic<tagged_node> global_stack_;
         std::atomic<size_t> global_available_{0};
         std::atomic<bool> expanding_{false};
+        std::atomic<bool> is_cleaning{false};
 
         struct alignas(block_alignment) arena {
             arena* next;
             void* base;
             size_t size;
+            size_t cleanup_current_free : sizeof(size_t) * 8 - 1;
+            size_t to_release : 1;
         };
 
         fast_task::spin_lock arena_lock;
@@ -77,6 +120,7 @@ namespace fast_task {
         void expand();
 
     public:
+        static arena* get_arena(void* any_node);
         timing_allocator() noexcept;
         ~timing_allocator();
         timing_allocator(const timing_allocator&) = delete;
@@ -156,7 +200,7 @@ namespace fast_task {
                         timing* next =
                             t->wheel_next.load(std::memory_order_relaxed);
                         t->wheel_next.store(nullptr, std::memory_order_relaxed);
-                        if (!t->cancelled.load(std::memory_order_relaxed))
+                        if (!t->get_is_canceled())
                             handler(*t);
                         deallocate_node(t);
                         t = next;
@@ -168,7 +212,7 @@ namespace fast_task {
             size_t n;
             while ((n = overflow_.try_dequeue_bulk(batch, 256)) > 0) {
                 for (size_t i = 0; i < n; ++i) {
-                    if (!batch[i]->cancelled.load(std::memory_order_relaxed))
+                    if (!batch[i]->get_is_canceled())
                         handler(*batch[i]);
                     deallocate_node(batch[i]);
                 }
@@ -216,7 +260,7 @@ namespace fast_task {
                 timing* next =
                     chain->wheel_next.load(std::memory_order_relaxed);
                 chain->wheel_next.store(nullptr, std::memory_order_relaxed);
-                if (!chain->cancelled.load(std::memory_order_acquire))
+                if (!chain->get_is_canceled())
                     handler(*chain);
                 deallocate_node(chain);
                 chain = next;
@@ -234,14 +278,14 @@ namespace fast_task {
 
             for (size_t i = 0; i < n; ++i) {
                 timing* t = batch[i];
-                if (t->cancelled.load(std::memory_order_acquire)) {
+                if (t->get_is_canceled()) {
                     deallocate_node(t);
                     continue;
                 }
 
                 auto tp = to_timepoint(t->wait_ticks);
                 if (tp <= now) {
-                    t->in_overflow = false;
+                    t->set_is_overflow(false);
                     handler(*t);
                     deallocate_node(t);
                 } else

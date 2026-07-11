@@ -11,6 +11,13 @@
 #include <tasks/util/macro.hpp>
 
 namespace fast_task {
+    auto timing_allocator::get_arena(void* any_node) -> arena* {
+        return reinterpret_cast<arena*>(
+            (reinterpret_cast<uintptr_t>(any_node) & ~static_cast<uintptr_t>(0xFFF)) -
+            (reinterpret_cast<timing*>(any_node)->arena_offset_pages << 12)
+        );
+    }
+
     void timing_allocator::expand() {
         bool expected = false;
         if (!expanding_.compare_exchange_strong(expected, true, std::memory_order_acquire))
@@ -26,7 +33,7 @@ namespace fast_task {
                 num_blocks = max_arena_blocks;
         }
         size_t arena_size = num_blocks * block_size;
-        size_t alloc_size = arena_size + sizeof(arena);
+        size_t alloc_size = arena_size;
 
         void* base = os_alloc(alloc_size);
         if (!base) {
@@ -36,7 +43,7 @@ namespace fast_task {
 
         auto* a = static_cast<arena*>(base);
         a->base = static_cast<std::byte*>(base) + sizeof(arena);
-        a->size = arena_size;
+        a->size = arena_size - sizeof(arena);
         {
             std::lock_guard guard(arena_lock);
             a->next = arena_list_;
@@ -45,11 +52,18 @@ namespace fast_task {
         }
 
         auto* begin = static_cast<std::byte*>(a->base);
-        auto* end = begin + arena_size;
+        auto* end = begin + arena_size - sizeof(arena);
         free_node* tail = nullptr;
         free_node* head = nullptr;
+
+        uintptr_t arena_base = reinterpret_cast<uintptr_t>(base);
+        static constexpr uintptr_t page_mask = ~static_cast<uintptr_t>(0xFFF);
         for (auto* pos = begin; pos < end; pos += block_size) {
             auto* node = reinterpret_cast<free_node*>(pos);
+            uintptr_t task_addr = reinterpret_cast<uintptr_t>(node);
+            uintptr_t page_base = task_addr & page_mask;
+
+            reinterpret_cast<timing*>(node)->arena_offset_pages = static_cast<uint16_t>((page_base - arena_base) >> 12);
             node->next = head;
             head = node;
             if (!tail)
@@ -143,49 +157,110 @@ namespace fast_task {
     }
 
     void timing_allocator::claim_unused() {
+        bool expected = false;
+        if (!is_cleaning.compare_exchange_strong(expected, true))
+            return;
+
+        struct claim_guard {
+            std::atomic<bool>& flag;
+            bool used = true;
+
+            ~claim_guard() {
+                if (used)
+                    flag.store(false, std::memory_order_release);
+            }
+
+            void unlock() {
+                if (used) {
+                    flag.store(false, std::memory_order_release);
+                    used = false;
+                }
+            }
+        } guard(is_cleaning);
+
         tagged_node old = global_stack_.load(std::memory_order_acquire);
         while (true) {
             tagged_node desired{nullptr, old.counter + 1};
-            if (global_stack_.compare_exchange_weak(
-                    old,
-                    desired,
-                    std::memory_order_release,
-                    std::memory_order_acquire
-                ))
+            if (global_stack_.compare_exchange_weak(old, desired, std::memory_order_release, std::memory_order_acquire))
                 break;
         }
         global_available_.store(0, std::memory_order_relaxed);
 
-        if (!old.ptr) {
-            arena* to_free;
-            {
-                std::lock_guard guard(arena_lock);
-                to_free = arena_list_;
-                arena_list_ = nullptr;
+        if (!old.ptr)
+            return;
+
+        for (auto cur = old.ptr; cur; cur = cur->next)
+            get_arena(cur)->cleanup_current_free++;
+
+        arena* old_head;
+        {
+            std::lock_guard guard(arena_lock);
+            old_head = arena_list_;
+        }
+        for (auto a = old_head; a; a = a->next) {
+            a->to_release = a->cleanup_current_free == a->size / block_size;
+            a->cleanup_current_free = 0;
+        }
+
+        free_node* push_head = nullptr;
+        free_node* push_tail = nullptr;
+        size_t kept = 0;
+        for (auto cur = old.ptr; cur;) {
+            auto next = cur->next;
+            arena* a = get_arena(cur);
+            if (!a->to_release) {
+                if (!push_head)
+                    push_head = cur;
+                else
+                    push_tail->next = cur;
+                push_tail = cur;
+                kept++;
+            }
+            cur = next;
+        }
+        if (push_tail)
+            push_tail->next = nullptr;
+        arena* to_free = nullptr;
+        {
+            std::lock_guard guard(arena_lock);
+
+            arena** prev_next = &arena_list_;
+            arena* cur = arena_list_;
+            while (cur) {
+                if (cur->to_release) {
+                    *prev_next = cur->next;
+                    cur->next = to_free;
+                    to_free = cur;
+                    cur = *prev_next;
+                } else {
+                    prev_next = &cur->next;
+                    cur = cur->next;
+                }
+            }
+
+            if (arena_list_) {
+                arena* tail = arena_list_;
+                while (tail->next)
+                    tail = tail->next;
+                last_arena_size_ = tail->size;
+            } else {
                 last_arena_size_ = 0;
             }
-            while (to_free) {
-                arena* next = to_free->next;
-                os_free(to_free, to_free->size + sizeof(arena));
-                to_free = next;
-            }
-            return;
         }
+        guard.unlock();
+        if (push_head)
+            push_batch(push_head, push_tail, kept);
 
-        free_node* tail = old.ptr;
-        size_t cnt = 1;
-        while (tail->next) {
-            tail = tail->next;
-            ++cnt;
+        while (to_free) {
+            arena* next = to_free->next;
+            os_free(to_free, to_free->size + sizeof(arena));
+            to_free = next;
         }
-        push_batch(old.ptr, tail, cnt);
     }
-
-    static timing_allocator g_timing_alloc;
 
     void* tl_timing_alloc_cache::allocate() {
         if (!free_list) {
-            auto* batch = g_timing_alloc.pop_batch(timing_allocator::init_batch);
+            auto* batch = glob.timing_alloc.pop_batch(timing_allocator::init_batch);
             if (!batch)
                 throw std::bad_alloc();
 
@@ -227,7 +302,7 @@ namespace fast_task {
             for (size_t i = 1; i < count; ++i)
                 tail = tail->next;
 
-            g_timing_alloc.push_batch(head, tail, count);
+            glob.timing_alloc.push_batch(head, tail, count);
         }
     }
 
@@ -238,7 +313,7 @@ namespace fast_task {
             while (cur->next)
                 cur = cur->next;
 
-            g_timing_alloc.push_batch(head, cur, free_count);
+            glob.timing_alloc.push_batch(head, cur, free_count);
             free_list = nullptr;
             free_count = 0;
         }
@@ -250,12 +325,11 @@ namespace fast_task {
     }
 
     void hashed_timing_wheel::deallocate_node(timing* t) {
+        t->awake_task = nullptr;
         t->wheel_next.store(nullptr, std::memory_order_relaxed);
         t->wheel_level = 0;
         t->wheel_slot = 0;
-        t->in_overflow = false;
-        t->is_cold = false;
-        t->cancelled.store(false, std::memory_order_relaxed);
+        t->flags.store(0, std::memory_order_relaxed);
         get_loc().timing_alloc_cache.deallocate(t);
     }
 
@@ -305,7 +379,7 @@ namespace fast_task {
     void hashed_timing_wheel::push_slot(size_t level, size_t slot, timing* node) {
         node->wheel_level = static_cast<uint8_t>(level);
         node->wheel_slot = static_cast<uint8_t>(slot);
-        node->in_overflow = false;
+        node->set_is_overflow(false);
 
         timing* old_head = slots_[level][slot].load(std::memory_order_acquire);
         do {
@@ -331,7 +405,7 @@ namespace fast_task {
         uint64_t delta = tick - cur;
 
         if (delta >= MAX_TICK_RANGE) {
-            node->in_overflow = true;
+            node->set_is_overflow(true);
             overflow_.enqueue(node);
             has_overflow_.store(true, std::memory_order_release);
             return node;
@@ -350,7 +424,7 @@ namespace fast_task {
         if (!handle)
             return;
 
-        handle->cancelled.store(true, std::memory_order_release);
+        handle->set_is_canceled(true);
     }
 
     void hashed_timing_wheel::cascade_from(size_t level) {
@@ -361,7 +435,7 @@ namespace fast_task {
             timing* next = chain->wheel_next.load(std::memory_order_relaxed);
             chain->wheel_next.store(nullptr, std::memory_order_relaxed);
 
-            if (chain->cancelled.load(std::memory_order_acquire)) {
+            if (chain->get_is_canceled()) {
                 deallocate_node(chain);
                 chain = next;
                 continue;
@@ -394,7 +468,7 @@ namespace fast_task {
             for (size_t i = 0; i < n; ++i) {
                 timing* t = batch[i];
 
-                if (t->cancelled.load(std::memory_order_acquire)) {
+                if (t->get_is_canceled()) {
                     deallocate_node(t);
                     continue;
                 }
@@ -410,7 +484,7 @@ namespace fast_task {
                     continue;
                 }
 
-                t->in_overflow = false;
+                t->set_is_overflow(false);
                 size_t level = 0;
                 while (level + 1 < LEVELS && delta >= ticks_per_level(level + 1))
                     ++level;
@@ -433,7 +507,7 @@ namespace fast_task {
             timing* t = slots_[0][slot].load(std::memory_order_acquire);
             if (t) {
                 while (t) {
-                    if (!t->cancelled.load(std::memory_order_acquire)) {
+                    if (!t->get_is_canceled()) {
                         auto tp = to_timepoint(t->wait_ticks);
                         if (tp < earliest)
                             earliest = tp;
@@ -450,9 +524,7 @@ namespace fast_task {
                     timing* t = slots_[L][slot].load(std::memory_order_acquire);
                     if (t) {
                         while (t) {
-                            if (!t->cancelled.load(
-                                    std::memory_order_acquire
-                                )) {
+                            if (!t->get_is_canceled()) {
                                 auto tp = to_timepoint(t->wait_ticks);
                                 if (tp < earliest)
                                     earliest = tp;

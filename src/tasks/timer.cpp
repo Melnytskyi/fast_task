@@ -81,7 +81,7 @@ namespace fast_task {
             if (tmng.check_id != get_data(tmng.awake_task).awake_check)
                 return;
 
-            if (tmng.is_cold) {
+            if (tmng.get_is_cold()) {
                 enqueue_cold(std::move(tmng.awake_task));
             } else {
                 fast_task::lock_guard tg(get_data(tmng.awake_task));
@@ -128,6 +128,7 @@ namespace fast_task {
 
         flush_wake_ups();
         flush_cold();
+
 
         fast_task::shared_lock _guard(glob.task_thread_safety);
         get_loc().reset();

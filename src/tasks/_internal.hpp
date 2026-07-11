@@ -274,6 +274,7 @@ namespace fast_task {
     };
 
     struct FT_API_LOCAL executor_global {
+        timing_allocator timing_alloc;
         global_task_allocator gba;
         internal_sched_cv no_tasks_execute_notifier;
         futex_waiter timer_waiter;

@@ -389,9 +389,17 @@ namespace fast_task::scheduler {
         await_no_tasks();
         auto& loc = get_loc();
         loc.task_alloc_cache.release();
+        loc.timing_alloc_cache.release();
         decltype(glob.cold_tasks) cold;
         glob.cold_tasks.swap(cold);
         glob.gba.claim_unused();
+        glob.timing_alloc.claim_unused();
+    }
+
+    void local_clean_up() {
+        auto& loc = get_loc();
+        loc.task_alloc_cache.release();
+        loc.timing_alloc_cache.release();
     }
 
     bool preemption_enabled() {

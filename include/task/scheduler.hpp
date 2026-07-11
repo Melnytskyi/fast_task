@@ -22,33 +22,6 @@ namespace fast_task {
             default_policy = allows_preempt,
         };
 
-        struct processor_topology {
-            uint16_t cpu_id;
-            uint8_t numa;
-        };
-
-        struct worker_binding {
-            std::vector<uint16_t> binded_to; //could be empty to avoid assigning the worker
-            std::optional<uint8_t> numa;     //for validation
-        };
-
-        enum class default_worker_bindings {
-            none,          //disables the binding
-            spread_1_1,    //assigns one core for one worker
-            floating,      //allows the workers migrate across their assigned numa&nuca cores
-            floating_numa, //binds the workers to their numa cores but allows to jump across nuca cores
-
-            default_policy = floating,
-        };
-
-
-        std::vector<processor_topology> FT_API get_cpu_topology();
-        std::vector<worker_binding> FT_API create_default_worker_bindings(default_worker_bindings);
-
-        void FT_API set_default_workers_binding(const std::vector<worker_binding>&);
-        void FT_API set_default_workers_binding(default_worker_bindings);
-
-
         void FT_API schedule_until(task&& task, std::chrono::high_resolution_clock::time_point time_point);
         void FT_API schedule_until(const task& task, std::chrono::high_resolution_clock::time_point time_point);
 
@@ -99,6 +72,7 @@ namespace fast_task {
 
         //clean ups the unused memory
         void FT_API clean_up();
+        void FT_API local_clean_up();
 
         bool FT_API preemption_enabled();
     }
