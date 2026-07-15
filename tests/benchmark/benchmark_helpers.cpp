@@ -12,8 +12,9 @@
 #include <string>
 
 #ifdef _WIN32
-    #include <winbase.h>
     #include <windows.h>
+
+    #include <winbase.h>
 #else
     #include <sys/wait.h>
     #include <unistd.h>

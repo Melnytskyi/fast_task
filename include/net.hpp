@@ -111,6 +111,28 @@ namespace fast_task::net {
 
     struct alignas(std::max_align_t) opaque_network_state {
         std::byte data[192];
+        void (*destruct)(void*) = nullptr;
+
+        template <class T>
+        T* use() {
+            static_assert(sizeof(opaque_network_state::data) >= sizeof(T), "opaque_network_state inline storage too small for this type");
+            if (destruct)
+                destruct(data);
+            destruct = [](void* self) { reinterpret_cast<T*>(self)->~T(); };
+            return new (&data) T{};
+        }
+
+        void release() {
+            if (destruct)
+                destruct(data);
+            destruct = nullptr;
+        }
+
+        opaque_network_state() = default;
+
+        ~opaque_network_state() {
+            release();
+        }
 
         tcp_error get_error() const noexcept;
         std::error_code get_error_code() const noexcept;

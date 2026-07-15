@@ -515,6 +515,9 @@ namespace fast_task {
         }
 
         task_object* raw_task = task.release();
+        if (raw_task->is_created())
+            ++glob.executing_tasks;
+        raw_task->set_status(task_object::status_e::scheduled);
         if (raw_task->bind_to_worker_id == (uint16_t)-1) {
             if (raw_task->get_auto_bind()) {
                 fast_task::shared_lock global_guard(glob.binded_workers_safety);
@@ -857,7 +860,7 @@ namespace fast_task {
                             if (context.abort_tasks_on_close) {
                                 bool should_decrement = false;
                                 {
-                                    fast_task::lock_guard guard(get_data(loc.curr_task));
+                                    fast_task::lock_guard task_guard(get_data(loc.curr_task));
                                     if (!get_data(loc.curr_task).get_completed()) {
                                         get_data(loc.curr_task).set_completed(true);
                                         should_decrement = true;

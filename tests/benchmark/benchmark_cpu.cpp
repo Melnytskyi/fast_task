@@ -5,12 +5,11 @@
 // http://www.boost.org/LICENSE_1_0.txt)
 
 #include "benchmark_helpers.hpp"
-#include <helpers.hpp>
+#include <algorithm>
+#include <cmath>
 #include <task.hpp>
 #include <thread>
 #include <vector>
-#include <cmath>
-#include <algorithm>
 
 static constexpr int fib_n = 30;
 static const scale_point cpu_fib_scales[] = {

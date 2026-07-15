@@ -94,10 +94,6 @@ namespace fast_task::scheduler {
 #endif
                 return;
             }
-
-            if (get_data(tsk).is_created())
-                ++glob.executing_tasks;
-            get_data(tsk).set_status(task_object::status_e::scheduled);
         }
 
         transfer_task(task(tsk));

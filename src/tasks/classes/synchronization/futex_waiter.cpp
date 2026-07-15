@@ -15,6 +15,7 @@
 #elif PLATFORM_WINDOWS
     #define NOMINMAX
     #include <Windows.h>
+    #pragma comment(lib, "Synchronization.lib")
 #endif
 
 namespace fast_task {

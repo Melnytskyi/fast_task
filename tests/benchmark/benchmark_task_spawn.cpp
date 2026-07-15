@@ -5,7 +5,6 @@
 // http://www.boost.org/LICENSE_1_0.txt)
 
 #include "benchmark_helpers.hpp"
-#include <helpers.hpp>
 #include <task.hpp>
 #include <thread>
 #include <vector>
@@ -19,7 +18,7 @@ static void task_spawn_empty_task_create_start_await() {
         {"1M", 1'000'000},
     };
 
-    std::cout << "#task_spawn_empty_task_create_start_await\n\n";
+    std::cout << "# task_spawn_empty_task_create_start_await\n\n";
     std::cout << "|Scale        |   Create/ms  |   Start/ms   |     Await/ms    |     Total/ms    |   Tasks/s  |\n";
     std::cout << "|:------------|-------------:|-------------:|----------------:|----------------:|-----------:|\n";
 
@@ -69,6 +68,7 @@ struct task_spawn_empty_task_create_start_await_wrapper {
             std::this_thread::yield();
         task_spawn_empty_task_create_start_await();
         fast_task::scheduler::shut_down();
+        fast_task::scheduler::clean_up();
     }
 };
 

@@ -175,24 +175,14 @@ namespace fast_task {
         return true;
     }
 
-    spin_lock::spin_lock() {
-        struct fake_construct {
-            std::atomic_flag flag = ATOMIC_FLAG_INIT;
-        };
+    spin_lock::spin_lock() = default;
 
-        new (locked_storage) fake_construct{};
-    }
-
-    spin_lock::~spin_lock() {
-        reinterpret_cast<std::atomic_flag*>(locked_storage)->~atomic_flag();
-    }
+    spin_lock::~spin_lock() = default;
 
     void spin_lock::lock() {
         interrupt_unsafe_region::lock();
         while (
-            reinterpret_cast<std::atomic_flag*>(locked_storage)
-                ->test_and_set(std::memory_order_acquire)
-        ) {
+            flag.test_and_set(std::memory_order_acquire)) {
     #ifdef __IS_X86_OR_X64
             _mm_pause();
     #endif
@@ -201,8 +191,7 @@ namespace fast_task {
 
     bool spin_lock::try_lock() {
         interrupt_unsafe_region::lock();
-        bool prev = reinterpret_cast<std::atomic_flag*>(locked_storage)
-                       ->test_and_set(std::memory_order_acquire);
+        bool prev = flag.test_and_set(std::memory_order_acquire);
         if (prev) {
             interrupt_unsafe_region::unlock();
             return false;
@@ -211,8 +200,7 @@ namespace fast_task {
     }
 
     void spin_lock::unlock() {
-        reinterpret_cast<std::atomic_flag*>(locked_storage)
-            ->clear(std::memory_order_release);
+        flag.clear(std::memory_order_release);
         interrupt_unsafe_region::unlock();
     }
 
@@ -306,7 +294,7 @@ namespace fast_task {
     void* thread::create(void (*function)(void*), void* arg, unsigned long& id, size_t stack_size, bool stack_reservation, int& error_code) {
         error_code = 0;
         interrupt_unsafe_region region;
-        void* handle = (void*)_beginthreadex(nullptr, (uint32_t)std::min<size_t>(stack_size, UINT32_MAX), (_beginthreadex_proc_type)function, arg, CREATE_SUSPENDED | (stack_reservation ? STACK_SIZE_PARAM_IS_A_RESERVATION : 0), (unsigned int*)&id);
+        void* handle = (void*)_beginthreadex(nullptr, (uint32_t)std::min<size_t>(stack_size, UINT32_MAX), reinterpret_cast<_beginthreadex_proc_type>(reinterpret_cast<void*>(function)), arg, CREATE_SUSPENDED | (stack_reservation ? STACK_SIZE_PARAM_IS_A_RESERVATION : 0), (unsigned int*)&id);
         if (!handle) {
             error_code = GetLastError();
             return nullptr;
@@ -372,7 +360,7 @@ namespace fast_task {
     bool thread::suspend(id id) {
         interrupt_unsafe_region region;
         HANDLE_CLOSER thread_handle(OpenThread(THREAD_SUSPEND_RESUME | THREAD_QUERY_INFORMATION, false, id._id));
-        if (SuspendThread(thread_handle.handle) == -1)
+        if (SuspendThread(thread_handle.handle) == DWORD(-1))
             return false;
         return true;
     }
@@ -380,7 +368,7 @@ namespace fast_task {
     bool thread::resume(id id) {
         interrupt_unsafe_region region;
         HANDLE_CLOSER thread_handle(OpenThread(THREAD_SUSPEND_RESUME | THREAD_QUERY_INFORMATION, false, id._id));
-        if (ResumeThread(thread_handle.handle) == -1)
+        if (ResumeThread(thread_handle.handle) == DWORD(-1))
             return false;
         return true;
     }
@@ -389,7 +377,7 @@ namespace fast_task {
     #ifdef FT_INCLUDE_THREAD_INTERRUPT_CODE
         interrupt_unsafe_region region;
         HANDLE_CLOSER thread_handle(OpenThread(THREAD_SUSPEND_RESUME | THREAD_QUERY_INFORMATION | THREAD_GET_CONTEXT | THREAD_SET_CONTEXT, false, id._id));
-        if (SuspendThread(thread_handle.handle) == -1)
+        if (SuspendThread(thread_handle.handle) == DWORD(-1))
             return false;
 
         CONTEXT context;
@@ -636,24 +624,13 @@ namespace fast_task {
         }
     }
 
-    spin_lock::spin_lock() {
-        struct fake_construct {
-            std::atomic_flag flag = ATOMIC_FLAG_INIT;
-        };
+    spin_lock::spin_lock() = default;
 
-        new (locked_storage) fake_construct{};
-    }
-
-    spin_lock::~spin_lock() {
-        reinterpret_cast<std::atomic_flag*>(locked_storage)->~atomic_flag();
-    }
+    spin_lock::~spin_lock() = default;
 
     void spin_lock::lock() {
         interrupt_unsafe_region::lock();
-        while (
-            reinterpret_cast<std::atomic_flag*>(locked_storage)
-                ->test_and_set(std::memory_order_acquire)
-        ) {
+        while (flag.test_and_set(std::memory_order_acquire)) {
     #if (defined(__GNUC__) || defined(__clang__)) && defined(__IS_X86_OR_X64)
             __builtin_ia32_pause();
     #endif
@@ -662,8 +639,7 @@ namespace fast_task {
 
     bool spin_lock::try_lock() {
         interrupt_unsafe_region::lock();
-        bool prev = reinterpret_cast<std::atomic_flag*>(locked_storage)
-                       ->test_and_set(std::memory_order_acquire);
+        bool prev = flag.test_and_set(std::memory_order_acquire);
         if (prev) {
             interrupt_unsafe_region::unlock();
             return false;
@@ -672,8 +648,7 @@ namespace fast_task {
     }
 
     void spin_lock::unlock() {
-        reinterpret_cast<std::atomic_flag*>(locked_storage)
-            ->clear(std::memory_order_release);
+        flag.clear(std::memory_order_release);
         interrupt_unsafe_region::unlock();
     }
 

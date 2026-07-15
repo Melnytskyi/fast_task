@@ -6,6 +6,14 @@
 
 #ifndef FAST_TASK_BENCHMARK_HELPERS
 #define FAST_TASK_BENCHMARK_HELPERS
+#ifdef _WIN32
+    #define NOMINMAX
+    #define WIN32_LEAN_AND_MEAN
+    #include <windows.h>
+
+    #include <psapi.h>
+    #pragma comment(lib, "psapi.lib")
+#endif
 
 #include <algorithm>
 #include <array>
@@ -165,6 +173,10 @@ static size_t current_rss_kb() {
             return kb;
         }
     }
+#elif defined(_WIN32)
+    PROCESS_MEMORY_COUNTERS pmc;
+    if (GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc)))
+        return pmc.WorkingSetSize / 1024;
 #endif
     return 0;
 }

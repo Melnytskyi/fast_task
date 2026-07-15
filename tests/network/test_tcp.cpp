@@ -7,6 +7,7 @@
 #include <helpers.hpp>
 #include <net.hpp>
 
+#include <array>
 #include <atomic>
 #include <cstring>
 #include <string>

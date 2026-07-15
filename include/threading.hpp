@@ -530,7 +530,15 @@ namespace fast_task {
     };
 
     class FT_API alignas(8) spin_lock {
-        char locked_storage[sizeof(std::atomic_flag)];
+#ifdef _MSC_VER
+    #pragma warning(push)
+    #pragma warning(disable : 4251)
+#endif
+        std::atomic_flag flag = ATOMIC_FLAG_INIT;
+
+#ifdef _MSC_VER
+    #pragma warning(pop)
+#endif
 
     public:
         spin_lock();

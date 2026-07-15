@@ -6,7 +6,6 @@
 
 #include "benchmark_helpers.hpp"
 #include <coroutine.hpp>
-#include <helpers.hpp>
 #include <task.hpp>
 #include <thread>
 #include <vector>
@@ -89,7 +88,7 @@ static const scale_point scheduler_staggered_scales[] = {
 BENCHMARK_MEM(scheduler_staggered_sleep, scheduler_staggered_scales, std::chrono::milliseconds(50)) {
     std::vector<fast_task::task> tasks;
     tasks.reserve(scale);
-    auto coro = [](std::chrono::system_clock::time_point tp) -> fast_task::task_coro<void> {
+    auto coro = [](std::chrono::high_resolution_clock::time_point tp) -> fast_task::task_coro<void> {
         co_await fast_task::this_task::async_sleep_until(tp);
         co_return;
     };

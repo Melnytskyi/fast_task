@@ -836,8 +836,10 @@ namespace fast_task::debug {
     namespace interact_helper {
     }
 }
-
-__attribute__((used, retain)) std::vector<fast_task::task_object*> collect_task_objects() {
+#if PLATFORM_LINUX
+__attribute__((used, retain))
+#endif
+std::vector<fast_task::task_object*> collect_task_objects() {
     std::vector<fast_task::task_object*> collect;
     fast_task::glob.gba.iterate_all(
         [](fast_task::task_object* obj, void* d) {

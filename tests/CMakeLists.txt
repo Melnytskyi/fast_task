@@ -24,17 +24,15 @@ function(add_ft_test TARGET_NAME SOURCE_FILE)
         ${FT_TESTS_ROOT}              # for helpers.hpp
         ${CMAKE_SOURCE_DIR}/include   # library public headers
     )
+    set_property(TARGET ${TARGET_NAME} PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
     set_target_properties(${TARGET_NAME} PROPERTIES
         CXX_STANDARD 23
         CXX_EXTENSIONS OFF
     )
     if(MSVC)
         target_compile_options(${TARGET_NAME} PRIVATE /utf-8 /W3 /wd4100)
-    else()
-        if(CMAKE_BUILD_TYPE STREQUAL "Release" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebugInfo")
-            target_link_options(${TARGET_NAME} PRIVATE -flto=auto)
-        endif()
     endif()
+    
     gtest_discover_tests(${TARGET_NAME})
 endfunction()
 

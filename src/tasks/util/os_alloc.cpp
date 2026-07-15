@@ -15,7 +15,7 @@
     #include <Windows.h>
 #endif
 namespace fast_task {
-    void* os_alloc(std::size_t size) noexcept {
+    void* os_alloc(std::uintptr_t size) noexcept {
 #if PLATFORM_LINUX
         void* ptr = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
         return (ptr == MAP_FAILED) ? nullptr : ptr;
@@ -26,7 +26,7 @@ namespace fast_task {
 #endif
     }
 
-    void os_free(void* ptr, std::size_t size) noexcept {
+    void os_free(void* ptr, std::uintptr_t size) noexcept {
         if (!ptr)
             return;
 #if PLATFORM_LINUX

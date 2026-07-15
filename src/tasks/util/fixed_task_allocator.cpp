@@ -290,7 +290,7 @@ namespace fast_task {
 
         arena* old_head;
         {
-            std::lock_guard guard(arena_lock);
+            std::lock_guard arena_guard(arena_lock);
             old_head = arena_list_;
         }
         for (auto a = old_head; a; a = a->next) {
@@ -318,7 +318,7 @@ namespace fast_task {
             push_tail->next = nullptr;
         arena* to_free = nullptr;
         {
-            std::lock_guard guard(arena_lock);
+            std::lock_guard arena_guard(arena_lock);
 
             arena** prev_next = &arena_list_;
             arena* cur = arena_list_;

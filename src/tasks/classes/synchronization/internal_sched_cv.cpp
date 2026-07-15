@@ -48,21 +48,21 @@ namespace fast_task {
     }
 
     void internal_sched_cv::wait(fast_task::unique_lock<mutex_unify>& lock) {
-        resume_task node;
+        resume_task r_node;
         if (get_loc().is_task_thread) {
-            node.task = get_loc().curr_task;
-            node.awake_check = get_data(get_loc().curr_task).awake_check;
-            push_back(&node);
+            r_node.task = get_loc().curr_task;
+            r_node.awake_check = get_data(get_loc().curr_task).awake_check;
+            push_back(&r_node);
             swapCtxRelock(*lock.mutex());
         } else {
             fast_task::condition_variable_any cd;
             bool has_res = false;
-            node.task = nullptr;
-            node.awake_check = 0;
-            node.native_cv = &cd;
-            node.native_check = &has_res;
+            r_node.task = nullptr;
+            r_node.awake_check = 0;
+            r_node.native_cv = &cd;
+            r_node.native_check = &has_res;
 
-            push_back(&node);
+            push_back(&r_node);
             while (!has_res)
                 cd.wait(lock);
         }
@@ -70,10 +70,10 @@ namespace fast_task {
 
     bool internal_sched_cv::enter_wait(mutex_unify& mut, const task& task, enter_state& st) {
         get_data(task).set_relock(mut);
-        auto node = st.template use<resume_task>();
-        node->task = task;
-        node->awake_check = get_data(task).awake_check;
-        push_back(node);
+        auto r_node = st.template use<resume_task>();
+        r_node->task = task;
+        r_node->awake_check = get_data(task).awake_check;
+        push_back(r_node);
         return false;
     }
 

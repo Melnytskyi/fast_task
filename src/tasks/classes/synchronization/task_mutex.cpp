@@ -47,21 +47,26 @@ namespace fast_task {
     }
 
     void task_mutex::lock() {
+        interrupt_unsafe_region region;
         resume_task node;
-        if (get_loc().is_task_thread) {
-            get_data(get_loc().curr_task).set_awaked(false);
-            get_data(get_loc().curr_task).set_time_end(false);
-            node.task = get_loc().curr_task;
+
+        auto* loc = &get_loc();
+
+        if (loc->is_task_thread) {
+            get_data(loc->curr_task).set_awaked(false);
+            get_data(loc->curr_task).set_time_end(false);
+            node.task = loc->curr_task;
 
             fast_task::lock_guard lg(values.no_race);
-            if (values.current_task == get_loc().curr_task.get_id())
+            if (values.current_task == loc->curr_task.get_id())
                 throw std::logic_error("Tried lock mutex twice");
             while (values.current_task) {
-                node.awake_check = get_data(get_loc().curr_task).awake_check;
+                node.awake_check = get_data(loc->curr_task).awake_check;
                 push_back(values, &node);
                 swapCtxRelock(values.no_race);
+                loc = &get_loc();
             }
-            values.current_task = get_loc().curr_task.get_id();
+            values.current_task = loc->curr_task.get_id();
         } else {
             fast_task::condition_variable_any cd;
             bool has_res = false;
@@ -87,13 +92,14 @@ namespace fast_task {
         if (!values.no_race.try_lock())
             return false;
         fast_task::unique_lock ul(values.no_race, fast_task::adopt_lock);
+        auto& loc = get_loc();
 
         if (values.current_task)
             return false;
-        else if (get_loc().is_task_thread || get_loc().context_in_swap) {
-            if (values.current_task == get_loc().curr_task.get_id())
+        else if (loc.is_task_thread || loc.context_in_swap) {
+            if (values.current_task == loc.curr_task.get_id())
                 return false;
-            values.current_task = get_loc().curr_task.get_id();
+            values.current_task = loc.curr_task.get_id();
         } else {
             if (values.current_task == ((size_t)_thread_id() | native_thread_flag))
                 return false;
