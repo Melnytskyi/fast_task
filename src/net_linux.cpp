@@ -2121,9 +2121,6 @@ namespace fast_task::net {
                     transfer_task(std::move(to_resume));
                 }
 
-                if (rem == 0) {
-                    this->~resolve_state();
-                }
                 return;
             } else {
                 if (ph->events != 0) {
@@ -2233,7 +2230,6 @@ namespace fast_task::net {
         if (ares_init_options(&rs->channel, &options, optmask) != ARES_SUCCESS) {
             rs->error = EINVAL;
             rs->processing.clear(std::memory_order_release);
-            rs->~resolve_state();
             return true;
         }
 
@@ -2254,7 +2250,6 @@ namespace fast_task::net {
             }
             if (rs->pending_polls.load(std::memory_order_acquire) == 0) {
                 rs->processing.clear(std::memory_order_release);
-                rs->~resolve_state();
                 return true;
             }
         }

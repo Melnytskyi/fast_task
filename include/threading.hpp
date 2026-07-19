@@ -601,15 +601,6 @@ namespace fast_task {
         }
     };
 
-    template <>
-    struct FT_API full_state_relock_guard<class MutexUnify> {
-        class MutexUnify& ref;
-
-        full_state_relock_guard(class MutexUnify& ref);
-
-        ~full_state_relock_guard();
-    };
-
     class FT_API condition_variable_any {
         condition_variable _cond;
         mutex _mutex;
