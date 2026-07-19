@@ -113,13 +113,13 @@ namespace fast_task::net {
         std::byte data[192];
         void (*destruct)(void*) = nullptr;
 
-        template <class T>
-        T* use() {
+        template <class T, class... Args>
+        T* use(Args&&... args) {
             static_assert(sizeof(opaque_network_state::data) >= sizeof(T), "opaque_network_state inline storage too small for this type");
             if (destruct)
                 destruct(data);
             destruct = [](void* self) { reinterpret_cast<T*>(self)->~T(); };
-            return new (&data) T{};
+            return new (&data) T{args...};
         }
 
         void release() {

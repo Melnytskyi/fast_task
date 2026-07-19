@@ -219,8 +219,6 @@ namespace fast_task::net {
         return std::error_code(state.error, std::system_category());
     }
 
-    static_assert(sizeof(native_state) <= sizeof(opaque_network_state::data), "opaque_network_state buffer is too small for native_state!");
-
     class tcp_socket::manager : public util::native_worker_manager {
         int sock = -1;
 
@@ -708,7 +706,7 @@ namespace fast_task::net {
             return true;
         }
 
-        auto& n_state = *new (&state) native_state(mgr.get());
+        auto& n_state = *state.use<native_state>(mgr.get());
         n_state.awaiting_task = t;
 
         util::native_workers_singleton::post_connect(&n_state, clientSocket, (sockaddr*)ip_port.get_data(), ip_port.data_size());
@@ -737,7 +735,7 @@ namespace fast_task::net {
             return true;
         }
 
-        auto& n_state = *new (&state) native_state(mgr.get());
+        auto& n_state = *state.use<native_state>(mgr.get());
         n_state.awaiting_task = t;
         n_state.out_processed_bytes = &size;
 
@@ -755,7 +753,7 @@ namespace fast_task::net {
             return true;
         }
 
-        auto& n_state = *new (&state) native_state(handle.get());
+        auto& n_state = *state.use<native_state>(handle.get());
         n_state.awaiting_task = t;
         n_state.out_processed_bytes = &bytes_read;
         util::native_workers_singleton::post_recv(&n_state, handle->get_socket(), data.data(), data.size(), 0);
@@ -786,7 +784,7 @@ namespace fast_task::net {
             return true;
         }
 
-        auto& n_state = *new (&state) recvv_state(handle.get());
+        auto& n_state = *state.use<recvv_state>(handle.get());
 
         if (data.size() <= max_inline_buffers)
             n_state.bufs = n_state.inline_bufs;
@@ -816,7 +814,7 @@ namespace fast_task::net {
             return true;
         }
 
-        auto& ns = *new (&state) native_state(handle.get());
+        auto& ns = *state.use<native_state>(handle.get());
         ns.awaiting_task = t;
         ns.out_processed_bytes = &bytes_sent;
         util::native_workers_singleton::post_send(&ns, handle->get_socket(), (char*)data.data(), data.size(), 0);
@@ -847,7 +845,7 @@ namespace fast_task::net {
             return true;
         }
 
-        auto& n_state = *new (&state) sendv_state(handle.get());
+        auto& n_state = *state.use<sendv_state>(handle.get());
 
         if (data.size() <= max_inline_buffers)
             n_state.bufs = n_state.inline_bufs;
@@ -901,7 +899,7 @@ namespace fast_task::net {
             bytes_sent = -1;
             return true;
         }
-        auto& ns = *new (&state) transmit_file_state(handle.get());
+        auto& ns = *state.use<transmit_file_state>(handle.get());
         ns.awaiting_task = t;
         ns.out_processed_bytes = &bytes_sent;
 
@@ -933,7 +931,7 @@ namespace fast_task::net {
             bytes_sent = -1;
             return true;
         }
-        auto& ns = *new (&state) transmit_file_state(handle.get());
+        auto& ns = *state.use<transmit_file_state>(handle.get());
         ns.awaiting_task = t;
         ns.out_processed_bytes = &bytes_sent;
 
@@ -968,7 +966,7 @@ namespace fast_task::net {
             return true;
         }
 
-        auto& ns = *new (&state) transmit_filev_state(handle.get());
+        auto& ns = *state.use<transmit_filev_state>(handle.get());
         ns.awaiting_task = t;
         ns.out_processed_bytes = &bytes_sent;
         ns.prefix_data = prefix.data();
@@ -1005,7 +1003,7 @@ namespace fast_task::net {
             return true;
         }
 
-        auto& ns = *new (&state) transmit_filev_state(handle.get());
+        auto& ns = *state.use<transmit_filev_state>(handle.get());
         ns.awaiting_task = t;
         ns.out_processed_bytes = &bytes_sent;
         ns.prefix_data = prefix.data();
@@ -1048,7 +1046,7 @@ namespace fast_task::net {
 
         int res = ::shutdown(handle->get_socket(), how);
 
-        auto& ns = *new (&state) native_state(handle.get());
+        auto& ns = *state.use<native_state>(handle.get());
         ns.awaiting_task = nullptr;
 
         if (res == -1)
@@ -1066,7 +1064,7 @@ namespace fast_task::net {
         lingerStruct.l_linger = 0;
         ::setsockopt(handle->get_socket(), SOL_SOCKET, SO_LINGER, &lingerStruct, sizeof(lingerStruct));
 
-        auto& ns = *new (&state) native_state(handle.get());
+        auto& ns = *state.use<native_state>(handle.get());
         ns.awaiting_task = t;
         util::native_workers_singleton::post_close(&ns, handle->get_socket());
         return false;
@@ -1076,7 +1074,7 @@ namespace fast_task::net {
         if (!handle || handle->get_socket() == INVALID_SOCKET)
             return true;
 
-        auto& ns = *new (&state) native_state(handle.get());
+        auto& ns = *state.use<native_state>(handle.get());
         ns.awaiting_task = t;
         util::native_workers_singleton::post_close(&ns, handle->get_socket());
         return false;
@@ -1161,8 +1159,6 @@ namespace fast_task::net {
             out_processed_bytes = &new_fd;
         }
     };
-
-    static_assert(sizeof(accept_state) <= sizeof(opaque_network_state::data), "accept_state too large for opaque_network_state");
 
     tcp_listener::tcp_listener() = default;
     tcp_listener::tcp_listener(tcp_listener&&) = default;
@@ -1260,7 +1256,7 @@ namespace fast_task::net {
     bool tcp_listener::enter_close(const task& t, opaque_network_state& state) {
         if (!handle || handle->get_socket() == INVALID_SOCKET)
             return true;
-        auto& ns = *new (&state) native_state(handle.get());
+        auto& ns = *state.use<native_state>(handle.get());
         ns.awaiting_task = t;
         util::native_workers_singleton::post_close(&ns, handle->get_socket());
         return false;
@@ -1271,7 +1267,7 @@ namespace fast_task::net {
             res = std::nullopt;
             return true;
         }
-        auto& ns = *new (&state) accept_state(handle.get());
+        auto& ns = *state.use<accept_state>(handle.get());
         ns.awaiting_task = t;
         ns.out_socket = &res;
         ns.on_complete = [](void* base) {
@@ -1496,8 +1492,6 @@ namespace fast_task::net {
         }
     };
 
-    static_assert(sizeof(udp_recv_state) <= sizeof(opaque_network_state::data), "udp_recv_state too large for opaque_network_state");
-
     struct udp_send_state : public native_state {
         uint32_t* out_bytes;
         int32_t bytes_io = 0;
@@ -1507,8 +1501,6 @@ namespace fast_task::net {
             out_processed_bytes = &bytes_io;
         }
     };
-
-    static_assert(sizeof(udp_send_state) <= sizeof(opaque_network_state::data), "udp_send_state too large for opaque_network_state");
 
     struct udp_recvv_state : public native_state {
         udp_handle* hdl;
@@ -1532,8 +1524,6 @@ namespace fast_task::net {
         }
     };
 
-    static_assert(sizeof(udp_recvv_state) <= sizeof(opaque_network_state::data), "udp_recvv_state too large for opaque_network_state");
-
     struct udp_sendv_state : public native_state {
         uint32_t* out_bytes;
         int32_t bytes_io = 0;
@@ -1551,8 +1541,6 @@ namespace fast_task::net {
             };
         }
     };
-
-    static_assert(sizeof(udp_sendv_state) <= sizeof(opaque_network_state::data), "udp_sendv_state too large for opaque_network_state");
 
     udp_socket::udp_socket() = default;
     udp_socket::udp_socket(udp_socket&&) = default;
@@ -1748,7 +1736,7 @@ namespace fast_task::net {
             return true;
         }
         handle->setup_recv(data.data(), static_cast<uint32_t>(data.size()));
-        auto& ns = *new (&state) udp_recv_state(handle.get(), &sender, &bytes_read);
+        auto& ns = *state.use<udp_recv_state>(handle.get(), &sender, &bytes_read);
         ns.awaiting_task = t;
         ns.on_complete = [](void* base) {
             auto s = static_cast<udp_recv_state*>(base);
@@ -1767,7 +1755,7 @@ namespace fast_task::net {
             return true;
         }
         handle->setup_send(data.data(), static_cast<uint32_t>(data.size()), to);
-        auto& ns = *new (&state) udp_send_state(handle.get(), &bytes_sent);
+        auto& ns = *state.use<udp_send_state>(handle.get(), &bytes_sent);
         ns.awaiting_task = t;
         ns.on_complete = [](void* base) {
             auto s = static_cast<udp_send_state*>(base);
@@ -1783,7 +1771,7 @@ namespace fast_task::net {
             bytes_read = 0;
             return true;
         }
-        auto& ns = *new (&state) udp_recvv_state(handle.get(), &sender, &bytes_read);
+        auto& ns = *state.use<udp_recvv_state>(handle.get(), &sender, &bytes_read);
         ns.bufs = new struct iovec[buffers.size()];
         size_t count = 0;
         for (const auto& span : buffers) {
@@ -1804,7 +1792,7 @@ namespace fast_task::net {
             bytes_sent = 0;
             return true;
         }
-        auto& ns = *new (&state) udp_sendv_state(handle.get(), &bytes_sent);
+        auto& ns = *state.use<udp_sendv_state>(handle.get(), &bytes_sent);
         ns.bufs = new struct iovec[data.size()];
         size_t count = 0;
         for (const auto& span : data) {
@@ -1823,7 +1811,7 @@ namespace fast_task::net {
     bool udp_socket::enter_close(const task& t, opaque_network_state& state) {
         if (!handle || handle->get_socket() == INVALID_SOCKET)
             return true;
-        auto& ns = *new (&state) native_state(handle.get());
+        auto& ns = *state.use<native_state>(handle.get());
         ns.awaiting_task = t;
         util::native_workers_singleton::post_close(&ns, handle->get_socket());
         return false;
@@ -1969,7 +1957,7 @@ namespace fast_task::net {
             return true;
         }
         handle->setup_recv_peer(data.data(), static_cast<uint32_t>(data.size()));
-        auto& ns = *new (&state) udp_send_state(handle.get(), &bytes_read);
+        auto& ns = *state.use<udp_send_state>(handle.get(), &bytes_read);
         ns.awaiting_task = t;
         ns.on_complete = [](void* base) {
             auto s = static_cast<udp_send_state*>(base);
@@ -1986,7 +1974,7 @@ namespace fast_task::net {
             return true;
         }
         handle->setup_send_peer(data.data(), static_cast<uint32_t>(data.size()));
-        auto& ns = *new (&state) udp_send_state(handle.get(), &bytes_sent);
+        auto& ns = *state.use<udp_send_state>(handle.get(), &bytes_sent);
         ns.awaiting_task = t;
         ns.on_complete = [](void* base) {
             auto s = static_cast<udp_send_state*>(base);
@@ -2002,7 +1990,7 @@ namespace fast_task::net {
             bytes_read = 0;
             return true;
         }
-        auto& ns = *new (&state) udp_sendv_state(handle.get(), &bytes_read);
+        auto& ns = *state.use<udp_sendv_state>(handle.get(), &bytes_read);
         ns.bufs = new struct iovec[buffers.size()];
         size_t count = 0;
         for (const auto& span : buffers) {
@@ -2023,7 +2011,7 @@ namespace fast_task::net {
             bytes_sent = 0;
             return true;
         }
-        auto& ns = *new (&state) udp_sendv_state(handle.get(), &bytes_sent);
+        auto& ns = *state.use<udp_sendv_state>(handle.get(), &bytes_sent);
         ns.bufs = new struct iovec[data.size()];
         size_t count = 0;
         for (const auto& span : data) {
@@ -2042,7 +2030,7 @@ namespace fast_task::net {
     bool udp_peer::enter_close(const task& t, opaque_network_state& state) {
         if (!handle || handle->get_socket() == INVALID_SOCKET)
             return true;
-        auto& ns = *new (&state) native_state(handle.get());
+        auto& ns = *state.use<native_state>(handle.get());
         ns.awaiting_task = t;
         util::native_workers_singleton::post_close(&ns, handle->get_socket());
         return false;
@@ -2147,8 +2135,6 @@ namespace fast_task::net {
         }
     };
 
-    static_assert(sizeof(resolve_state) <= sizeof(opaque_network_state::data), "opaque_network_state::data too small for resolve_state");
-
     static void ares_sock_state_cb(void* data, ares_socket_t socket_fd, int readable, int writable) {
         auto* rs = static_cast<resolve_state*>(data);
 
@@ -2224,7 +2210,7 @@ namespace fast_task::net {
         uint16_t port_override,
         address::family preferred_family
     ) {
-        auto* rs = new (state.data) resolve_state();
+        auto* rs = state.use<resolve_state>();
         rs->out_single = out_single;
         rs->out_multi = out_multi;
         rs->preferred_family = preferred_family;

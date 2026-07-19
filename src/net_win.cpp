@@ -239,13 +239,19 @@ namespace fast_task::net {
         return std::error_code(state.error, std::system_category());
     }
 
-    static_assert(sizeof(native_state) <= sizeof(opaque_network_state::data), "opaque_network_state buffer is too small for native_state!");
-
     class tcp_socket::manager : public util::native_worker_manager {
         SOCKET sock = INVALID_SOCKET;
+        bool ops_inited = false;
 
     public:
-        manager(SOCKET s) : sock(s) {
+        enum class connection_method : bool {
+            connect,
+            accept,
+        };
+
+        const connection_method method;
+
+        manager(SOCKET s, connection_method method) : sock(s), method(method) {
             if (sock != INVALID_SOCKET) {
                 init_win_fns(sock);
                 HANDLE hSock = reinterpret_cast<HANDLE>(sock);
@@ -267,6 +273,18 @@ namespace fast_task::net {
         manager& operator=(manager&&) = delete;
 
         SOCKET get_socket() const noexcept {
+            return sock;
+        }
+
+        SOCKET get_socket_for_ops() noexcept {
+            if (ops_inited)
+                return sock;
+            else if (sock != INVALID_SOCKET) {
+                if (method == connection_method::connect)
+                    if (auto res = setsockopt(sock, SOL_SOCKET, SO_UPDATE_CONNECT_CONTEXT, NULL, 0); res != NO_ERROR)
+                        return INVALID_SOCKET;
+            }
+            ops_inited = true;
             return sock;
         }
 
@@ -715,43 +733,52 @@ namespace fast_task::net {
     }
 
     address tcp_socket::local_address() const noexcept {
-        if (!handle || handle->get_socket() == INVALID_SOCKET)
+        if (!handle)
+            return address();
+        auto socket = handle->get_socket_for_ops();
+        if (socket == INVALID_SOCKET)
             return address();
 
         sockaddr_storage addr;
         socklen_t addr_len = sizeof(addr);
-        if (getsockname(handle->get_socket(), (sockaddr*)&addr, &addr_len) == -1)
+        if (getsockname(socket, (sockaddr*)&addr, &addr_len) == -1)
             return address();
         return to_address(&addr);
     }
 
     address tcp_socket::remote_address() const noexcept {
-        if (!handle || handle->get_socket() == INVALID_SOCKET)
+        if (!handle)
+            return address();
+        auto socket = handle->get_socket_for_ops();
+        if (socket == INVALID_SOCKET)
             return address();
 
         sockaddr_storage addr;
         socklen_t addr_len = sizeof(addr);
-        if (getpeername(handle->get_socket(), (sockaddr*)&addr, &addr_len) == -1)
+        if (getpeername(socket, (sockaddr*)&addr, &addr_len) == -1)
             return address();
         return to_address(&addr);
     }
 
     bool tcp_socket::enter_connect(const task& t, opaque_network_state& state, std::optional<tcp_socket>& res, const address& ip_port, const tcp_configuration& config) {
-        SOCKET sock = ::WSASocketW(AF_INET, SOCK_STREAM, IPPROTO_TCP, NULL, 0, WSA_FLAG_OVERLAPPED);
+        SOCKET sock = ::WSASocketW(AF_INET6, SOCK_STREAM, IPPROTO_TCP, NULL, 0, WSA_FLAG_OVERLAPPED);
         if (sock == INVALID_SOCKET)
             return true;
 
-        sockaddr_in bind_addr{};
-        bind_addr.sin_family = AF_INET;
-        bind_addr.sin_addr.s_addr = INADDR_ANY;
-        bind_addr.sin_port = 0;
-        ::bind(sock, (SOCKADDR*)&bind_addr, sizeof(bind_addr));
-
-        auto mgr = std::make_unique<manager>(sock);
+        auto mgr = std::make_unique<manager>(sock, tcp_socket::manager::connection_method::connect);
         if (!mgr->set_configuration(config))
             return true;
 
-        auto& n_state = *new (&state) native_state(mgr.get());
+        sockaddr_in6 bind_addr{0};
+        bind_addr.sin6_family = AF_INET6;
+        bind_addr.sin6_addr = IN6ADDR_ANY_INIT;
+        bind_addr.sin6_port = 0;
+        if (::bind(sock, (SOCKADDR*)&bind_addr, sizeof(bind_addr)) == SOCKET_ERROR) {
+            state.use<native_state>(nullptr)->error = ::WSAGetLastError();
+            return true;
+        }
+
+        auto& n_state = *state.use<native_state>(mgr.get());
         n_state.awaiting_task = t;
 
         DWORD bytesSent = 0;
@@ -777,21 +804,25 @@ namespace fast_task::net {
     }
 
     bool tcp_socket::enter_connect(const task& t, opaque_network_state& state, std::optional<tcp_socket>& res, const address& ip_port, uint8_t* data, int32_t& size, const tcp_configuration& config) {
-        SOCKET sock = ::WSASocketW(AF_INET, SOCK_STREAM, IPPROTO_TCP, NULL, 0, WSA_FLAG_OVERLAPPED);
+        SOCKET sock = ::WSASocketW(AF_INET6, SOCK_STREAM, IPPROTO_TCP, NULL, 0, WSA_FLAG_OVERLAPPED);
         if (sock == INVALID_SOCKET)
             return true;
 
-        sockaddr_in bind_addr{};
-        bind_addr.sin_family = AF_INET;
-        bind_addr.sin_addr.s_addr = INADDR_ANY;
-        bind_addr.sin_port = 0;
-        ::bind(sock, (SOCKADDR*)&bind_addr, sizeof(bind_addr));
-
-        auto mgr = std::make_unique<manager>(sock);
+        auto mgr = std::make_unique<manager>(sock, tcp_socket::manager::connection_method::connect);
         if (!mgr->set_configuration(config))
             return true;
 
-        auto& n_state = *new (&state) native_state(mgr.get());
+        sockaddr_in6 bind_addr{0};
+        bind_addr.sin6_family = AF_INET6;
+        bind_addr.sin6_addr = IN6ADDR_ANY_INIT;
+        bind_addr.sin6_port = 0;
+        if (::bind(sock, (SOCKADDR*)&bind_addr, sizeof(bind_addr)) == SOCKET_ERROR) {
+            state.use<native_state>(nullptr)->error = ::WSAGetLastError();
+            return true;
+        }
+
+
+        auto& n_state = *state.use<native_state>(mgr.get());
         n_state.awaiting_task = t;
         n_state.out_processed_bytes = &size;
 
@@ -828,7 +859,7 @@ namespace fast_task::net {
             return true;
         }
 
-        auto& n_state = *new (&state) recv_state(handle.get());
+        auto& n_state = *state.use<recv_state>(handle.get());
         n_state.awaiting_task = t;
         n_state.out_processed_bytes = &bytes_read;
         n_state.buf.buf = reinterpret_cast<CHAR*>(data.data());
@@ -876,7 +907,7 @@ namespace fast_task::net {
             return true;
         }
 
-        auto& ns = *new (&state) recvv_state(handle.get());
+        auto& ns = *state.use<recvv_state>(handle.get());
         ns.awaiting_task = t;
         ns.out_processed_bytes = &bytes_read;
 
@@ -920,7 +951,7 @@ namespace fast_task::net {
             send_state(util::native_worker_manager* mgr) : native_state(mgr) {}
         };
 
-        auto& ns = *new (&state) send_state(handle.get());
+        auto& ns = *state.use<send_state>(handle.get());
         ns.awaiting_task = t;
         ns.out_processed_bytes = &bytes_sent;
         ns.buf.buf = (CHAR*)data.data();
@@ -959,7 +990,7 @@ namespace fast_task::net {
             }
         };
 
-        auto& ns = *new (&state) sendv_state(handle.get());
+        auto& ns = *state.use<sendv_state>(handle.get());
         ns.awaiting_task = t;
         ns.out_processed_bytes = &bytes_sent;
 
@@ -1008,7 +1039,7 @@ namespace fast_task::net {
     };
 
     bool tcp_socket::enter_send_file(const task& t, opaque_network_state& state, int32_t& bytes_sent, const char* file_path, [[maybe_unused]] size_t file_path_len, uint32_t data_len, uint64_t offset, uint32_t chunks_size) {
-        auto& ns = *new (&state) transmit_file_state(handle.get());
+        auto& ns = *state.use<transmit_file_state>(handle.get());
         ns.awaiting_task = t;
         ns.out_processed_bytes = &bytes_sent;
 
@@ -1042,7 +1073,7 @@ namespace fast_task::net {
     }
 
     bool tcp_socket::enter_send_file(const task& t, opaque_network_state& state, int32_t& bytes_sent, class fast_task::file::file_handle& file_path, uint32_t data_len, uint64_t offset, uint32_t chunks_size) {
-        auto& ns = *new (&state) transmit_file_state(handle.get());
+        auto& ns = *state.use<transmit_file_state>(handle.get());
         ns.awaiting_task = t;
         ns.out_processed_bytes = &bytes_sent;
 
@@ -1077,7 +1108,7 @@ namespace fast_task::net {
         if (prefix.size() > 0xFFFFFFFF || postfix.size() > 0xFFFFFFFF)
             throw std::invalid_argument("Prefix or postfix too large for TransmitFile");
 
-        auto& ns = *new (&state) transmit_filev_state(handle.get());
+        auto& ns = *state.use<transmit_filev_state>(handle.get());
         ns.awaiting_task = t;
         ns.out_processed_bytes = &bytes_sent;
 
@@ -1123,7 +1154,7 @@ namespace fast_task::net {
     bool tcp_socket::enter_sendv_file(const task& t, opaque_network_state& state, int32_t& bytes_sent, const std::span<const uint8_t> prefix, const std::span<const uint8_t> postfix, class fast_task::file::file_handle& file_path, uint32_t data_len, uint64_t offset, uint32_t chunks_size) {
         if (prefix.size() > 0xFFFFFFFF || postfix.size() > 0xFFFFFFFF)
             throw std::invalid_argument("Prefix or postfix too large for TransmitFile");
-        auto& ns = *new (&state) transmit_filev_state(handle.get());
+        auto& ns = *state.use<transmit_filev_state>(handle.get());
         ns.awaiting_task = t;
         ns.out_processed_bytes = &bytes_sent;
 
@@ -1171,9 +1202,9 @@ namespace fast_task::net {
             break;
         }
 
-        int res = ::shutdown(handle->get_socket(), how);
+        int res = ::shutdown(handle->get_socket_for_ops(), how);
 
-        auto& ns = *new (&state) native_state(handle.get());
+        auto& ns = *state.use<native_state>(handle.get());
         ns.awaiting_task = nullptr;
 
         if (res == SOCKET_ERROR)
@@ -1188,7 +1219,7 @@ namespace fast_task::net {
         lingerStruct.l_linger = 0;
         ::setsockopt(handle->get_socket(), SOL_SOCKET, SO_LINGER, (char*)&lingerStruct, sizeof(lingerStruct));
 
-        auto& ns = *new (&state) native_state(handle.get());
+        auto& ns = *state.use<native_state>(handle.get());
         ns.awaiting_task = t;
 
         BOOL res = _DisconnectEx(handle->get_socket(), &ns.overlapped, 0, 0);
@@ -1205,7 +1236,7 @@ namespace fast_task::net {
     }
 
     bool tcp_socket::enter_close(const task& t, opaque_network_state& state) {
-        auto& ns = *new (&state) native_state(handle.get());
+        auto& ns = *state.use<native_state>(handle.get());
         ns.awaiting_task = t;
 
         BOOL res = _DisconnectEx(handle->get_socket(), &ns.overlapped, 0, 0);
@@ -1331,8 +1362,6 @@ namespace fast_task::net {
         accept_state(util::native_worker_manager* mgr, SOCKET ls) : native_state(mgr), listen_socket(ls) {}
     };
 
-    static_assert(sizeof(accept_state) <= sizeof(opaque_network_state::data), "accept_state too large for opaque_network_state");
-
     tcp_listener::tcp_listener() = default;
     tcp_listener::tcp_listener(tcp_listener&&) = default;
     tcp_listener& tcp_listener::operator=(tcp_listener&&) = default;
@@ -1425,7 +1454,7 @@ namespace fast_task::net {
     bool tcp_listener::enter_close(const task& t, opaque_network_state& state) {
         if (!handle || handle->get_socket() == INVALID_SOCKET)
             return true;
-        auto& ns = *new (&state) native_state(handle.get());
+        auto& ns = *state.use<native_state>(handle.get());
         ns.awaiting_task = t;
 
         BOOL res = _DisconnectEx(handle->get_socket(), &ns.overlapped, 0, 0);
@@ -1451,7 +1480,7 @@ namespace fast_task::net {
             res = std::nullopt;
             return true;
         }
-        auto& ns = *new (&state) accept_state(handle.get(), handle->get_socket());
+        auto& ns = *state.use<accept_state>(handle.get(), handle->get_socket());
         ns.awaiting_task = t;
         ns.accept_socket = accept_sock;
         ns.out_socket = &res;
@@ -1460,7 +1489,7 @@ namespace fast_task::net {
             if (s->error == 0 && s->out_socket) {
                 ::setsockopt(s->accept_socket, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT, (char*)&s->listen_socket, sizeof(s->listen_socket));
                 tcp_socket new_sock;
-                new_sock.handle = std::make_unique<tcp_socket::manager>(s->accept_socket);
+                new_sock.handle = std::make_unique<tcp_socket::manager>(s->accept_socket, tcp_socket::manager::connection_method::accept);
                 *s->out_socket = std::move(new_sock);
                 s->accept_socket = INVALID_SOCKET;
             } else {
@@ -1695,8 +1724,6 @@ namespace fast_task::net {
         }
     };
 
-    static_assert(sizeof(udp_recv_state) <= sizeof(opaque_network_state::data), "udp_recv_state too large for opaque_network_state");
-
     struct udp_send_state : public native_state {
         uint32_t* out_bytes;
         int32_t bytes_io = 0;
@@ -1706,8 +1733,6 @@ namespace fast_task::net {
             out_processed_bytes = &bytes_io;
         }
     };
-
-    static_assert(sizeof(udp_send_state) <= sizeof(opaque_network_state::data), "udp_send_state too large for opaque_network_state");
 
     struct udp_recvv_state : public native_state {
         udp_handle* hdl;
@@ -1731,8 +1756,6 @@ namespace fast_task::net {
         }
     };
 
-    static_assert(sizeof(udp_recvv_state) <= sizeof(opaque_network_state::data), "udp_recvv_state too large for opaque_network_state");
-
     struct udp_sendv_state : public native_state {
         uint32_t* out_bytes;
         int32_t bytes_io = 0;
@@ -1750,8 +1773,6 @@ namespace fast_task::net {
             };
         }
     };
-
-    static_assert(sizeof(udp_sendv_state) <= sizeof(opaque_network_state::data), "udp_sendv_state too large for opaque_network_state");
 
     udp_socket::udp_socket() = default;
     udp_socket::udp_socket(udp_socket&&) = default;
@@ -1947,7 +1968,7 @@ namespace fast_task::net {
             return true;
         }
         handle->setup_recv(data.data(), static_cast<uint32_t>(data.size()));
-        auto& ns = *new (&state) udp_recv_state(handle.get(), &sender, &bytes_read);
+        auto& ns = *state.use<udp_recv_state>(handle.get(), &sender, &bytes_read);
         ns.awaiting_task = t;
         ns.on_complete = [](void* base) {
             auto s = static_cast<udp_recv_state*>(base);
@@ -1973,7 +1994,7 @@ namespace fast_task::net {
             return true;
         }
         handle->setup_send(data.data(), static_cast<uint32_t>(data.size()), to);
-        auto& ns = *new (&state) udp_send_state(handle.get(), &bytes_sent);
+        auto& ns = *state.use<udp_send_state>(handle.get(), &bytes_sent);
         ns.awaiting_task = t;
         ns.on_complete = [](void* base) {
             auto s = static_cast<udp_send_state*>(base);
@@ -1996,7 +2017,7 @@ namespace fast_task::net {
             return true;
         }
         handle->reset_recv_sender();
-        auto& ns = *new (&state) udp_recvv_state(handle.get(), &sender, &bytes_read);
+        auto& ns = *state.use<udp_recvv_state>(handle.get(), &sender, &bytes_read);
         ns.bufs = new WSABUF[buffers.size()];
         DWORD count = 0;
         for (const auto& span : buffers) {
@@ -2026,7 +2047,7 @@ namespace fast_task::net {
             return true;
         }
         handle->setup_send_addr(to);
-        auto& ns = *new (&state) udp_sendv_state(handle.get(), &bytes_sent);
+        auto& ns = *state.use<udp_sendv_state>(handle.get(), &bytes_sent);
         ns.bufs = new WSABUF[data.size()];
         DWORD count = 0;
         for (const auto& span : data) {
@@ -2196,7 +2217,7 @@ namespace fast_task::net {
             return true;
         }
         handle->setup_recv_peer(data.data(), static_cast<uint32_t>(data.size()));
-        auto& ns = *new (&state) udp_send_state(handle.get(), &bytes_read);
+        auto& ns = *state.use<udp_send_state>(handle.get(), &bytes_read);
         ns.awaiting_task = t;
         ns.on_complete = [](void* base) {
             auto s = static_cast<udp_send_state*>(base);
@@ -2220,7 +2241,7 @@ namespace fast_task::net {
             return true;
         }
         handle->setup_send_peer(data.data(), static_cast<uint32_t>(data.size()));
-        auto& ns = *new (&state) udp_send_state(handle.get(), &bytes_sent);
+        auto& ns = *state.use<udp_send_state>(handle.get(), &bytes_sent);
         ns.awaiting_task = t;
         ns.on_complete = [](void* base) {
             auto s = static_cast<udp_send_state*>(base);
@@ -2242,7 +2263,7 @@ namespace fast_task::net {
             bytes_read = 0;
             return true;
         }
-        auto& ns = *new (&state) udp_sendv_state(handle.get(), &bytes_read);
+        auto& ns = *state.use<udp_sendv_state>(handle.get(), &bytes_read);
         ns.bufs = new WSABUF[buffers.size()];
         DWORD count = 0;
         for (const auto& span : buffers) {
@@ -2271,7 +2292,7 @@ namespace fast_task::net {
             bytes_sent = 0;
             return true;
         }
-        auto& ns = *new (&state) udp_sendv_state(handle.get(), &bytes_sent);
+        auto& ns = *state.use<udp_sendv_state>(handle.get(), &bytes_sent);
         ns.bufs = new WSABUF[data.size()];
         DWORD count = 0;
         for (const auto& span : data) {
@@ -2344,8 +2365,6 @@ namespace fast_task::net {
                 delete[] service_w;
         }
     };
-
-    static_assert(sizeof(resolve_state) <= sizeof(opaque_network_state::data), "opaque_network_state::data too small for resolve_win_ptr_state");
 
     void enter_resolve_callback(DWORD dwError, DWORD, LPWSAOVERLAPPED lpOverlapped) {
         auto rs = reinterpret_cast<resolve_state*>(lpOverlapped);
