@@ -212,9 +212,37 @@ namespace fast_task::debug {
         array<entry> entries;
     };
 
+    struct FT_API raw_tls_info {
+        //RESERVED
+        uint16_t tls_capacity;
+    };
+
     struct FT_API raw_task_info {
         uintptr_t task_id;
-        uintptr_t internal_condition_id;
+        enum class status_e : uint8_t {
+            created,
+            scheduled,
+            running,
+            suspending,
+            suspended,
+            ended,
+        };
+        status_e status;
+        bool is_restartable : 1;
+        bool is_on_scheduler : 1;
+        bool time_end : 1;
+        bool awaked : 1;
+        bool auto_bind : 1;
+        bool is_sbo : 1;
+        bool spin_lock_locked : 1;
+        bool cancellation_requested : 1;
+        bool invalid_switch_caught : 1;
+        bool completed : 1;
+        bool stored_exception : 1;
+        uint32_t counter;
+        array<awake_item> waiting_tasks_ids;
+        raw_tls_info* tls_info; //could be nullptr
+        int64_t timeout_timestamp;
 
         raw_stack_trace call_stack;
         size_t counter_interrupt;
@@ -222,20 +250,15 @@ namespace fast_task::debug {
         task_priority priority;
         uint16_t awake_check; //if check does not match with check from awake_item the awake is invalid and would be ignored by scheduler. This is intended behavior.
         uint16_t bind_to_worker_id;
-        bool time_end_flag : 1;
-        bool started : 1;
-        bool awaked : 1;
-        bool end_of_life : 1;
-        bool make_cancel : 1;
-        bool auto_bind_worker : 1;
-        bool invalid_switch_caught : 1;
-        bool completed : 1;
-
-        int64_t timeout_timestamp;
-        raw_stack_trace* init_call_stack = nullptr;
 
         uintptr_t created_by_id;
         bool created_by_is_native; //defines meanin of the created_by_id field, of false the id is the tasks id
+
+        uint64_t current_available_quantum_ns;
+        size_t interrupt_data;
+        to_start_override* on_start_override;
+        const task_vtable* vtable;
+        raw_stack_trace* init_call_stack = nullptr;
 
         raw_task_info();
         ~raw_task_info();

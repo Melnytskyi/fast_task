@@ -117,6 +117,7 @@ namespace fast_task {
         static void free(task_object* obj);
 
         mutex_unify get_self_unify() noexcept;
+        size_t get_id() const noexcept;
     };
 }
 

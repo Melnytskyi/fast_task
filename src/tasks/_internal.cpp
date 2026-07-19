@@ -571,7 +571,6 @@ namespace fast_task {
         if (!obj)
             return;
         if (obj->link_counter.fetch_sub(1, std::memory_order_acq_rel) == 1) {
-            FT_DEBUG_ONLY(unregister_object(obj));
             const bool started = obj->is_scheduled();
             const bool ended = obj->is_ended();
 
@@ -598,17 +597,20 @@ namespace fast_task {
                 std::abort();
             }
 #endif
-
-            FT_DEBUG_ONLY(unregister_object(obj));
             if (obj->vtable && obj->vtable->heap_allocated)
                 delete const_cast<task_vtable*>(obj->vtable);
 
             obj->status.store(task_object::status_e::released, std::memory_order_relaxed);
             get_loc().task_alloc_cache.deallocate(obj);
+            FT_DEBUG_ONLY(unregister_object(obj));
         }
     }
 
     mutex_unify task_object::get_self_unify() noexcept {
         return mutex_unify_relock_access::from_task_object(*this);
+    }
+
+    size_t task_object::get_id() const noexcept {
+        return reinterpret_cast<size_t>(this) & ~native_thread_flag;
     }
 }
