@@ -7,5 +7,3 @@ vcpkg/*
 .VSCodeCounter
 .PVS-Studio
 out/*
-# CocoIndex Code (ccc)
-/.cocoindex_code/
