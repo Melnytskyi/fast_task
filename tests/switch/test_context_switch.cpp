@@ -10,49 +10,50 @@
 class ContextSwitchTest : public SchedulerFixture {};
 
 TEST_F(ContextSwitchTest, YieldIncreasesContextSwitchCounter) {
-    std::shared_ptr<fast_task::task> t_ref;
-    auto t = std::make_shared<fast_task::task>([&] {
+    fast_task::task t_ref;
+    auto t = fast_task::task::create([&] {
         fast_task::this_task::yield();
         fast_task::this_task::yield();
         fast_task::this_task::yield();
     });
     t_ref = t;
     fast_task::scheduler::start(t);
-    t->await_task();
-    EXPECT_GE(t_ref->get_counter_context_switch(), 3u);
+    t.await_task();
+    EXPECT_GE(t_ref.get_counter_context_switch(), 3u);
 }
 
 TEST_F(ContextSwitchTest, NoYieldHasLowCounter) {
-    std::shared_ptr<fast_task::task> t_ref;
-    auto t = std::make_shared<fast_task::task>([&] {
+    fast_task::task t_ref;
+    auto t = fast_task::task::create([&] {
         // no yield
         volatile int x = 0;
-        for (int i = 0; i < 1000; ++i) x += i;
+        for (int i = 0; i < 1000; ++i)
+            x += i;
     });
     t_ref = t;
     fast_task::scheduler::start(t);
-    t->await_task();
+    t.await_task();
     // Without explicit yields the counter may be 0 or 1 (initial switch)
-    EXPECT_LE(t_ref->get_counter_context_switch(), 1u);
+    EXPECT_LE(t_ref.get_counter_context_switch(), 1u);
 }
 
 TEST_F(ContextSwitchTest, SleepCausesContextSwitch) {
-    std::shared_ptr<fast_task::task> t_ref;
-    auto t = std::make_shared<fast_task::task>([&] {
+    fast_task::task t_ref;
+    auto t = fast_task::task::create([&] {
         fast_task::this_task::sleep_for(std::chrono::milliseconds(10));
     });
     t_ref = t;
     fast_task::scheduler::start(t);
-    t->await_task();
-    EXPECT_GE(t_ref->get_counter_context_switch(), 1u);
+    t.await_task();
+    EXPECT_GE(t_ref.get_counter_context_switch(), 1u);
 }
 
 TEST_F(ContextSwitchTest, InterruptCounterTracked) {
-    std::shared_ptr<fast_task::task> t_ref;
+    fast_task::task t_ref;
     std::atomic<bool> cancelled{false};
     std::atomic<bool> started{false};
 
-    auto t = std::make_shared<fast_task::task>(
+    auto t = fast_task::task::create(
         [&] {
             started = true;
             while (!fast_task::this_task::is_cancellation_requested())
@@ -70,10 +71,10 @@ TEST_F(ContextSwitchTest, InterruptCounterTracked) {
     fast_task::scheduler::start(t);
     while (!started.load())
         fast_task::this_thread::sleep_for(std::chrono::milliseconds(1));
-    t->notify_cancel();
-    t->await_task();
+    t.notify_cancel();
+    t.await_task();
 
     EXPECT_TRUE(cancelled.load());
     // interrupt counter requires FT_ENABLE_PREEMPTIVE_SCHEDULER; just check >= 0
-    EXPECT_GE(t_ref->get_counter_interrupt(), 0u);
+    EXPECT_GE(t_ref.get_counter_interrupt(), 0u);
 }

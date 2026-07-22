@@ -6,13 +6,13 @@
 
 #ifndef INCLUDE_COROUTINE_HELPERS
 #define INCLUDE_COROUTINE_HELPERS
-#include "../task/query.hpp"
+#include "../task/queue.hpp"
 #include "../task/scheduler.hpp"
 #include "core.hpp"
 
 namespace fast_task::coroutine {
     template <class T, class FN>
-    task_coro<void> async_for_each(T&& container, fast_task::task_query& query, FN&& fn) {
+    task_coro<void> async_for_each(T&& container, fast_task::task_queue& queue, FN&& fn) {
         if (container.empty())
             return [] -> fast_task::task_coro<void> {
                 co_return;
@@ -23,7 +23,7 @@ namespace fast_task::coroutine {
                 fn(item);
                 co_return;
             }();
-            query.add(cor);
+            queue.add(cor);
             coros.emplace_back(cor);
         }
 
@@ -37,7 +37,7 @@ namespace fast_task::coroutine {
                 throw;
             }
         }();
-        query.add(res);
+        queue.add(res);
         return res;
     }
 
@@ -73,7 +73,7 @@ namespace fast_task::coroutine {
     }
 
     template <class T, class FN>
-    void for_each(T& container, fast_task::task_query& query, FN&& fn) {
+    void for_each(T& container, fast_task::task_queue& queue, FN&& fn) {
         if (container.empty())
             return;
         std::vector<fast_task::task_coro<void>> coros;
@@ -82,7 +82,7 @@ namespace fast_task::coroutine {
                 fn(item);
                 co_return;
             }(item, fn);
-            query.add(cor);
+            queue.add(cor);
             coros.emplace_back(cor);
         }
 

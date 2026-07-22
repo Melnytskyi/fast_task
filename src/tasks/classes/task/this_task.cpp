@@ -4,15 +4,16 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
+#include <exceptions.hpp>
 #include <task.hpp>
 #include <tasks/_internal.hpp>
 
 namespace fast_task::this_task {
     size_t get_id() noexcept {
         if (!get_loc().is_task_thread)
-            return 0;
+            return (size_t)_thread_id() | native_thread_flag;
         else
-            return std::hash<size_t>()(reinterpret_cast<size_t>(&*get_loc().curr_task));
+            return get_loc().curr_task.get_id();
     }
 
     bool is_task() noexcept {
@@ -31,24 +32,23 @@ namespace fast_task::this_task {
     void self_cancel() {
         if (get_loc().is_task_thread) {
             if (get_loc().curr_task)
-                get_loc().curr_task->notify_cancel();
+                get_loc().curr_task.notify_cancel();
             throw task_cancellation();
         } else
             throw invalid_context();
     }
 
-    void the_coroutine_ended(const std::shared_ptr<task>& task) noexcept {
+    void the_coroutine_ended(const task& task) noexcept {
         if (task) {
             {
-                fast_task::lock_guard guard(get_data(task).no_race);
-                get_data(task).is_restartable = false;
-                get_data(task).end_of_life = true;
+                fast_task::lock_guard guard(get_data(task));
+                get_data(task).set_is_restartable(false);
             }
-            get_data(task).result_notify.notify_all();
+            get_data(task).end_of_life_notify();
         }
     }
 
-    bool transfer_to(const std::shared_ptr<task>& target) {
+    bool transfer_to(const task& target) {
         if (get_loc().is_task_thread) {
             if (!target || !get_loc().curr_task)
                 return false;
@@ -57,9 +57,9 @@ namespace fast_task::this_task {
             if (get_loc().transfer_state.pending)
                 return false;
             if (!(
-                    get_data(get_loc().curr_task).is_on_scheduler == true &&
-                    get_data(target).is_on_scheduler == true &&
-                    (get_data(target).started == false || (get_data(target).suspended == true && get_data(target).is_restartable == true))
+                    get_data(get_loc().curr_task).get_is_on_scheduler() == true &&
+                    get_data(target).get_is_on_scheduler() == true &&
+                    (get_data(target).is_scheduled() == false || (get_data(target).is_suspended() == true && get_data(target).get_is_restartable() == true))
                 ))
                 return false;
 
@@ -72,12 +72,7 @@ namespace fast_task::this_task {
                 return false;
             ++get_loc().transfer_state.transfers;
 #endif
-            if (!get_data(target).started) {
-                get_data(target).started = true;
-                ++glob.executing_tasks;
-            } else if (get_data(target).suspended)
-                get_data(target).suspended = false;
-
+            get_data(target).set_status(task_object::status_e::scheduled);
             get_loc().transfer_state.pending = target;
             return true;
         } else
@@ -86,27 +81,25 @@ namespace fast_task::this_task {
 
     void sleep_until(std::chrono::high_resolution_clock::time_point time_point) {
         if (get_loc().is_task_thread) {
-            fast_task::lock_guard guard(glob.task_timer_safety);
-            makeTimeWait_unsafe(time_point);
-            swapCtxRelock(glob.task_timer_safety);
+            get_loc().pending_timer = time_point;
+            swapCtx();
             resetTimeWait();
         } else
             this_thread::sleep_until(time_point);
     }
 
-    bool FT_API enter_sleep_until(std::chrono::high_resolution_clock::time_point time_point) {
+    bool FT_API enter_sleep_until(enter_state&, std::chrono::high_resolution_clock::time_point time_point) {
         if (get_loc().is_task_thread) {
             if (std::chrono::high_resolution_clock::now() >= time_point)
                 return true;
-            fast_task::lock_guard guard(glob.task_timer_safety);
-            makeTimeWait_unsafe(time_point);
+            get_loc().pending_timer = time_point;
             return false;
         } else
             throw invalid_context();
     }
 
-    bool FT_API enter_yield() {
-        transfer_task(std::shared_ptr<task>{get_loc().curr_task});
+    bool FT_API enter_yield(enter_state&) {
+        transfer_task(task{get_loc().curr_task});
         return false;
     }
 

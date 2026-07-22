@@ -61,14 +61,14 @@ namespace fast_task {
         }
     }
 
-    bool multiply_mutex::enter_wait(const std::shared_ptr<task>& parent_coro) {
+    bool multiply_mutex::enter_wait(const task& parent_coro, enter_state&) {
         if (try_lock())
             return true;
 
         task::run([this, parent_coro = parent_coro]() mutable {
             this->lock();
             for (auto& mut : this->value.mu)
-                mut.donate_ownership(parent_coro.get());
+                mut.donate_ownership(&parent_coro);
 
             transfer_task(std::move(parent_coro));
         });
@@ -76,17 +76,17 @@ namespace fast_task {
         return false;
     }
 
-    bool multiply_mutex::enter_wait_until(const std::shared_ptr<task>& parent_coro, std::chrono::high_resolution_clock::time_point time_point) {
+    bool multiply_mutex::enter_wait_until(const task& parent_coro, enter_state&, std::chrono::high_resolution_clock::time_point time_point) {
         if (try_lock())
             return true;
 
         task::run([this, parent_coro = parent_coro, time_point]() mutable {
             if (this->try_lock_until(time_point)) {
                 for (auto& mut : this->value.mu) {
-                    mut.donate_ownership(parent_coro.get());
+                    mut.donate_ownership(&parent_coro);
                 }
             } else
-                get_data(parent_coro).time_end_flag = true;
+                get_data(parent_coro).set_time_end(true);
 
             transfer_task(std::move(parent_coro));
         });

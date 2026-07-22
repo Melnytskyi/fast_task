@@ -7,6 +7,7 @@
 #ifndef INCLUDE_TASK_MUTEX
 #define INCLUDE_TASK_MUTEX
 #include "../threading.hpp"
+#include "enter_state.hpp"
 #include "fwd.hpp"
 #include <list>
 
@@ -18,10 +19,14 @@ namespace fast_task {
         friend class mutex_unify;
 
         struct FT_API_LOCAL private_values {
-            std::list<struct resume_task> resume_task;
             fast_task::spin_lock no_race;
-            class task* current_task = nullptr;
+            struct resume_task* begin = nullptr;
+            struct resume_task* end = nullptr;
+            size_t current_task = 0;
         } values;
+
+        static void push_back(private_values& values, resume_task* node);
+        static void erase(private_values& values, resume_task* node);
 
     public:
         task_mutex();
@@ -32,13 +37,12 @@ namespace fast_task {
         bool try_lock_until(std::chrono::high_resolution_clock::time_point time_point);
         void unlock();
         bool is_locked();
-        void lifecycle_lock(std::shared_ptr<task>&& task);
+        void lifecycle_lock(task&& task);
         bool is_own();
 
 
-        //for coroutines
-        bool enter_wait(const std::shared_ptr<task>& task); //returns true if the lock locked, false if the task submitted to wait list
-        bool enter_wait_until(const std::shared_ptr<task>& task, std::chrono::high_resolution_clock::time_point);
+        bool enter_wait(const task&, enter_state& task);
+        bool enter_wait_until(const task&, enter_state& task, std::chrono::high_resolution_clock::time_point);
 
         template <class Rep, class Period>
         bool try_lock_for(const std::chrono::duration<Rep, Period>& duration) {
@@ -61,12 +65,12 @@ namespace fast_task {
         bool try_lock_until(std::chrono::high_resolution_clock::time_point time_point);
         void unlock();
         bool is_locked();
-        void lifecycle_lock(std::shared_ptr<task>&& task);
+        void lifecycle_lock(task&& task);
         bool is_own();
 
 
-        bool enter_wait(const std::shared_ptr<task>& task);
-        bool enter_wait_until(const std::shared_ptr<task>& task, std::chrono::high_resolution_clock::time_point);
+        bool enter_wait(const task&, enter_state& task);
+        bool enter_wait_until(const task&, enter_state& task, std::chrono::high_resolution_clock::time_point);
 
         template <class Rep, class Period>
         bool try_lock_for(const std::chrono::duration<Rep, Period>& duration) {
@@ -81,11 +85,15 @@ namespace fast_task {
 
         struct FT_API_LOCAL private_values {
             friend class task_recursive_mutex;
-            std::list<struct resume_task> resume_task;
-            std::list<task*> readers;
+            struct resume_task* begin = nullptr;
+            struct resume_task* end = nullptr;
+            std::list<size_t> readers;
             fast_task::spin_lock no_race;
-            class task* current_writer_task = nullptr;
+            size_t current_writer_task = 0;
         } values;
+
+        static void push_back(private_values& values, resume_task* node);
+        static void erase(private_values& values, resume_task* node);
 
     public:
         using read_write_mutex = void;
@@ -96,14 +104,14 @@ namespace fast_task {
         bool try_read_lock_until(std::chrono::high_resolution_clock::time_point time_point);
         void read_unlock();
         bool is_read_locked();
-        void lifecycle_read_lock(std::shared_ptr<task>&& task);
+        void lifecycle_read_lock(task&& task);
 
         void write_lock();
         bool try_write_lock();
         bool try_write_lock_until(std::chrono::high_resolution_clock::time_point time_point);
         void write_unlock();
         bool is_write_locked();
-        void lifecycle_write_lock(std::shared_ptr<task>&& task);
+        void lifecycle_write_lock(task&& task);
 
         void lock() {
             write_lock();
@@ -132,11 +140,11 @@ namespace fast_task {
         bool is_own();
 
 
-        bool enter_read_wait(const std::shared_ptr<task>& task);
-        bool enter_read_wait_until(const std::shared_ptr<task>& task, std::chrono::high_resolution_clock::time_point);
+        bool enter_read_wait(const task&, enter_state& task);
+        bool enter_read_wait_until(const task&, enter_state& task, std::chrono::high_resolution_clock::time_point);
 
-        bool enter_write_wait(const std::shared_ptr<task>& task);
-        bool enter_write_wait_until(const std::shared_ptr<task>& task, std::chrono::high_resolution_clock::time_point);
+        bool enter_write_wait(const task&, enter_state& task);
+        bool enter_write_wait_until(const task&, enter_state& task, std::chrono::high_resolution_clock::time_point);
 
         template <class Rep, class Period>
         bool try_read_lock_for(const std::chrono::duration<Rep, Period>& duration) {

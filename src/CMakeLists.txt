@@ -15,6 +15,7 @@ set_target_properties(fast_task
   CXX_STANDARD 20
   CXX_EXTENSIONS OFF
 )
+set_property(TARGET fast_task PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
 
 generate_export_header(
   fast_task

@@ -10,6 +10,7 @@
 #include <threading.hpp>
 #include <unordered_map>
 
+#ifdef FT_ENABLE_PREEMPTIVE_SCHEDULER
 namespace fast_task::interrupt {
     void uninstall_timer_handle_local();
     struct handle;
@@ -56,9 +57,9 @@ namespace fast_task {
     }
 }
 
-#if PLATFORM_WINDOWS
-    #define NOMINMAX
-    #include <windows.h>
+    #if PLATFORM_WINDOWS
+        #define NOMINMAX
+        #include <windows.h>
 
 namespace fast_task::interrupt {
     struct handle {
@@ -174,18 +175,18 @@ namespace fast_task::interrupt {
     }
 }
 
-#else
-    #include <signal.h>
-    #include <sys/syscall.h>
-    #include <time.h>
-    #include <unistd.h>
+    #else
+        #include <signal.h>
+        #include <sys/syscall.h>
+        #include <time.h>
+        #include <unistd.h>
 
 namespace fast_task::interrupt {
     void uninstall_timer_handle_local() {
         fast_task::interrupt::stop_timer();
     }
 
-    #define PREEMPTION_SIGNAL (SIGRTMIN + 5)
+        #define PREEMPTION_SIGNAL (SIGRTMIN + 5)
 
     struct handle {
         timer_t timerid;
@@ -257,4 +258,32 @@ namespace fast_task::interrupt {
         }
     }
 }
+    #endif
+#else
+namespace fast_task::interrupt {
+    bool timer_callback(void (*)()) {
+        return false;
+    }
+
+    bool setitimer(const struct itimerval*, struct itimerval*) {
+        return false;
+    }
+
+    void stop_timer() {}
+}
+
+namespace fast_task {
+    interrupt_unsafe_region::interrupt_unsafe_region() {}
+
+    interrupt_unsafe_region::~interrupt_unsafe_region() {}
+
+    size_t interrupt_unsafe_region::lock_swap(size_t) {
+        return 0;
+    }
+
+    void interrupt_unsafe_region::lock() {}
+
+    void interrupt_unsafe_region::unlock() {}
+}
+
 #endif

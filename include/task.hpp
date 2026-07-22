@@ -12,7 +12,7 @@
     #include "task/future.hpp"
     #include "task/mutex.hpp"
     #include "task/mutex_unify.hpp"
-    #include "task/query.hpp"
+    #include "task/queue.hpp"
     #include "task/scheduler.hpp"
     #include "task/semaphore.hpp"
     #include "task/task.hpp"

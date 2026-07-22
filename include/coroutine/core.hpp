@@ -6,6 +6,7 @@
 
 #ifndef INCLUDE_COROUTINE_CORE
 #define INCLUDE_COROUTINE_CORE
+#include "../exceptions.hpp"
 #include "../shared.hpp"
 #include "../task/task.hpp"
 #include "promise.hpp"
@@ -15,33 +16,37 @@
 namespace fast_task {
     namespace detail {
         struct FT_API task_result_awaiter {
-            std::shared_ptr<task> t;
+            enter_state state;
+            task t;
 
             bool await_ready() noexcept {
-                return t->is_ended();
+                return t.is_ended();
             }
 
             template <class Promise>
             bool await_suspend(std::coroutine_handle<Promise> h) {
                 if constexpr (std::derived_from<Promise, task_promise_base>) {
-                    return !t->enter_wait(h.promise().task_object);
+                    return !t.enter_wait(h.promise().task_object, state);
                 } else {
-                    auto on_start_resume = [](void* handle_addr) {
-                        std::coroutine_handle<>::from_address(handle_addr).resume();
+                    static task_vtable vt = {
+                        nullptr, //no special treatment for the on_await
+                        nullptr, //no special treatment for the on_cancel, the flag set automatically
+                        [](void* handle_addr) {
+                            std::coroutine_handle<>::from_address(handle_addr).resume();
+                        },
+                        nullptr,
+                        nullptr,
+                        false
                     };
-                    auto on_nop = [](void*) {};
-                    auto bridge_task = std::make_shared<fast_task::task>(
+                    auto bridge_task = fast_task::task(
                         h.address(),
-                        on_start_resume,
-                        on_nop,
-                        on_nop,
-                        on_nop,
+                        &vt,
                         false,
                         true
                     );
-                    if (t->is_ended())
+                    if (t.is_ended())
                         return false;
-                    t->callback(bridge_task);
+                    t.callback(bridge_task);
                     return true;
                 }
             }
@@ -56,27 +61,27 @@ namespace fast_task {
 
         ~task_promise() {}
 
-        std::shared_ptr<task> get_return_object() {
+        task get_return_object() {
             auto h_promise = std::coroutine_handle<task_promise<T>>::from_promise(*this);
 
             std::coroutine_handle<> h_frame = h_promise;
 
-            auto on_start = [](void* handle_addr) {
-                auto h = std::coroutine_handle<>::from_address(handle_addr);
-                h.resume();
+            static task_vtable vt = {
+                nullptr, //no special treatment for the on_await
+                nullptr, //no special treatment for the on_cancel, the flag set automatically
+                [](void* handle_addr) {
+                    std::coroutine_handle<>::from_address(handle_addr).resume();
+                },
+                nullptr,
+                [](void* handle_addr) {
+                    std::coroutine_handle<>::from_address(handle_addr).destroy();
+                },
+                false
             };
 
-            auto on_destruct = [](void* handle_addr) {
-                auto h = std::coroutine_handle<>::from_address(handle_addr);
-                h.destroy();
-            };
-
-            task_object = std::make_shared<task>(
+            task_object = task(
                 h_frame.address(),
-                on_start,
-                [](void* handle_addr) {}, //no special treatment for the on_await
-                [](void* handle_addr) {}, //no special treatment for the on_cancel, the flag set automatically
-                on_destruct,
+                &vt,
                 true, //coroutines could yield
                 true  //the coroutine is stackless
             );
@@ -139,25 +144,27 @@ namespace fast_task {
 
         ~task_promise() {}
 
-        std::shared_ptr<task> get_return_object() {
+        task get_return_object() {
             auto h_promise = std::coroutine_handle<task_promise<T&>>::from_promise(*this);
 
             std::coroutine_handle<> h_frame = h_promise;
 
-            auto on_start = [](void* handle_addr) {
-                std::coroutine_handle<>::from_address(handle_addr).resume();
+            static task_vtable vt = {
+                nullptr, //no special treatment for the on_await
+                nullptr, //no special treatment for the on_cancel, the flag set automatically
+                [](void* handle_addr) {
+                    std::coroutine_handle<>::from_address(handle_addr).resume();
+                },
+                nullptr,
+                [](void* handle_addr) {
+                    std::coroutine_handle<>::from_address(handle_addr).destroy();
+                },
+                false
             };
 
-            auto on_destruct = [](void* handle_addr) {
-                std::coroutine_handle<>::from_address(handle_addr).destroy();
-            };
-
-            task_object = std::make_shared<task>(
+            task_object = task(
                 h_frame.address(),
-                on_start,
-                [](void* handle_addr) {}, //no special treatment for the on_await
-                [](void* handle_addr) {}, //no special treatment for the on_cancel, the flag set automatically
-                on_destruct,
+                &vt,
                 true, //coroutines could yield
                 true  //the coroutine is stackless
             );
@@ -201,25 +208,27 @@ namespace fast_task {
 
         ~task_promise() {}
 
-        std::shared_ptr<task> get_return_object() {
+        task get_return_object() {
             auto h_promise = std::coroutine_handle<task_promise<void>>::from_promise(*this);
 
             std::coroutine_handle<> h_frame = h_promise;
 
-            auto on_start = [](void* handle_addr) {
-                std::coroutine_handle<>::from_address(handle_addr).resume();
+            static task_vtable vt = {
+                nullptr, //no special treatment for the on_await
+                nullptr, //no special treatment for the on_cancel, the flag set automatically
+                [](void* handle_addr) {
+                    std::coroutine_handle<>::from_address(handle_addr).resume();
+                },
+                nullptr,
+                [](void* handle_addr) {
+                    std::coroutine_handle<>::from_address(handle_addr).destroy();
+                },
+                false
             };
 
-            auto on_destruct = [](void* handle_addr) {
-                std::coroutine_handle<>::from_address(handle_addr).destroy();
-            };
-
-            task_object = std::make_shared<task>(
+            task_object = task(
                 h_frame.address(),
-                on_start,
-                [](void* handle_addr) {}, //no special treatment for the on_await
-                [](void* handle_addr) {}, //no special treatment for the on_cancel, the flag set automatically
-                on_destruct,
+                &vt,
                 true, //coroutines could yield
                 true  //the coroutine is stackless
             );
@@ -260,40 +269,44 @@ namespace fast_task {
     template <class T>
     class [[nodiscard]] task_coro {
         struct result_awaiter {
-            std::shared_ptr<fast_task::task> task_handle;
+            enter_state state;
+            fast_task::task task_handle;
 
             bool await_ready() noexcept {
-                return task_handle->is_ended();
+                return task_handle.is_ended();
             }
 
             template <class Promise>
             bool await_suspend(std::coroutine_handle<Promise> h) {
                 if constexpr (std::derived_from<Promise, task_promise_base>) {
-                    return !task_handle->enter_wait(h.promise().task_object);
+                    return !task_handle.enter_wait(h.promise().task_object, state);
                 } else {
-                    auto on_start_resume = [](void* handle_addr) {
-                        std::coroutine_handle<>::from_address(handle_addr).resume();
+                    static task_vtable vt = {
+                        nullptr, //no special treatment for the on_await
+                        nullptr, //no special treatment for the on_cancel, the flag set automatically
+                        [](void* handle_addr) {
+                            std::coroutine_handle<>::from_address(handle_addr).resume();
+                        },
+                        nullptr,
+                        nullptr,
+                        false
                     };
-                    auto on_nop = [](void*) {};
-                    auto bridge_task = std::make_shared<fast_task::task>(
+                    auto bridge_task = fast_task::task(
                         h.address(),
-                        on_start_resume,
-                        on_nop,
-                        on_nop,
-                        on_nop,
+                        &vt,
                         false,
                         true
                     );
-                    if (task_handle->is_ended())
+                    if (task_handle.is_ended())
                         return false;
-                    task_handle->callback(bridge_task);
+                    task_handle.callback(bridge_task);
                     return true;
                 }
             }
 
             auto await_resume() {
                 void* handle_address = nullptr;
-                task_handle->access_dummy([&](void* data) {
+                task_handle.access_dummy([&](void* data) {
                     handle_address = data;
                 });
 
@@ -313,9 +326,9 @@ namespace fast_task {
     public:
         using promise_type = fast_task::task_promise<T>;
 
-        std::shared_ptr<fast_task::task> task_handle;
+        fast_task::task task_handle;
 
-        task_coro(std::shared_ptr<task> t) : task_handle(std::move(t)) {}
+        task_coro(task t) : task_handle(std::move(t)) {}
 
         task_coro(task_coro&&) noexcept = default;
         task_coro& operator=(task_coro&&) noexcept = default;
@@ -323,28 +336,28 @@ namespace fast_task {
         task_coro(const task_coro&) = delete;
         task_coro& operator=(const task_coro&) = delete;
 
-        std::shared_ptr<fast_task::task> operator->() const {
+        const fast_task::task* operator->() const {
+            return &task_handle;
+        }
+
+        operator fast_task::task() const {
             return task_handle;
         }
 
-        operator std::shared_ptr<fast_task::task>() const {
-            return task_handle;
-        }
-
-        std::shared_ptr<fast_task::task> get_task() const {
+        fast_task::task get_task() const {
             return task_handle;
         }
 
         auto operator co_await() const& noexcept {
-            return result_awaiter{task_handle};
+            return result_awaiter{{}, task_handle};
         }
 
         template <class U = T>
         U sync_get() const {
-            task_handle->await_task();
+            task_handle.await_task();
             if constexpr (!std::is_same_v<U, void>) {
                 T result{};
-                task_handle->access_dummy([&result](void* addr) {
+                task_handle.access_dummy([&result](void* addr) {
                     auto h = std::coroutine_handle<fast_task::task_promise<T>>::from_address(addr);
                     result = h.promise().result();
                 });
@@ -353,14 +366,14 @@ namespace fast_task {
         }
     };
 
-    inline auto operator co_await(const std::shared_ptr<task>& t) noexcept {
-        return detail::task_result_awaiter{t};
+    inline auto operator co_await(const task& t) noexcept {
+        return detail::task_result_awaiter{{}, t};
     }
 
     template <class T>
     class task_auto_start_coro : public task_coro<T> {
     public:
-        task_auto_start_coro(std::shared_ptr<task> t) : task_coro<T>(std::move(t)) {
+        task_auto_start_coro(task t) : task_coro<T>(std::move(t)) {
             scheduler::start(task_coro<T>::task_handle);
         }
 

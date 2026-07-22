@@ -19,10 +19,10 @@ TEST(BindExecutor, TaskRunsOnBindExecutor) {
     uint16_t id = fast_task::scheduler::create_bind_only_executor(1, true);
 
     std::atomic<bool> ran{false};
-    auto t = std::make_shared<fast_task::task>([&] { ran = true; });
-    t->set_worker_id(id);
+    auto t = fast_task::task::create([&] { ran = true; });
+    t.set_worker_id(id);
     fast_task::scheduler::start(t);
-    t->await_task();
+    t.await_task();
 
     EXPECT_TRUE(ran.load());
 
@@ -38,14 +38,14 @@ TEST(BindExecutor, Assign) {
     fast_task::scheduler::assign_bind_only_executor(id, 2, true);
 
     std::atomic<int> done{0};
-    auto t1 = std::make_shared<fast_task::task>([&] { ++done; });
-    auto t2 = std::make_shared<fast_task::task>([&] { ++done; });
-    t1->set_worker_id(id);
-    t2->set_worker_id(id);
+    auto t1 = fast_task::task::create([&] { ++done; });
+    auto t2 = fast_task::task::create([&] { ++done; });
+    t1.set_worker_id(id);
+    t2.set_worker_id(id);
     fast_task::scheduler::start(t1);
     fast_task::scheduler::start(t2);
-    t1->await_task();
-    t2->await_task();
+    t1.await_task();
+    t2.await_task();
 
     EXPECT_EQ(done.load(), 2);
 
@@ -58,11 +58,11 @@ TEST(BindExecutor, SetWorkerIdOnTask) {
     uint16_t id = fast_task::scheduler::create_bind_only_executor(1, true);
 
     std::atomic<bool> ran{false};
-    auto t = std::make_shared<fast_task::task>([&] { ran = true; });
-    t->set_worker_id(id);
+    auto t = fast_task::task::create([&] { ran = true; });
+    t.set_worker_id(id);
     EXPECT_FALSE(ran.load());
     fast_task::scheduler::start(t);
-    t->await_task();
+    t.await_task();
     EXPECT_TRUE(ran.load());
 
     fast_task::scheduler::close_bind_only_executor(id);
@@ -74,12 +74,12 @@ TEST(BindExecutor, CloseAbortTasksAbortsQueuedAndAllowsShutdown) {
     uint16_t id = fast_task::scheduler::create_bind_only_executor(0, false);
     std::atomic<bool> queued_ran{false};
 
-    auto queued = std::make_shared<fast_task::task>([&] { queued_ran.store(true, std::memory_order_release); });
-    queued->set_worker_id(id);
+    auto queued = fast_task::task::create([&] { queued_ran.store(true, std::memory_order_release); });
+    queued.set_worker_id(id);
     fast_task::scheduler::start(queued);
 
     fast_task::scheduler::close_bind_only_executor(id, true);
-    queued->await_task();
+    queued.await_task();
     EXPECT_FALSE(queued_ran.load(std::memory_order_acquire));
 
     fast_task::scheduler::await_no_tasks();

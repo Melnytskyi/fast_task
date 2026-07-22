@@ -8,12 +8,12 @@
 #include <tasks/_internal.hpp>
 
 namespace fast_task {
-    task_query::task_query(size_t at_execution_max) {
+    task_queue::task_queue(size_t at_execution_max) {
         FT_DEBUG_ONLY(register_object(this));
-        handle = new task_query_handle{.end_of_query{}, .tasks{}, .no_race{}, .tq = this, .at_execution_max = at_execution_max};
+        handle = new task_queue_handle{.end_of_queue{}, .tasks{}, .no_race{}, .tq = this, .at_execution_max = at_execution_max};
     }
 
-    void __TaskQuery_add_task_leave(task_query_handle* tqh) {
+    void __TaskQueue_add_task_leave(task_queue_handle* tqh) {
         fast_task::lock_guard lock(tqh->no_race);
         if (tqh->destructed) {
             if (tqh->at_execution_max == 0) {
@@ -34,45 +34,62 @@ namespace fast_task {
             tqh->now_at_execution--;
 
             if (tqh->now_at_execution == 0 && tqh->tasks.empty())
-                tqh->end_of_query.notify_all();
+                tqh->end_of_queue.notify_all();
         }
     }
 
-    std::shared_ptr<task> redefine_start_function(std::shared_ptr<task>& task, task_query_handle* tqh) {
-        if (!get_data(task).callbacks.on_start)
-            throw std::logic_error("task_query::add requires the on_start variable to be set");
-        else if (get_data(task).callbacks.on_start_override)
-            throw std::logic_error("task_query::add requires the on_start_override variable to be unset");
+    task redefine_start_function(task& task, task_queue_handle* tqh) {
+        if (!get_data(task).vtable || !get_data(task).vtable->on_start)
+            throw std::logic_error("task_queue::add requires the on_start variable to be set");
+        else if (get_data(task).on_start_override)
+            throw std::logic_error("task_queue::add requires the on_start_override variable to be unset");
         else {
-            get_data(task).callbacks.on_start_override_data = tqh;
-            get_data(task).callbacks.on_start_override = [](auto& cb) {
-                auto* tqh = reinterpret_cast<task_query_handle*>(cb.on_start_override_data);
-                try {
-                    cb.on_start(cb.get_data());
-                } catch (...) {
-                    __TaskQuery_add_task_leave(tqh);
-                    cb.on_start_override = nullptr;
-                    throw;
+            class redefine_start_queue : public to_start_override {
+                task_queue_handle* tqh;
+
+            public:
+                redefine_start_queue(task_queue_handle* tqh) : tqh(tqh) {}
+
+                virtual void callback(task_object* cb) {
+                    try {
+                        cb->vtable->on_start(cb->user_data());
+                    } catch (...) {
+                        __TaskQueue_add_task_leave(tqh);
+                        tqh = nullptr;
+                        cb->on_start_override = nullptr;
+                        throw;
+                    }
+                    __TaskQueue_add_task_leave(tqh);
+                    tqh = nullptr;
+                    cb->on_start_override = nullptr;
                 }
-                __TaskQuery_add_task_leave(tqh);
-                cb.on_start_override = nullptr;
+
+                virtual void on_destruct(to_start_override* self) {
+                    if (tqh)
+                        __TaskQueue_add_task_leave(tqh);
+                    delete self;
+                }
+
+                virtual ~redefine_start_queue() = default;
             };
+
+            get_data(task).on_start_override = new redefine_start_queue(tqh);
             return task;
         }
     }
 
-    void task_query::add(std::shared_ptr<task>&& querying_task) {
+    void task_queue::add(task&& queueing_task) {
         {
-            fast_task::lock_guard guard(get_data(querying_task).no_race);
-            if (get_data(querying_task).running || get_data(querying_task).end_of_life)
+            fast_task::lock_guard guard(get_data(queueing_task));
+            if (get_data(queueing_task).is_running() || get_data(queueing_task).is_ended())
                 throw std::runtime_error("Task is running or completed and cannot be added");
-            if (get_data(querying_task).started && (!get_data(querying_task).suspended && get_data(querying_task).is_on_scheduler))
+            if (get_data(queueing_task).is_scheduled() && (!get_data(queueing_task).is_suspended() && get_data(queueing_task).get_is_on_scheduler()))
                 throw std::runtime_error("Task is already in the scheduler queue");
-            if (!get_data(querying_task).callbacks.on_start)
-                throw std::logic_error("task_query::add requires the on_start callback to be set");
+            if (!get_data(queueing_task).vtable || !get_data(queueing_task).vtable->on_start)
+                throw std::logic_error("task_queue::add requires the on_start callback to be set");
         }
 
-        auto new_task = redefine_start_function(querying_task, handle);
+        auto new_task = redefine_start_function(queueing_task, handle);
         fast_task::lock_guard lock(handle->no_race);
 
         if (handle->is_running && handle->now_at_execution < handle->at_execution_max) {
@@ -82,18 +99,18 @@ namespace fast_task {
             handle->tasks.push_back(std::move(new_task));
     }
 
-    void task_query::add(std::shared_ptr<task>& querying_task) {
+    void task_queue::add(task& queueing_task) {
         {
-            fast_task::lock_guard guard(get_data(querying_task).no_race);
-            if (get_data(querying_task).running || get_data(querying_task).end_of_life)
+            fast_task::lock_guard guard(get_data(queueing_task));
+            if (get_data(queueing_task).is_running() || get_data(queueing_task).is_ended())
                 throw std::runtime_error("Task is running or completed and cannot be added");
-            if (get_data(querying_task).started && (!get_data(querying_task).suspended && get_data(querying_task).is_on_scheduler))
+            if (get_data(queueing_task).is_scheduled() && (!get_data(queueing_task).is_suspended() && get_data(queueing_task).get_is_on_scheduler()))
                 throw std::runtime_error("Task is already in the scheduler queue");
-            if (!get_data(querying_task).callbacks.on_start)
-                throw std::logic_error("task_query::add requires the on_start callback to be set");
+            if (!get_data(queueing_task).vtable || !get_data(queueing_task).vtable->on_start)
+                throw std::logic_error("task_queue::add requires the on_start callback to be set");
         }
 
-        auto new_task = redefine_start_function(querying_task, handle);
+        auto new_task = redefine_start_function(queueing_task, handle);
         fast_task::lock_guard lock(handle->no_race);
 
         if (handle->is_running && handle->now_at_execution < handle->at_execution_max) {
@@ -103,7 +120,7 @@ namespace fast_task {
             handle->tasks.push_back(std::move(new_task));
     }
 
-    void task_query::enable() {
+    void task_queue::enable() {
         fast_task::lock_guard lock(handle->no_race);
         handle->is_running = true;
         while (handle->now_at_execution < handle->at_execution_max && !handle->tasks.empty()) {
@@ -114,51 +131,51 @@ namespace fast_task {
         }
     }
 
-    void task_query::disable() {
+    void task_queue::disable() {
         fast_task::lock_guard lock(handle->no_race);
         handle->is_running = false;
     }
 
-    bool task_query::in_query(const std::shared_ptr<task>& task) {
+    bool task_queue::in_queue(const task& task) {
         {
-            fast_task::lock_guard guard(get_data(task).no_race);
-            if (get_data(task).running || get_data(task).end_of_life)
+            fast_task::lock_guard guard(get_data(task));
+            if (get_data(task).is_running() || get_data(task).is_ended())
                 return false;
-            if (get_data(task).started && (!get_data(task).suspended && get_data(task).is_on_scheduler))
+            if (get_data(task).is_scheduled() && (!get_data(task).is_suspended() && get_data(task).get_is_on_scheduler()))
                 return false;
         }
         fast_task::lock_guard lock(handle->no_race);
         return std::find(handle->tasks.begin(), handle->tasks.end(), task) != handle->tasks.end();
     }
 
-    void task_query::set_max_at_execution(size_t val) {
+    void task_queue::set_max_at_execution(size_t val) {
         fast_task::lock_guard lock(handle->no_race);
         handle->at_execution_max = val;
     }
 
-    size_t task_query::get_max_at_execution() {
+    size_t task_queue::get_max_at_execution() {
         fast_task::lock_guard lock(handle->no_race);
         return handle->at_execution_max;
     }
 
-    void task_query::wait() {
+    void task_queue::wait() {
         mutex_unify unify(handle->no_race);
         fast_task::unique_lock lock(unify);
         while (handle->now_at_execution != 0 || !handle->tasks.empty())
-            handle->end_of_query.wait(lock);
+            handle->end_of_queue.wait(lock);
     }
 
-    bool task_query::wait_until(std::chrono::high_resolution_clock::time_point time_point) {
+    bool task_queue::wait_until(std::chrono::high_resolution_clock::time_point time_point) {
         mutex_unify unify(handle->no_race);
         fast_task::unique_lock lock(unify);
         while (handle->now_at_execution != 0 || !handle->tasks.empty()) {
-            if (!handle->end_of_query.wait_until(lock, time_point))
+            if (!handle->end_of_queue.wait_until(lock, time_point))
                 return false;
         }
         return true;
     }
 
-    task_query::~task_query() {
+    task_queue::~task_queue() {
         FT_DEBUG_ONLY(unregister_object(this));
         if (handle) {
             handle->is_running = false;
@@ -169,7 +186,7 @@ namespace fast_task {
         }
     }
 
-    bool task_query::enter_wait(const std::shared_ptr<task>& task) {
+    bool task_queue::enter_wait(const task& task, enter_state&) {
         if (handle->now_at_execution == 0 && handle->tasks.empty())
             return true;
 
@@ -181,13 +198,13 @@ namespace fast_task {
         return false;
     }
 
-    bool task_query::enter_wait_until(const std::shared_ptr<task>& task, std::chrono::high_resolution_clock::time_point time_point) {
+    bool task_queue::enter_wait_until(const task& task, enter_state&, std::chrono::high_resolution_clock::time_point time_point) {
         if (handle->now_at_execution == 0 && handle->tasks.empty())
             return true;
 
         task::run([this, parent_coro = task, time_point]() mutable {
             if (!this->wait_until(time_point))
-                get_data(parent_coro).time_end_flag = true;
+                get_data(parent_coro).set_time_end(true);
 
             scheduler::start(std::move(parent_coro));
         });

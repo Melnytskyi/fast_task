@@ -24,6 +24,7 @@ function(add_ft_test TARGET_NAME SOURCE_FILE)
         ${FT_TESTS_ROOT}              # for helpers.hpp
         ${CMAKE_SOURCE_DIR}/include   # library public headers
     )
+    set_property(TARGET ${TARGET_NAME} PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
     set_target_properties(${TARGET_NAME} PROPERTIES
         CXX_STANDARD 23
         CXX_EXTENSIONS OFF
@@ -31,6 +32,7 @@ function(add_ft_test TARGET_NAME SOURCE_FILE)
     if(MSVC)
         target_compile_options(${TARGET_NAME} PRIVATE /utf-8 /W3 /wd4100)
     endif()
+    
     gtest_discover_tests(${TARGET_NAME})
 endfunction()
 
@@ -45,5 +47,8 @@ add_subdirectory(stackfull)
 add_subdirectory(stackless)
 add_subdirectory(futures)
 add_subdirectory(mixed)
-add_subdirectory(io)
-add_subdirectory(network)
+
+if(NOT FAST_TASK_DISABLE_IO_TESTS)
+    add_subdirectory(io)
+    add_subdirectory(network)
+endif()

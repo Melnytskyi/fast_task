@@ -11,18 +11,19 @@
     #include "tasks/util/native_workers_singleton.hpp"
     #include <file.hpp>
     #include <net.hpp>
+    #include <span>
 
 namespace fast_task::net {
     static_assert(sizeof(universal_address) <= sizeof(address), "address buffer is too small for universal_address!");
     address address::any() {
         address res;
-        internal_makeIP(*(universal_address*)res.data, "[::]", 0);
+        internal_makeIP6(*(universal_address*)res.data, "::", 0);
         return res;
     }
 
     address address::any(uint16_t port) {
         address res;
-        internal_makeIP(*(universal_address*)res.data, "[::]", port);
+        internal_makeIP6(*(universal_address*)res.data, "::", port);
         return res;
     }
 
@@ -42,11 +43,9 @@ namespace fast_task::net {
 
     address::address(std::string_view ip, uint16_t port) {
         if (ip.empty())
-            ip = "[::]";
+            ip = "::";
         internal_makeIP(*((universal_address*)data), ip.data(), port);
     }
-
-
 
     address::address(const address& ip) {
         memcpy(data, ip.data, sizeof(universal_address));
@@ -83,9 +82,11 @@ namespace fast_task::net {
         universal_address* addr = (universal_address*)data;
         if (addr->ss_family == AF_INET)
             return family::ipv4;
-        else if (addr->ss_family == AF_INET6)
+        else if (addr->ss_family == AF_INET6) {
+            if (IN6_IS_ADDR_V4MAPPED(&((sockaddr_in6*)addr)->sin6_addr))
+                return family::ipv4;
             return family::ipv6;
-        else
+        } else
             return family::other;
     }
 
@@ -204,7 +205,7 @@ namespace fast_task::net {
     #pragma region TCP
 
     struct native_state : public util::native_worker_handle {
-        std::shared_ptr<task> awaiting_task;
+        task awaiting_task;
         int32_t* out_processed_bytes = nullptr;
         int error = 0;
         void (*on_complete)(void*) = nullptr;
@@ -238,13 +239,19 @@ namespace fast_task::net {
         return std::error_code(state.error, std::system_category());
     }
 
-    static_assert(sizeof(native_state) <= sizeof(opaque_network_state::data), "opaque_network_state buffer is too small for native_state!");
-
     class tcp_socket::manager : public util::native_worker_manager {
         SOCKET sock = INVALID_SOCKET;
+        bool ops_inited = false;
 
     public:
-        manager(SOCKET s) : sock(s) {
+        enum class connection_method : bool {
+            connect,
+            accept,
+        };
+
+        const connection_method method;
+
+        manager(SOCKET s, connection_method method) : sock(s), method(method) {
             if (sock != INVALID_SOCKET) {
                 init_win_fns(sock);
                 HANDLE hSock = reinterpret_cast<HANDLE>(sock);
@@ -269,6 +276,18 @@ namespace fast_task::net {
             return sock;
         }
 
+        SOCKET get_socket_for_ops() noexcept {
+            if (ops_inited)
+                return sock;
+            else if (sock != INVALID_SOCKET) {
+                if (method == connection_method::connect)
+                    if (auto res = setsockopt(sock, SOL_SOCKET, SO_UPDATE_CONNECT_CONTEXT, NULL, 0); res != NO_ERROR)
+                        return INVALID_SOCKET;
+            }
+            ops_inited = true;
+            return sock;
+        }
+
         void handle([[maybe_unused]] void*, util::native_worker_handle* overlap, unsigned long dwBytesTransferred) override {
             auto state = static_cast<native_state*>(overlap);
             DWORD dwFlags = 0;
@@ -281,13 +300,13 @@ namespace fast_task::net {
             if (state->on_complete)
                 state->on_complete(static_cast<void*>(state));
             if (state->awaiting_task) {
-                if (state->out_processed_bytes)
+                if (state->out_processed_bytes) {
                     if (state->error)
                         *state->out_processed_bytes = -1;
                     else
                         *state->out_processed_bytes = dwBytesTransferred;
-
-                fast_task::lock_guard guard(get_data(state->awaiting_task).no_race);
+                }
+                fast_task::lock_guard guard(get_data(state->awaiting_task));
                 transfer_task(std::move(state->awaiting_task));
             }
         }
@@ -350,7 +369,7 @@ namespace fast_task::net {
         opaque_network_state state;
 
         if (get_loc().is_task_thread) {
-            mutex_unify mut(get_data(get_loc().curr_task).no_race);
+            mutex_unify mut(get_data(get_loc().curr_task).get_self_unify());
             std::lock_guard guard(mut);
             if (!tcp_socket::enter_connect(get_loc().curr_task, state, res, ip_port, config))
                 swapCtxRelock(mut);
@@ -378,7 +397,7 @@ namespace fast_task::net {
         opaque_network_state state;
 
         if (get_loc().is_task_thread) {
-            mutex_unify mut(get_data(get_loc().curr_task).no_race);
+            mutex_unify mut(get_data(get_loc().curr_task).get_self_unify());
             std::lock_guard guard(mut);
             if (!tcp_socket::enter_connect(get_loc().curr_task, state, res, ip_port, data, size, config))
                 swapCtxRelock(mut);
@@ -406,7 +425,7 @@ namespace fast_task::net {
         int32_t bytes_read = 0;
 
         if (get_loc().is_task_thread) {
-            mutex_unify mut(get_data(get_loc().curr_task).no_race);
+            mutex_unify mut(get_data(get_loc().curr_task).get_self_unify());
             std::lock_guard guard(mut);
             if (!tcp_socket::enter_recv(get_loc().curr_task, state, bytes_read, data))
                 swapCtxRelock(mut);
@@ -434,7 +453,7 @@ namespace fast_task::net {
         int32_t bytes_read = 0;
 
         if (get_loc().is_task_thread) {
-            mutex_unify mut(get_data(get_loc().curr_task).no_race);
+            mutex_unify mut(get_data(get_loc().curr_task).get_self_unify());
             std::lock_guard guard(mut);
             if (!tcp_socket::enter_recvv(get_loc().curr_task, state, bytes_read, data))
                 swapCtxRelock(mut);
@@ -462,7 +481,7 @@ namespace fast_task::net {
         int32_t res = 0;
 
         if (get_loc().is_task_thread) {
-            mutex_unify mut(get_data(get_loc().curr_task).no_race);
+            mutex_unify mut(get_data(get_loc().curr_task).get_self_unify());
             std::lock_guard guard(mut);
             if (!tcp_socket::enter_send(get_loc().curr_task, state, res, data))
                 swapCtxRelock(mut);
@@ -490,7 +509,7 @@ namespace fast_task::net {
         int32_t res = 0;
 
         if (get_loc().is_task_thread) {
-            mutex_unify mut(get_data(get_loc().curr_task).no_race);
+            mutex_unify mut(get_data(get_loc().curr_task).get_self_unify());
             std::lock_guard guard(mut);
             if (!tcp_socket::enter_sendv(get_loc().curr_task, state, res, data))
                 swapCtxRelock(mut);
@@ -517,7 +536,7 @@ namespace fast_task::net {
         int32_t res = 0;
 
         if (get_loc().is_task_thread) {
-            mutex_unify mut(get_data(get_loc().curr_task).no_race);
+            mutex_unify mut(get_data(get_loc().curr_task).get_self_unify());
             std::lock_guard guard(mut);
             if (!tcp_socket::enter_send_file(get_loc().curr_task, state, res, file_path, file_path_len, data_len, offset, chunks_size))
                 swapCtxRelock(mut);
@@ -544,7 +563,7 @@ namespace fast_task::net {
         int32_t res = 0;
 
         if (get_loc().is_task_thread) {
-            mutex_unify mut(get_data(get_loc().curr_task).no_race);
+            mutex_unify mut(get_data(get_loc().curr_task).get_self_unify());
             std::lock_guard guard(mut);
             if (!tcp_socket::enter_send_file(get_loc().curr_task, state, res, file, data_len, offset, chunks_size))
                 swapCtxRelock(mut);
@@ -571,7 +590,7 @@ namespace fast_task::net {
         int32_t res = 0;
 
         if (get_loc().is_task_thread) {
-            mutex_unify mut(get_data(get_loc().curr_task).no_race);
+            mutex_unify mut(get_data(get_loc().curr_task).get_self_unify());
             std::lock_guard guard(mut);
             if (!tcp_socket::enter_sendv_file(get_loc().curr_task, state, res, prefix, postfix, file_path, file_path_len, data_len, offset, chunks_size))
                 swapCtxRelock(mut);
@@ -598,7 +617,7 @@ namespace fast_task::net {
         int32_t res = 0;
 
         if (get_loc().is_task_thread) {
-            mutex_unify mut(get_data(get_loc().curr_task).no_race);
+            mutex_unify mut(get_data(get_loc().curr_task).get_self_unify());
             std::lock_guard guard(mut);
             if (!tcp_socket::enter_sendv_file(get_loc().curr_task, state, res, prefix, postfix, file, data_len, offset, chunks_size))
                 swapCtxRelock(mut);
@@ -624,7 +643,7 @@ namespace fast_task::net {
         opaque_network_state state;
 
         if (get_loc().is_task_thread) {
-            mutex_unify mut(get_data(get_loc().curr_task).no_race);
+            mutex_unify mut(get_data(get_loc().curr_task).get_self_unify());
             std::lock_guard guard(mut);
             if (!tcp_socket::enter_shutdown(get_loc().curr_task, state, mode))
                 swapCtxRelock(mut);
@@ -649,7 +668,7 @@ namespace fast_task::net {
         opaque_network_state state;
 
         if (get_loc().is_task_thread) {
-            mutex_unify mut(get_data(get_loc().curr_task).no_race);
+            mutex_unify mut(get_data(get_loc().curr_task).get_self_unify());
             std::lock_guard guard(mut);
             if (!tcp_socket::enter_reset(get_loc().curr_task, state))
                 swapCtxRelock(mut);
@@ -674,7 +693,7 @@ namespace fast_task::net {
         opaque_network_state state;
 
         if (get_loc().is_task_thread) {
-            mutex_unify mut(get_data(get_loc().curr_task).no_race);
+            mutex_unify mut(get_data(get_loc().curr_task).get_self_unify());
             std::lock_guard guard(mut);
             if (!tcp_socket::enter_close(get_loc().curr_task, state))
                 swapCtxRelock(mut);
@@ -714,43 +733,52 @@ namespace fast_task::net {
     }
 
     address tcp_socket::local_address() const noexcept {
-        if (!handle || handle->get_socket() == INVALID_SOCKET)
+        if (!handle)
+            return address();
+        auto socket = handle->get_socket_for_ops();
+        if (socket == INVALID_SOCKET)
             return address();
 
         sockaddr_storage addr;
         socklen_t addr_len = sizeof(addr);
-        if (getsockname(handle->get_socket(), (sockaddr*)&addr, &addr_len) == -1)
+        if (getsockname(socket, (sockaddr*)&addr, &addr_len) == -1)
             return address();
         return to_address(&addr);
     }
 
     address tcp_socket::remote_address() const noexcept {
-        if (!handle || handle->get_socket() == INVALID_SOCKET)
+        if (!handle)
+            return address();
+        auto socket = handle->get_socket_for_ops();
+        if (socket == INVALID_SOCKET)
             return address();
 
         sockaddr_storage addr;
         socklen_t addr_len = sizeof(addr);
-        if (getpeername(handle->get_socket(), (sockaddr*)&addr, &addr_len) == -1)
+        if (getpeername(socket, (sockaddr*)&addr, &addr_len) == -1)
             return address();
         return to_address(&addr);
     }
 
-    bool tcp_socket::enter_connect(const std::shared_ptr<task>& t, opaque_network_state& state, std::optional<tcp_socket>& res, const address& ip_port, const tcp_configuration& config) {
-        SOCKET sock = ::WSASocketW(AF_INET, SOCK_STREAM, IPPROTO_TCP, NULL, 0, WSA_FLAG_OVERLAPPED);
+    bool tcp_socket::enter_connect(const task& t, opaque_network_state& state, std::optional<tcp_socket>& res, const address& ip_port, const tcp_configuration& config) {
+        SOCKET sock = ::WSASocketW(AF_INET6, SOCK_STREAM, IPPROTO_TCP, NULL, 0, WSA_FLAG_OVERLAPPED);
         if (sock == INVALID_SOCKET)
             return true;
 
-        sockaddr_in bind_addr{};
-        bind_addr.sin_family = AF_INET;
-        bind_addr.sin_addr.s_addr = INADDR_ANY;
-        bind_addr.sin_port = 0;
-        ::bind(sock, (SOCKADDR*)&bind_addr, sizeof(bind_addr));
-
-        auto mgr = std::make_unique<manager>(sock);
+        auto mgr = std::make_unique<manager>(sock, tcp_socket::manager::connection_method::connect);
         if (!mgr->set_configuration(config))
             return true;
 
-        auto& n_state = *new (&state) native_state(mgr.get());
+        sockaddr_in6 bind_addr{0};
+        bind_addr.sin6_family = AF_INET6;
+        bind_addr.sin6_addr = IN6ADDR_ANY_INIT;
+        bind_addr.sin6_port = 0;
+        if (::bind(sock, (SOCKADDR*)&bind_addr, sizeof(bind_addr)) == SOCKET_ERROR) {
+            state.use<native_state>(nullptr)->error = ::WSAGetLastError();
+            return true;
+        }
+
+        auto& n_state = *state.use<native_state>(mgr.get());
         n_state.awaiting_task = t;
 
         DWORD bytesSent = 0;
@@ -775,22 +803,26 @@ namespace fast_task::net {
         return true;
     }
 
-    bool tcp_socket::enter_connect(const std::shared_ptr<task>& t, opaque_network_state& state, std::optional<tcp_socket>& res, const address& ip_port, uint8_t* data, int32_t& size, const tcp_configuration& config) {
-        SOCKET sock = ::WSASocketW(AF_INET, SOCK_STREAM, IPPROTO_TCP, NULL, 0, WSA_FLAG_OVERLAPPED);
+    bool tcp_socket::enter_connect(const task& t, opaque_network_state& state, std::optional<tcp_socket>& res, const address& ip_port, uint8_t* data, int32_t& size, const tcp_configuration& config) {
+        SOCKET sock = ::WSASocketW(AF_INET6, SOCK_STREAM, IPPROTO_TCP, NULL, 0, WSA_FLAG_OVERLAPPED);
         if (sock == INVALID_SOCKET)
             return true;
 
-        sockaddr_in bind_addr{};
-        bind_addr.sin_family = AF_INET;
-        bind_addr.sin_addr.s_addr = INADDR_ANY;
-        bind_addr.sin_port = 0;
-        ::bind(sock, (SOCKADDR*)&bind_addr, sizeof(bind_addr));
-
-        auto mgr = std::make_unique<manager>(sock);
+        auto mgr = std::make_unique<manager>(sock, tcp_socket::manager::connection_method::connect);
         if (!mgr->set_configuration(config))
             return true;
 
-        auto& n_state = *new (&state) native_state(mgr.get());
+        sockaddr_in6 bind_addr{0};
+        bind_addr.sin6_family = AF_INET6;
+        bind_addr.sin6_addr = IN6ADDR_ANY_INIT;
+        bind_addr.sin6_port = 0;
+        if (::bind(sock, (SOCKADDR*)&bind_addr, sizeof(bind_addr)) == SOCKET_ERROR) {
+            state.use<native_state>(nullptr)->error = ::WSAGetLastError();
+            return true;
+        }
+
+
+        auto& n_state = *state.use<native_state>(mgr.get());
         n_state.awaiting_task = t;
         n_state.out_processed_bytes = &size;
 
@@ -815,20 +847,19 @@ namespace fast_task::net {
         return true;
     }
 
-    bool tcp_socket::enter_recv(const std::shared_ptr<task>& t, opaque_network_state& state, int32_t& bytes_read, std::span<uint8_t> data) {
+    bool tcp_socket::enter_recv(const task& t, opaque_network_state& state, int32_t& bytes_read, std::span<uint8_t> data) {
         struct recv_state : public native_state {
             WSABUF buf;
 
             recv_state(util::native_worker_manager* mgr) : native_state(mgr) {}
         };
 
-
         if (!handle || handle->get_socket() == INVALID_SOCKET) {
             bytes_read = -1;
             return true;
         }
 
-        auto& n_state = *new (&state) recv_state(handle.get());
+        auto& n_state = *state.use<recv_state>(handle.get());
         n_state.awaiting_task = t;
         n_state.out_processed_bytes = &bytes_read;
         n_state.buf.buf = reinterpret_cast<CHAR*>(data.data());
@@ -852,7 +883,7 @@ namespace fast_task::net {
         return true;
     }
 
-    bool tcp_socket::enter_recvv(const std::shared_ptr<task>& t, opaque_network_state& state, int32_t& bytes_read, std::span<std::span<uint8_t>> data) {
+    bool tcp_socket::enter_recvv(const task& t, opaque_network_state& state, int32_t& bytes_read, std::span<std::span<uint8_t>> data) {
         static constexpr size_t max_inline_buffers = (sizeof(opaque_network_state::data) - sizeof(native_state) - sizeof(WSABUF*) - sizeof(bool)) / sizeof(WSABUF);
 
         struct recvv_state : public native_state {
@@ -876,7 +907,7 @@ namespace fast_task::net {
             return true;
         }
 
-        auto& ns = *new (&state) recvv_state(handle.get());
+        auto& ns = *state.use<recvv_state>(handle.get());
         ns.awaiting_task = t;
         ns.out_processed_bytes = &bytes_read;
 
@@ -913,14 +944,14 @@ namespace fast_task::net {
         return true;
     }
 
-    bool tcp_socket::enter_send(const std::shared_ptr<task>& t, opaque_network_state& state, int32_t& bytes_sent, std::span<const uint8_t> data) {
+    bool tcp_socket::enter_send(const task& t, opaque_network_state& state, int32_t& bytes_sent, std::span<const uint8_t> data) {
         struct send_state : public native_state {
             WSABUF buf;
 
             send_state(util::native_worker_manager* mgr) : native_state(mgr) {}
         };
 
-        auto& ns = *new (&state) send_state(handle.get());
+        auto& ns = *state.use<send_state>(handle.get());
         ns.awaiting_task = t;
         ns.out_processed_bytes = &bytes_sent;
         ns.buf.buf = (CHAR*)data.data();
@@ -940,7 +971,7 @@ namespace fast_task::net {
         return true;
     }
 
-    bool tcp_socket::enter_sendv(const std::shared_ptr<task>& t, opaque_network_state& state, int32_t& bytes_sent, std::span<const std::span<const uint8_t>> data) {
+    bool tcp_socket::enter_sendv(const task& t, opaque_network_state& state, int32_t& bytes_sent, std::span<const std::span<const uint8_t>> data) {
         static constexpr size_t max_inline_buffers = (sizeof(opaque_network_state::data) - sizeof(native_state) - sizeof(WSABUF*) - sizeof(bool)) / sizeof(WSABUF);
 
         struct sendv_state : public native_state {
@@ -959,8 +990,7 @@ namespace fast_task::net {
             }
         };
 
-
-        auto& ns = *new (&state) sendv_state(handle.get());
+        auto& ns = *state.use<sendv_state>(handle.get());
         ns.awaiting_task = t;
         ns.out_processed_bytes = &bytes_sent;
 
@@ -1008,8 +1038,8 @@ namespace fast_task::net {
         }
     };
 
-    bool tcp_socket::enter_send_file(const std::shared_ptr<task>& t, opaque_network_state& state, int32_t& bytes_sent, const char* file_path, [[maybe_unused]] size_t file_path_len, uint32_t data_len, uint64_t offset, uint32_t chunks_size) {
-        auto& ns = *new (&state) transmit_file_state(handle.get());
+    bool tcp_socket::enter_send_file(const task& t, opaque_network_state& state, int32_t& bytes_sent, const char* file_path, [[maybe_unused]] size_t file_path_len, uint32_t data_len, uint64_t offset, uint32_t chunks_size) {
+        auto& ns = *state.use<transmit_file_state>(handle.get());
         ns.awaiting_task = t;
         ns.out_processed_bytes = &bytes_sent;
 
@@ -1042,8 +1072,8 @@ namespace fast_task::net {
         return true;
     }
 
-    bool tcp_socket::enter_send_file(const std::shared_ptr<task>& t, opaque_network_state& state, int32_t& bytes_sent, class fast_task::file::file_handle& file_path, uint32_t data_len, uint64_t offset, uint32_t chunks_size) {
-        auto& ns = *new (&state) transmit_file_state(handle.get());
+    bool tcp_socket::enter_send_file(const task& t, opaque_network_state& state, int32_t& bytes_sent, class fast_task::file::file_handle& file_path, uint32_t data_len, uint64_t offset, uint32_t chunks_size) {
+        auto& ns = *state.use<transmit_file_state>(handle.get());
         ns.awaiting_task = t;
         ns.out_processed_bytes = &bytes_sent;
 
@@ -1074,11 +1104,11 @@ namespace fast_task::net {
         transmit_filev_state(util::native_worker_manager* mgr) : transmit_file_state(mgr) {}
     };
 
-    bool tcp_socket::enter_sendv_file(const std::shared_ptr<task>& t, opaque_network_state& state, int32_t& bytes_sent, const std::span<const uint8_t> prefix, const std::span<const uint8_t> postfix, const char* file_path, [[maybe_unused]] size_t file_path_len, uint32_t data_len, uint64_t offset, uint32_t chunks_size) {
+    bool tcp_socket::enter_sendv_file(const task& t, opaque_network_state& state, int32_t& bytes_sent, const std::span<const uint8_t> prefix, const std::span<const uint8_t> postfix, const char* file_path, [[maybe_unused]] size_t file_path_len, uint32_t data_len, uint64_t offset, uint32_t chunks_size) {
         if (prefix.size() > 0xFFFFFFFF || postfix.size() > 0xFFFFFFFF)
             throw std::invalid_argument("Prefix or postfix too large for TransmitFile");
 
-        auto& ns = *new (&state) transmit_filev_state(handle.get());
+        auto& ns = *state.use<transmit_filev_state>(handle.get());
         ns.awaiting_task = t;
         ns.out_processed_bytes = &bytes_sent;
 
@@ -1121,10 +1151,10 @@ namespace fast_task::net {
         return true;
     }
 
-    bool tcp_socket::enter_sendv_file(const std::shared_ptr<task>& t, opaque_network_state& state, int32_t& bytes_sent, const std::span<const uint8_t> prefix, const std::span<const uint8_t> postfix, class fast_task::file::file_handle& file_path, uint32_t data_len, uint64_t offset, uint32_t chunks_size) {
+    bool tcp_socket::enter_sendv_file(const task& t, opaque_network_state& state, int32_t& bytes_sent, const std::span<const uint8_t> prefix, const std::span<const uint8_t> postfix, class fast_task::file::file_handle& file_path, uint32_t data_len, uint64_t offset, uint32_t chunks_size) {
         if (prefix.size() > 0xFFFFFFFF || postfix.size() > 0xFFFFFFFF)
             throw std::invalid_argument("Prefix or postfix too large for TransmitFile");
-        auto& ns = *new (&state) transmit_filev_state(handle.get());
+        auto& ns = *state.use<transmit_filev_state>(handle.get());
         ns.awaiting_task = t;
         ns.out_processed_bytes = &bytes_sent;
 
@@ -1158,7 +1188,7 @@ namespace fast_task::net {
         return true;
     }
 
-    bool tcp_socket::enter_shutdown([[maybe_unused]] const std::shared_ptr<task>& t, opaque_network_state& state, shutdown_mode mode) {
+    bool tcp_socket::enter_shutdown([[maybe_unused]] const task& t, opaque_network_state& state, shutdown_mode mode) {
         int how = SD_BOTH;
         switch (mode) {
         case shutdown_mode::read:
@@ -1172,9 +1202,9 @@ namespace fast_task::net {
             break;
         }
 
-        int res = ::shutdown(handle->get_socket(), how);
+        int res = ::shutdown(handle->get_socket_for_ops(), how);
 
-        auto& ns = *new (&state) native_state(handle.get());
+        auto& ns = *state.use<native_state>(handle.get());
         ns.awaiting_task = nullptr;
 
         if (res == SOCKET_ERROR)
@@ -1183,13 +1213,13 @@ namespace fast_task::net {
         return true;
     }
 
-    bool tcp_socket::enter_reset(const std::shared_ptr<task>& t, opaque_network_state& state) {
+    bool tcp_socket::enter_reset(const task& t, opaque_network_state& state) {
         LINGER lingerStruct;
         lingerStruct.l_onoff = 1;
         lingerStruct.l_linger = 0;
         ::setsockopt(handle->get_socket(), SOL_SOCKET, SO_LINGER, (char*)&lingerStruct, sizeof(lingerStruct));
 
-        auto& ns = *new (&state) native_state(handle.get());
+        auto& ns = *state.use<native_state>(handle.get());
         ns.awaiting_task = t;
 
         BOOL res = _DisconnectEx(handle->get_socket(), &ns.overlapped, 0, 0);
@@ -1205,8 +1235,8 @@ namespace fast_task::net {
         return true;
     }
 
-    bool tcp_socket::enter_close(const std::shared_ptr<task>& t, opaque_network_state& state) {
-        auto& ns = *new (&state) native_state(handle.get());
+    bool tcp_socket::enter_close(const task& t, opaque_network_state& state) {
+        auto& ns = *state.use<native_state>(handle.get());
         ns.awaiting_task = t;
 
         BOOL res = _DisconnectEx(handle->get_socket(), &ns.overlapped, 0, 0);
@@ -1273,7 +1303,7 @@ namespace fast_task::net {
                     else
                         *state->out_processed_bytes = static_cast<int32_t>(dwBytesTransferred);
                 }
-                fast_task::lock_guard guard(get_data(state->awaiting_task).no_race);
+                fast_task::lock_guard guard(get_data(state->awaiting_task));
                 transfer_task(std::move(state->awaiting_task));
             }
         }
@@ -1332,8 +1362,6 @@ namespace fast_task::net {
         accept_state(util::native_worker_manager* mgr, SOCKET ls) : native_state(mgr), listen_socket(ls) {}
     };
 
-    static_assert(sizeof(accept_state) <= sizeof(opaque_network_state::data), "accept_state too large for opaque_network_state");
-
     tcp_listener::tcp_listener() = default;
     tcp_listener::tcp_listener(tcp_listener&&) = default;
     tcp_listener& tcp_listener::operator=(tcp_listener&&) = default;
@@ -1360,7 +1388,7 @@ namespace fast_task::net {
         opaque_network_state state;
 
         if (get_loc().is_task_thread) {
-            mutex_unify mut(get_data(get_loc().curr_task).no_race);
+            mutex_unify mut(get_data(get_loc().curr_task).get_self_unify());
             std::lock_guard guard(mut);
             if (!enter_accept(get_loc().curr_task, state, res))
                 swapCtxRelock(mut);
@@ -1385,7 +1413,7 @@ namespace fast_task::net {
         opaque_network_state state;
 
         if (get_loc().is_task_thread) {
-            mutex_unify mut(get_data(get_loc().curr_task).no_race);
+            mutex_unify mut(get_data(get_loc().curr_task).get_self_unify());
             std::lock_guard guard(mut);
             if (!enter_close(get_loc().curr_task, state))
                 swapCtxRelock(mut);
@@ -1423,10 +1451,10 @@ namespace fast_task::net {
         return address();
     }
 
-    bool tcp_listener::enter_close(const std::shared_ptr<task>& t, opaque_network_state& state) {
+    bool tcp_listener::enter_close(const task& t, opaque_network_state& state) {
         if (!handle || handle->get_socket() == INVALID_SOCKET)
             return true;
-        auto& ns = *new (&state) native_state(handle.get());
+        auto& ns = *state.use<native_state>(handle.get());
         ns.awaiting_task = t;
 
         BOOL res = _DisconnectEx(handle->get_socket(), &ns.overlapped, 0, 0);
@@ -1442,7 +1470,7 @@ namespace fast_task::net {
         return true;
     }
 
-    bool tcp_listener::enter_accept(const std::shared_ptr<task>& t, opaque_network_state& state, std::optional<tcp_socket>& res) {
+    bool tcp_listener::enter_accept(const task& t, opaque_network_state& state, std::optional<tcp_socket>& res) {
         if (!handle || handle->get_socket() == INVALID_SOCKET) {
             res = std::nullopt;
             return true;
@@ -1452,7 +1480,7 @@ namespace fast_task::net {
             res = std::nullopt;
             return true;
         }
-        auto& ns = *new (&state) accept_state(handle.get(), handle->get_socket());
+        auto& ns = *state.use<accept_state>(handle.get(), handle->get_socket());
         ns.awaiting_task = t;
         ns.accept_socket = accept_sock;
         ns.out_socket = &res;
@@ -1461,7 +1489,7 @@ namespace fast_task::net {
             if (s->error == 0 && s->out_socket) {
                 ::setsockopt(s->accept_socket, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT, (char*)&s->listen_socket, sizeof(s->listen_socket));
                 tcp_socket new_sock;
-                new_sock.handle = std::make_unique<tcp_socket::manager>(s->accept_socket);
+                new_sock.handle = std::make_unique<tcp_socket::manager>(s->accept_socket, tcp_socket::manager::connection_method::accept);
                 *s->out_socket = std::move(new_sock);
                 s->accept_socket = INVALID_SOCKET;
             } else {
@@ -1537,7 +1565,7 @@ namespace fast_task::net {
             if (state->on_complete)
                 state->on_complete(static_cast<void*>(state));
             if (state->awaiting_task) {
-                fast_task::lock_guard guard(get_data(state->awaiting_task).no_race);
+                fast_task::lock_guard guard(get_data(state->awaiting_task));
                 transfer_task(std::move(state->awaiting_task));
             }
         }
@@ -1696,8 +1724,6 @@ namespace fast_task::net {
         }
     };
 
-    static_assert(sizeof(udp_recv_state) <= sizeof(opaque_network_state::data), "udp_recv_state too large for opaque_network_state");
-
     struct udp_send_state : public native_state {
         uint32_t* out_bytes;
         int32_t bytes_io = 0;
@@ -1707,8 +1733,6 @@ namespace fast_task::net {
             out_processed_bytes = &bytes_io;
         }
     };
-
-    static_assert(sizeof(udp_send_state) <= sizeof(opaque_network_state::data), "udp_send_state too large for opaque_network_state");
 
     struct udp_recvv_state : public native_state {
         udp_handle* hdl;
@@ -1732,8 +1756,6 @@ namespace fast_task::net {
         }
     };
 
-    static_assert(sizeof(udp_recvv_state) <= sizeof(opaque_network_state::data), "udp_recvv_state too large for opaque_network_state");
-
     struct udp_sendv_state : public native_state {
         uint32_t* out_bytes;
         int32_t bytes_io = 0;
@@ -1751,8 +1773,6 @@ namespace fast_task::net {
             };
         }
     };
-
-    static_assert(sizeof(udp_sendv_state) <= sizeof(opaque_network_state::data), "udp_sendv_state too large for opaque_network_state");
 
     udp_socket::udp_socket() = default;
     udp_socket::udp_socket(udp_socket&&) = default;
@@ -1777,7 +1797,7 @@ namespace fast_task::net {
         opaque_network_state state;
 
         if (get_loc().is_task_thread) {
-            mutex_unify mut(get_data(get_loc().curr_task).no_race);
+            mutex_unify mut(get_data(get_loc().curr_task).get_self_unify());
             std::lock_guard guard(mut);
             if (!enter_recv(get_loc().curr_task, state, bytes_read, data, sender))
                 swapCtxRelock(mut);
@@ -1803,7 +1823,7 @@ namespace fast_task::net {
         opaque_network_state state;
 
         if (get_loc().is_task_thread) {
-            mutex_unify mut(get_data(get_loc().curr_task).no_race);
+            mutex_unify mut(get_data(get_loc().curr_task).get_self_unify());
             std::lock_guard guard(mut);
             if (!enter_send(get_loc().curr_task, state, bytes_sent, data, to))
                 swapCtxRelock(mut);
@@ -1830,7 +1850,7 @@ namespace fast_task::net {
         std::span<std::span<uint8_t>> mbufs{const_cast<std::span<uint8_t>*>(buffers.data()), buffers.size()};
 
         if (get_loc().is_task_thread) {
-            mutex_unify mut(get_data(get_loc().curr_task).no_race);
+            mutex_unify mut(get_data(get_loc().curr_task).get_self_unify());
             std::lock_guard guard(mut);
             if (!enter_recvv(get_loc().curr_task, state, bytes_read, mbufs, sender))
                 swapCtxRelock(mut);
@@ -1856,7 +1876,7 @@ namespace fast_task::net {
         opaque_network_state state;
 
         if (get_loc().is_task_thread) {
-            mutex_unify mut(get_data(get_loc().curr_task).no_race);
+            mutex_unify mut(get_data(get_loc().curr_task).get_self_unify());
             std::lock_guard guard(mut);
             if (!enter_sendv(get_loc().curr_task, state, bytes_sent, data, to))
                 swapCtxRelock(mut);
@@ -1926,7 +1946,7 @@ namespace fast_task::net {
     void udp_socket::close() {
         opaque_network_state state;
         if (get_loc().is_task_thread) {
-            mutex_unify mut(get_data(get_loc().curr_task).no_race);
+            mutex_unify mut(get_data(get_loc().curr_task).get_self_unify());
             std::lock_guard guard(mut);
             if (!enter_close(get_loc().curr_task, state))
                 swapCtxRelock(mut);
@@ -1942,13 +1962,13 @@ namespace fast_task::net {
         }
     }
 
-    bool udp_socket::enter_recv(const std::shared_ptr<task>& t, opaque_network_state& state, uint32_t& bytes_read, std::span<uint8_t> data, address& sender) {
+    bool udp_socket::enter_recv(const task& t, opaque_network_state& state, uint32_t& bytes_read, std::span<uint8_t> data, address& sender) {
         if (!handle || handle->get_socket() == INVALID_SOCKET) {
             bytes_read = 0;
             return true;
         }
         handle->setup_recv(data.data(), static_cast<uint32_t>(data.size()));
-        auto& ns = *new (&state) udp_recv_state(handle.get(), &sender, &bytes_read);
+        auto& ns = *state.use<udp_recv_state>(handle.get(), &sender, &bytes_read);
         ns.awaiting_task = t;
         ns.on_complete = [](void* base) {
             auto s = static_cast<udp_recv_state*>(base);
@@ -1968,13 +1988,13 @@ namespace fast_task::net {
         return false;
     }
 
-    bool udp_socket::enter_send(const std::shared_ptr<task>& t, opaque_network_state& state, uint32_t& bytes_sent, std::span<const uint8_t> data, const address& to) {
+    bool udp_socket::enter_send(const task& t, opaque_network_state& state, uint32_t& bytes_sent, std::span<const uint8_t> data, const address& to) {
         if (!handle || handle->get_socket() == INVALID_SOCKET) {
             bytes_sent = 0;
             return true;
         }
         handle->setup_send(data.data(), static_cast<uint32_t>(data.size()), to);
-        auto& ns = *new (&state) udp_send_state(handle.get(), &bytes_sent);
+        auto& ns = *state.use<udp_send_state>(handle.get(), &bytes_sent);
         ns.awaiting_task = t;
         ns.on_complete = [](void* base) {
             auto s = static_cast<udp_send_state*>(base);
@@ -1991,13 +2011,13 @@ namespace fast_task::net {
         return false;
     }
 
-    bool udp_socket::enter_recvv(const std::shared_ptr<task>& t, opaque_network_state& state, uint32_t& bytes_read, std::span<std::span<uint8_t>> buffers, address& sender) {
+    bool udp_socket::enter_recvv(const task& t, opaque_network_state& state, uint32_t& bytes_read, std::span<std::span<uint8_t>> buffers, address& sender) {
         if (!handle || handle->get_socket() == INVALID_SOCKET) {
             bytes_read = 0;
             return true;
         }
         handle->reset_recv_sender();
-        auto& ns = *new (&state) udp_recvv_state(handle.get(), &sender, &bytes_read);
+        auto& ns = *state.use<udp_recvv_state>(handle.get(), &sender, &bytes_read);
         ns.bufs = new WSABUF[buffers.size()];
         DWORD count = 0;
         for (const auto& span : buffers) {
@@ -2021,13 +2041,13 @@ namespace fast_task::net {
         return false;
     }
 
-    bool udp_socket::enter_sendv(const std::shared_ptr<task>& t, opaque_network_state& state, uint32_t& bytes_sent, std::span<const std::span<const uint8_t>> data, const address& to) {
+    bool udp_socket::enter_sendv(const task& t, opaque_network_state& state, uint32_t& bytes_sent, std::span<const std::span<const uint8_t>> data, const address& to) {
         if (!handle || handle->get_socket() == INVALID_SOCKET) {
             bytes_sent = 0;
             return true;
         }
         handle->setup_send_addr(to);
-        auto& ns = *new (&state) udp_sendv_state(handle.get(), &bytes_sent);
+        auto& ns = *state.use<udp_sendv_state>(handle.get(), &bytes_sent);
         ns.bufs = new WSABUF[data.size()];
         DWORD count = 0;
         for (const auto& span : data) {
@@ -2050,7 +2070,7 @@ namespace fast_task::net {
         return false;
     }
 
-    bool udp_socket::enter_close([[maybe_unused]] const std::shared_ptr<task>& t, [[maybe_unused]] opaque_network_state& state) {
+    bool udp_socket::enter_close([[maybe_unused]] const task& t, [[maybe_unused]] opaque_network_state& state) {
         if (!handle || handle->get_socket() == INVALID_SOCKET)
             return true;
         handle->close_socket();
@@ -2079,7 +2099,7 @@ namespace fast_task::net {
         uint32_t bytes_read = 0;
         opaque_network_state state;
         if (get_loc().is_task_thread) {
-            mutex_unify mut(get_data(get_loc().curr_task).no_race);
+            mutex_unify mut(get_data(get_loc().curr_task).get_self_unify());
             std::lock_guard guard(mut);
             if (!enter_recv(get_loc().curr_task, state, bytes_read, data))
                 swapCtxRelock(mut);
@@ -2100,7 +2120,7 @@ namespace fast_task::net {
         uint32_t bytes_sent = 0;
         opaque_network_state state;
         if (get_loc().is_task_thread) {
-            mutex_unify mut(get_data(get_loc().curr_task).no_race);
+            mutex_unify mut(get_data(get_loc().curr_task).get_self_unify());
             std::lock_guard guard(mut);
             if (!enter_send(get_loc().curr_task, state, bytes_sent, data))
                 swapCtxRelock(mut);
@@ -2122,7 +2142,7 @@ namespace fast_task::net {
         opaque_network_state state;
         std::span<std::span<uint8_t>> mbufs{const_cast<std::span<uint8_t>*>(buffers.data()), buffers.size()};
         if (get_loc().is_task_thread) {
-            mutex_unify mut(get_data(get_loc().curr_task).no_race);
+            mutex_unify mut(get_data(get_loc().curr_task).get_self_unify());
             std::lock_guard guard(mut);
             if (!enter_recvv(get_loc().curr_task, state, bytes_read, mbufs))
                 swapCtxRelock(mut);
@@ -2143,7 +2163,7 @@ namespace fast_task::net {
         uint32_t bytes_sent = 0;
         opaque_network_state state;
         if (get_loc().is_task_thread) {
-            mutex_unify mut(get_data(get_loc().curr_task).no_race);
+            mutex_unify mut(get_data(get_loc().curr_task).get_self_unify());
             std::lock_guard guard(mut);
             if (!enter_sendv(get_loc().curr_task, state, bytes_sent, data))
                 swapCtxRelock(mut);
@@ -2175,7 +2195,7 @@ namespace fast_task::net {
     void udp_peer::close() {
         opaque_network_state state;
         if (get_loc().is_task_thread) {
-            mutex_unify mut(get_data(get_loc().curr_task).no_race);
+            mutex_unify mut(get_data(get_loc().curr_task).get_self_unify());
             std::lock_guard guard(mut);
             if (!enter_close(get_loc().curr_task, state))
                 swapCtxRelock(mut);
@@ -2191,13 +2211,13 @@ namespace fast_task::net {
         }
     }
 
-    bool udp_peer::enter_recv(const std::shared_ptr<task>& t, opaque_network_state& state, uint32_t& bytes_read, std::span<uint8_t> data) {
+    bool udp_peer::enter_recv(const task& t, opaque_network_state& state, uint32_t& bytes_read, std::span<uint8_t> data) {
         if (!handle || handle->get_socket() == INVALID_SOCKET) {
             bytes_read = 0;
             return true;
         }
         handle->setup_recv_peer(data.data(), static_cast<uint32_t>(data.size()));
-        auto& ns = *new (&state) udp_send_state(handle.get(), &bytes_read);
+        auto& ns = *state.use<udp_send_state>(handle.get(), &bytes_read);
         ns.awaiting_task = t;
         ns.on_complete = [](void* base) {
             auto s = static_cast<udp_send_state*>(base);
@@ -2215,13 +2235,13 @@ namespace fast_task::net {
         return false;
     }
 
-    bool udp_peer::enter_send(const std::shared_ptr<task>& t, opaque_network_state& state, uint32_t& bytes_sent, std::span<const uint8_t> data) {
+    bool udp_peer::enter_send(const task& t, opaque_network_state& state, uint32_t& bytes_sent, std::span<const uint8_t> data) {
         if (!handle || handle->get_socket() == INVALID_SOCKET) {
             bytes_sent = 0;
             return true;
         }
         handle->setup_send_peer(data.data(), static_cast<uint32_t>(data.size()));
-        auto& ns = *new (&state) udp_send_state(handle.get(), &bytes_sent);
+        auto& ns = *state.use<udp_send_state>(handle.get(), &bytes_sent);
         ns.awaiting_task = t;
         ns.on_complete = [](void* base) {
             auto s = static_cast<udp_send_state*>(base);
@@ -2238,12 +2258,12 @@ namespace fast_task::net {
         return false;
     }
 
-    bool udp_peer::enter_recvv(const std::shared_ptr<task>& t, opaque_network_state& state, uint32_t& bytes_read, std::span<std::span<uint8_t>> buffers) {
+    bool udp_peer::enter_recvv(const task& t, opaque_network_state& state, uint32_t& bytes_read, std::span<std::span<uint8_t>> buffers) {
         if (!handle || handle->get_socket() == INVALID_SOCKET) {
             bytes_read = 0;
             return true;
         }
-        auto& ns = *new (&state) udp_sendv_state(handle.get(), &bytes_read);
+        auto& ns = *state.use<udp_sendv_state>(handle.get(), &bytes_read);
         ns.bufs = new WSABUF[buffers.size()];
         DWORD count = 0;
         for (const auto& span : buffers) {
@@ -2267,12 +2287,12 @@ namespace fast_task::net {
         return false;
     }
 
-    bool udp_peer::enter_sendv(const std::shared_ptr<task>& t, opaque_network_state& state, uint32_t& bytes_sent, std::span<const std::span<const uint8_t>> data) {
+    bool udp_peer::enter_sendv(const task& t, opaque_network_state& state, uint32_t& bytes_sent, std::span<const std::span<const uint8_t>> data) {
         if (!handle || handle->get_socket() == INVALID_SOCKET) {
             bytes_sent = 0;
             return true;
         }
-        auto& ns = *new (&state) udp_sendv_state(handle.get(), &bytes_sent);
+        auto& ns = *state.use<udp_sendv_state>(handle.get(), &bytes_sent);
         ns.bufs = new WSABUF[data.size()];
         DWORD count = 0;
         for (const auto& span : data) {
@@ -2295,7 +2315,7 @@ namespace fast_task::net {
         return false;
     }
 
-    bool udp_peer::enter_close([[maybe_unused]] const std::shared_ptr<task>& t, [[maybe_unused]] opaque_network_state& state) {
+    bool udp_peer::enter_close([[maybe_unused]] const task& t, [[maybe_unused]] opaque_network_state& state) {
         if (!handle || handle->get_socket() == INVALID_SOCKET)
             return true;
         handle->close_socket();
@@ -2325,156 +2345,137 @@ namespace fast_task::net {
 
     #pragma region DNS
 
-    // Heap-allocated state for an async DNS resolution (GetAddrInfoExW + thread + IOCP).
-    // A worker thread calls GetAddrInfoExW (blocking), then posts to IOCP when done.
-    // opaque_network_state stores a raw pointer to resolve_win_state.
+    struct resolve_state {
+        OVERLAPPED overlapped;
+        HANDLE cancel_handle;
+        address* out_single = nullptr;
+        std::vector<address>* out_multi = nullptr;
+        ADDRINFOEXW hints;
+        wchar_t* host_w;
+        wchar_t* service_w;
+        PADDRINFOEXW results = nullptr;
+        task awaiting_task;
+        wchar_t port_str[8];
+        int error = 0;
+        bool service_allocated = false;
 
-    struct resolve_win_state : public util::native_worker_manager {
-        // Embedded native_worker_handle so we can post to IOCP via post_work().
-        struct iocp_handle : public util::native_worker_handle {
-            iocp_handle(resolve_win_state* mgr) : util::native_worker_handle(mgr) {}
-        } self;
-
-        address*              out_single       = nullptr;
-        std::vector<address>* out_multi        = nullptr;
-        address::family       preferred_family = address::family::none;
-        uint16_t              port_override    = 0;
-        int                   error            = 0;
-        std::shared_ptr<task> awaiting_task;
-        std::wstring          host_w;
-        std::wstring          service_w;
-        bool                  use_numeric_service = false; // service_w is a port number
-
-        explicit resolve_win_state() : self(this) {}
-
-        // Called on the IOCP dispatch thread after the worker posts a completion.
-        void handle(void* /*data*/, util::native_worker_handle* /*overlap*/, unsigned long) override {
-            auto to_resume = std::move(awaiting_task);
-            delete this;
-            if (to_resume) {
-                fast_task::lock_guard guard(get_data(to_resume).no_race);
-                transfer_task(std::move(to_resume));
-            }
+        ~resolve_state() {
+            delete[] host_w;
+            if (service_allocated)
+                delete[] service_w;
         }
     };
 
-    struct resolve_win_ptr_state {
-        resolve_win_state* rs;
-    };
-    static_assert(sizeof(resolve_win_ptr_state) <= sizeof(opaque_network_state::data),
-                  "opaque_network_state::data too small for resolve_win_ptr_state");
+    void enter_resolve_callback(DWORD dwError, DWORD, LPWSAOVERLAPPED lpOverlapped) {
+        auto rs = reinterpret_cast<resolve_state*>(lpOverlapped);
 
-    static void dns_win_worker(resolve_win_state* rs) {
-        init_networking();
-
-        ADDRINFOEXW hints{};
-        hints.ai_family   = AF_UNSPEC;
-        if (rs->preferred_family == address::family::ipv4)      hints.ai_family = AF_INET;
-        else if (rs->preferred_family == address::family::ipv6) hints.ai_family = AF_INET6;
-        hints.ai_socktype = SOCK_STREAM;
-
-        PADDRINFOEXW results = nullptr;
-        INT err = GetAddrInfoExW(
-            rs->host_w.c_str(),
-            rs->service_w.empty() ? nullptr : rs->service_w.c_str(),
-            NS_DNS, NULL, &hints, &results,
-            NULL, NULL, NULL, NULL);
-
-        if (err == NO_ERROR && results) {
-            for (auto* ai = results; ai; ai = ai->ai_next) {
-                if (rs->preferred_family != address::family::none) {
-                    address::family nf = address::family::none;
-                    if (ai->ai_family == AF_INET)       nf = address::family::ipv4;
-                    else if (ai->ai_family == AF_INET6) nf = address::family::ipv6;
-                    if (nf != rs->preferred_family)
+        if (dwError == NO_ERROR && rs->results) {
+            for (auto* ai = rs->results; ai; ai = ai->ai_next) {
+                if (rs->hints.ai_family != 0)
+                    if (ai->ai_family != rs->hints.ai_family)
                         continue;
-                }
                 address addr = to_address(ai->ai_addr);
                 if (rs->out_single) {
                     *rs->out_single = addr;
-                    rs->out_single  = nullptr;
+                    rs->out_single = nullptr;
                     break;
-                } else if (rs->out_multi) {
+                } else if (rs->out_multi)
                     rs->out_multi->push_back(addr);
-                }
             }
-            FreeAddrInfoExW(results);
-        } else if (err != NO_ERROR) {
-            rs->error = err;
-        }
+        } else if (dwError != NO_ERROR)
+            rs->error = dwError;
 
-        // Post completion to IOCP; do NOT access 'rs' after this point.
-        util::native_workers_singleton::post_work(&rs->self, 0);
+        if (rs->results)
+            FreeAddrInfoExW(rs->results);
+
+        auto to_resume = std::move(rs->awaiting_task);
+        if (to_resume)
+            transfer_task(std::move(to_resume));
     }
 
-    static bool enter_resolve_win_impl(
-        const std::shared_ptr<task>& t,
-        opaque_network_state&        state,
-        address*                     out_single,
-        std::vector<address>*        out_multi,
-        std::string_view             host,
-        std::string_view             service,
-        uint16_t                     port_override,
-        address::family              preferred_family)
-    {
-        auto* rs = new resolve_win_state{};
-        rs->out_single       = out_single;
-        rs->out_multi        = out_multi;
-        rs->preferred_family = preferred_family;
-        rs->awaiting_task    = t;
+    static bool enter_resolve_impl(
+        const task& t,
+        opaque_network_state& state,
+        address* out_single,
+        std::vector<address>* out_multi,
+        std::string_view host,
+        std::string_view service,
+        uint16_t port_override,
+        address::family preferred_family
+    ) {
+        init_networking();
+        auto rs = state.use<resolve_state>();
+        rs->out_single = out_single;
+        rs->out_multi = out_multi;
+        rs->hints.ai_family = AF_UNSPEC;
+        if (preferred_family == address::family::ipv4)
+            rs->hints.ai_family = AF_INET;
+        else if (preferred_family == address::family::ipv6)
+            rs->hints.ai_family = AF_INET6;
+        rs->hints.ai_socktype = SOCK_STREAM;
+        rs->awaiting_task = t;
 
-        // Convert host to wide string
         int host_len = (int)host.size();
-        rs->host_w.resize(MultiByteToWideChar(CP_UTF8, 0, host.data(), host_len, nullptr, 0));
-        MultiByteToWideChar(CP_UTF8, 0, host.data(), host_len, rs->host_w.data(), (int)rs->host_w.size());
+        int wchar_host_len = MultiByteToWideChar(CP_UTF8, 0, host.data(), host_len, nullptr, 0);
+        rs->host_w = new wchar_t[wchar_host_len];
+        int host_zero_pos = MultiByteToWideChar(CP_UTF8, 0, host.data(), host_len, rs->host_w, wchar_host_len);
+        rs->host_w[host_zero_pos] = 0;
 
         if (port_override != 0) {
-            wchar_t port_str[8];
-            _snwprintf_s(port_str, _countof(port_str), L"%u", (unsigned)port_override);
-            rs->service_w = port_str;
+            int pos = _snwprintf_s(rs->port_str, _countof(rs->port_str), L"%u", (unsigned)port_override);
+            rs->service_w = rs->port_str;
+            rs->service_w[pos] = 0;
         } else if (!service.empty()) {
             int svc_len = (int)service.size();
-            rs->service_w.resize(MultiByteToWideChar(CP_UTF8, 0, service.data(), svc_len, nullptr, 0));
-            MultiByteToWideChar(CP_UTF8, 0, service.data(), svc_len, rs->service_w.data(), (int)rs->service_w.size());
+            rs->service_allocated = true;
+            int wchar_svc_len = MultiByteToWideChar(CP_UTF8, 0, service.data(), svc_len, nullptr, 0);
+            rs->service_w = new wchar_t[wchar_svc_len + 1];
+            int pos = MultiByteToWideChar(CP_UTF8, 0, service.data(), svc_len, rs->service_w, wchar_svc_len);
+            rs->service_w[pos] = 0;
         }
 
-        new (&state) resolve_win_ptr_state{rs};
-
-        std::thread(dns_win_worker, rs).detach();
-        return false;  // always async
+        int result = GetAddrInfoExW(
+            rs->host_w,
+            rs->service_w,
+            NS_DNS,
+            NULL,
+            &rs->hints,
+            &rs->results,
+            NULL,
+            &rs->overlapped,
+            enter_resolve_callback,
+            &rs->cancel_handle
+        );
+        if (result == WSA_IO_PENDING)
+            return false;
+        else {
+            rs->awaiting_task = nullptr;
+            enter_resolve_callback(result, 0, &rs->overlapped);
+            return true;
+        }
     }
 
-    bool address::enter_resolve(const std::shared_ptr<task>& t, opaque_network_state& state,
-                                address& res, std::string_view host, std::string_view service,
-                                address::family preferred_family) {
-        return enter_resolve_win_impl(t, state, &res, nullptr, host, service, 0, preferred_family);
+    bool address::enter_resolve(const task& t, opaque_network_state& state, address& res, std::string_view host, std::string_view service, address::family preferred_family) {
+        return enter_resolve_impl(t, state, &res, nullptr, host, service, 0, preferred_family);
     }
 
-    bool address::enter_resolve(const std::shared_ptr<task>& t, opaque_network_state& state,
-                                address& res, std::string_view host, std::string_view service,
-                                uint16_t port, address::family preferred_family) {
-        return enter_resolve_win_impl(t, state, &res, nullptr, host, service, port, preferred_family);
+    bool address::enter_resolve(const task& t, opaque_network_state& state, address& res, std::string_view host, std::string_view service, uint16_t port, address::family preferred_family) {
+        return enter_resolve_impl(t, state, &res, nullptr, host, service, port, preferred_family);
     }
 
-    bool address::enter_resolve_multiple(const std::shared_ptr<task>& t, opaque_network_state& state,
-                                         std::vector<address>& res, std::string_view host,
-                                         std::string_view service, address::family preferred_family) {
-        return enter_resolve_win_impl(t, state, nullptr, &res, host, service, 0, preferred_family);
+    bool address::enter_resolve_multiple(const task& t, opaque_network_state& state, std::vector<address>& res, std::string_view host, std::string_view service, address::family preferred_family) {
+        return enter_resolve_impl(t, state, nullptr, &res, host, service, 0, preferred_family);
     }
 
-    bool address::enter_resolve_multiple(const std::shared_ptr<task>& t, opaque_network_state& state,
-                                         std::vector<address>& res, std::string_view host,
-                                         std::string_view service, uint16_t port,
-                                         address::family preferred_family) {
-        return enter_resolve_win_impl(t, state, nullptr, &res, host, service, port, preferred_family);
+    bool address::enter_resolve_multiple(const task& t, opaque_network_state& state, std::vector<address>& res, std::string_view host, std::string_view service, uint16_t port, address::family preferred_family) {
+        return enter_resolve_impl(t, state, nullptr, &res, host, service, port, preferred_family);
     }
 
-    address address::resolve(std::string_view host, std::string_view service,
-                             address::family preferred_family) {
+    address address::resolve(std::string_view host, std::string_view service, address::family preferred_family) {
         address res;
         opaque_network_state state;
         if (get_loc().is_task_thread) {
-            mutex_unify mut(fast_task::get_data(get_loc().curr_task).no_race);
+            mutex_unify mut(fast_task::get_data(get_loc().curr_task).get_self_unify());
             std::lock_guard guard(mut);
             if (!enter_resolve(get_loc().curr_task, state, res, host, service, preferred_family))
                 swapCtxRelock(mut);
@@ -2482,7 +2483,7 @@ namespace fast_task::net {
             std::mutex mtx;
             std::condition_variable cv;
             bool done = false;
-            auto t = task::create([&] { std::lock_guard lock(mtx); done = true; cv.notify_one(); });
+            auto t = task::create([&mtx, &cv, &done] { std::lock_guard lock(mtx); done = true; cv.notify_one(); });
             if (!enter_resolve(t, state, res, host, service, preferred_family)) {
                 std::unique_lock lock(mtx);
                 cv.wait(lock, [&] { return done; });
@@ -2491,12 +2492,11 @@ namespace fast_task::net {
         return res;
     }
 
-    address address::resolve(std::string_view host, std::string_view service, uint16_t port,
-                             address::family preferred_family) {
+    address address::resolve(std::string_view host, std::string_view service, uint16_t port, address::family preferred_family) {
         address res;
         opaque_network_state state;
         if (get_loc().is_task_thread) {
-            mutex_unify mut(fast_task::get_data(get_loc().curr_task).no_race);
+            mutex_unify mut(fast_task::get_data(get_loc().curr_task).get_self_unify());
             std::lock_guard guard(mut);
             if (!enter_resolve(get_loc().curr_task, state, res, host, service, port, preferred_family))
                 swapCtxRelock(mut);
@@ -2504,7 +2504,7 @@ namespace fast_task::net {
             std::mutex mtx;
             std::condition_variable cv;
             bool done = false;
-            auto t = task::create([&] { std::lock_guard lock(mtx); done = true; cv.notify_one(); });
+            auto t = task::create([&mtx, &cv, &done] { std::lock_guard lock(mtx); done = true; cv.notify_one(); });
             if (!enter_resolve(t, state, res, host, service, port, preferred_family)) {
                 std::unique_lock lock(mtx);
                 cv.wait(lock, [&] { return done; });
@@ -2513,12 +2513,11 @@ namespace fast_task::net {
         return res;
     }
 
-    std::vector<address> address::resolve_multiple(std::string_view host, std::string_view service,
-                                                   address::family preferred_family) {
+    std::vector<address> address::resolve_multiple(std::string_view host, std::string_view service, address::family preferred_family) {
         std::vector<address> res;
         opaque_network_state state;
         if (get_loc().is_task_thread) {
-            mutex_unify mut(fast_task::get_data(get_loc().curr_task).no_race);
+            mutex_unify mut(fast_task::get_data(get_loc().curr_task).get_self_unify());
             std::lock_guard guard(mut);
             if (!enter_resolve_multiple(get_loc().curr_task, state, res, host, service, preferred_family))
                 swapCtxRelock(mut);
@@ -2526,7 +2525,7 @@ namespace fast_task::net {
             std::mutex mtx;
             std::condition_variable cv;
             bool done = false;
-            auto t = task::create([&] { std::lock_guard lock(mtx); done = true; cv.notify_one(); });
+            auto t = task::create([&mtx, &cv, &done] { std::lock_guard lock(mtx); done = true; cv.notify_one(); });
             if (!enter_resolve_multiple(t, state, res, host, service, preferred_family)) {
                 std::unique_lock lock(mtx);
                 cv.wait(lock, [&] { return done; });
@@ -2535,12 +2534,11 @@ namespace fast_task::net {
         return res;
     }
 
-    std::vector<address> address::resolve_multiple(std::string_view host, std::string_view service,
-                                                   uint16_t port, address::family preferred_family) {
+    std::vector<address> address::resolve_multiple(std::string_view host, std::string_view service, uint16_t port, address::family preferred_family) {
         std::vector<address> res;
         opaque_network_state state;
         if (get_loc().is_task_thread) {
-            mutex_unify mut(fast_task::get_data(get_loc().curr_task).no_race);
+            mutex_unify mut(fast_task::get_data(get_loc().curr_task).get_self_unify());
             std::lock_guard guard(mut);
             if (!enter_resolve_multiple(get_loc().curr_task, state, res, host, service, port, preferred_family))
                 swapCtxRelock(mut);
@@ -2548,7 +2546,7 @@ namespace fast_task::net {
             std::mutex mtx;
             std::condition_variable cv;
             bool done = false;
-            auto t = task::create([&] { std::lock_guard lock(mtx); done = true; cv.notify_one(); });
+            auto t = task::create([&mtx, &cv, &done] { std::lock_guard lock(mtx); done = true; cv.notify_one(); });
             if (!enter_resolve_multiple(t, state, res, host, service, port, preferred_family)) {
                 std::unique_lock lock(mtx);
                 cv.wait(lock, [&] { return done; });

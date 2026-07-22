@@ -11,10 +11,6 @@
 
 class CoroutineUtilitiesTest : public SchedulerFixture {};
 
-// NOTE: coroutine::for_each and coroutine::async_for_each are disabled
-// due to a library bug: they call coros.emplace_back(cor) on an lvalue
-// task_coro<void> which is move-only (deleted copy constructor).
-
 // ---- coroutine::wait_all ----
 
 TEST_F(CoroutineUtilitiesTest, WaitAllWaitsForAll) {
@@ -57,5 +53,3 @@ TEST_F(CoroutineUtilitiesTest, WaitAllBlockingWaitsForAll) {
 
     EXPECT_EQ(count.load(), 2);
 }
-
-// async_for_each with task_query also uses the same buggy emplace_back pattern - disabled.

@@ -11,9 +11,9 @@ class TaskTimeoutTest : public SchedulerFixture {};
 
 TEST_F(TaskTimeoutTest, SetAndGetTimeout) {
     auto deadline = std::chrono::high_resolution_clock::now() + std::chrono::seconds(10);
-    auto t = std::make_shared<fast_task::task>([] {});
-    t->set_timeout(deadline);
-    EXPECT_EQ(t->get_timeout(), deadline);
+    auto t = fast_task::task::create([] {});
+    t.set_timeout(deadline);
+    EXPECT_EQ(t.get_timeout(), deadline);
 }
 
 TEST_F(TaskTimeoutTest, TimeoutBeforeCompletion) {
@@ -23,7 +23,7 @@ TEST_F(TaskTimeoutTest, TimeoutBeforeCompletion) {
 
     auto deadline = std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(50);
 
-    auto t = std::make_shared<fast_task::task>(
+    auto t = fast_task::task::create(
         [&] {
             try {
                 fast_task::this_task::sleep_for(std::chrono::milliseconds(150));
@@ -38,7 +38,7 @@ TEST_F(TaskTimeoutTest, TimeoutBeforeCompletion) {
     );
 
     fast_task::scheduler::start(t);
-    t->await_task();
+    t.await_task();
 
     EXPECT_FALSE(completed.load());
     EXPECT_TRUE(was_cancelled.load());
@@ -47,12 +47,12 @@ TEST_F(TaskTimeoutTest, TimeoutBeforeCompletion) {
 TEST_F(TaskTimeoutTest, NoTimeoutWhenCompletesEarly) {
     std::atomic<bool> completed{false};
     auto deadline = std::chrono::high_resolution_clock::now() + std::chrono::seconds(6);
-    auto t = std::make_shared<fast_task::task>(
+    auto t = fast_task::task::create(
         [&] { completed = true; },
         nullptr,
         deadline
     );
     fast_task::scheduler::start(t);
-    t->await_task();
+    t.await_task();
     EXPECT_TRUE(completed.load());
 }

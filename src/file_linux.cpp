@@ -89,7 +89,7 @@ namespace fast_task::file {
         }
 
     public:
-        std::shared_ptr<task> awaiter;
+        task awaiter;
         uint32_t fullifed_bytes = 0;
         const uint32_t buffer_size;
         const uint64_t offset;
@@ -119,18 +119,20 @@ namespace fast_task::file {
         }
 
         void cancel() {
-            if (buffer && awaiter ? !get_data(awaiter).end_of_life : true) {
+            task old_awaiter;
+            if (buffer && awaiter ? !get_data(awaiter).is_ended() : true) {
                 if (util::native_workers_singleton::await_cancel_fd_all(handle)) {
                     mutex_unify unify(mutex);
                     fast_task::unique_lock<mutex_unify> lock(unify);
                     fullifed = true;
                     if (awaiter) {
                         if (is_read && !required_full)
-                            awaiter->end_dummy([&](auto) {});
+                            awaiter.end_dummy([&](auto) {});
                         else
-                            awaiter->end_dummy([&](auto data) { ((completion_struct*)data)->error = io_errors::operation_canceled; });
+                            awaiter.end_dummy([&](auto data) { ((completion_struct*)data)->error = io_errors::operation_canceled; });
                     }
                     awaiters.notify_all();
+                    old_awaiter = std::move(awaiter);
                 }
             }
         }
@@ -143,34 +145,40 @@ namespace fast_task::file {
         }
 
         void now_fullifed() {
-            mutex_unify unify(mutex);
-            fast_task::unique_lock<mutex_unify> lock(unify);
-            fullifed = true;
-            if (awaiter) {
-                if (is_read)
-                    awaiter->end_dummy([&](auto data) { auto tt = (completion_struct*)data; tt->completed_bytes = fullifed_bytes; tt->data = buffer; });
-                else
-                    awaiter->end_dummy([&](auto data) { auto tt = (completion_struct*)data; tt->completed_bytes = fullifed_bytes; });
+            task old_awaiter;
+            {
+                mutex_unify unify(mutex);
+                fast_task::unique_lock<mutex_unify> lock(unify);
+                fullifed = true;
+                if (awaiter) {
+                    if (is_read)
+                        awaiter.end_dummy([&](auto data) { auto tt = (completion_struct*)data; tt->completed_bytes = fullifed_bytes; tt->data = buffer; });
+                    else
+                        awaiter.end_dummy([&](auto data) { auto tt = (completion_struct*)data; tt->completed_bytes = fullifed_bytes; });
+                }
+                awaiters.notify_all();
+                old_awaiter = std::move(awaiter);
             }
-            awaiters.notify_all();
-            awaiter = nullptr;
         }
 
         void exception(io_errors e) {
-            mutex_unify unify(mutex);
-            fast_task::unique_lock<mutex_unify> lock(unify);
-            fullifed = true;
-            if (awaiter) {
-                if (fullifed_bytes) {
-                    if (is_read)
-                        awaiter->end_dummy([&](auto data) { auto tt = (completion_struct*)data; tt->completed_bytes = fullifed_bytes; tt->data = buffer; tt->error = e; });
-                    else
-                        awaiter->end_dummy([&](auto data) { auto tt = (completion_struct*)data; tt->completed_bytes = fullifed_bytes; tt->error = e; });
-                } else
-                    awaiter->end_dummy([&](auto data) { auto tt = (completion_struct*)data; tt->error = e; });
+            task old_awaiter;
+            {
+                mutex_unify unify(mutex);
+                fast_task::unique_lock<mutex_unify> lock(unify);
+                fullifed = true;
+                if (awaiter) {
+                    if (fullifed_bytes) {
+                        if (is_read)
+                            awaiter.end_dummy([&](auto data) { auto tt = (completion_struct*)data; tt->completed_bytes = fullifed_bytes; tt->data = buffer; tt->error = e; });
+                        else
+                            awaiter.end_dummy([&](auto data) { auto tt = (completion_struct*)data; tt->completed_bytes = fullifed_bytes; tt->error = e; });
+                    } else
+                        awaiter.end_dummy([&](auto data) { auto tt = (completion_struct*)data; tt->error = e; });
+                }
+                awaiters.notify_all();
+                old_awaiter = std::move(awaiter);
             }
-            awaiters.notify_all();
-            awaiter = nullptr;
         }
 
         void readed(uint32_t len) {
@@ -208,6 +216,7 @@ namespace fast_task::file {
         }
 
         void ststd() {
+            get_data(awaiter).set_status(task_object::status_e::scheduled);
             if (is_read)
                 util::native_workers_singleton::post_read(this, handle, buffer, buffer_size, offset);
             else
@@ -265,7 +274,7 @@ namespace fast_task::file {
         delete ((completion_struct*)it);
     }
 
-    std::pair<completion_struct*, std::shared_ptr<task>> create_dummy_handle(File_* file) {
+    std::pair<completion_struct*, task> create_dummy_handle(File_* file) {
         auto res = new completion_struct(file);
         return {res, task::callback_dummy(res, file_overlapped_on_await, file_overlapped_on_cancel, file_overlapped_on_destruct)};
     }
@@ -449,7 +458,7 @@ namespace fast_task::file {
             });
         }
 
-        std::shared_ptr<task> fmake_read(uint32_t size, bool require_all) {
+        task fmake_read(uint32_t size, bool require_all) {
             File_* file = File_::command_read(this, _handle, size, read_pointer, require_all);
             switch (_pointer_mode) {
             case pointer_mode::separated:
@@ -470,7 +479,7 @@ namespace fast_task::file {
             return task_;
         }
 
-        std::shared_ptr<task> fmake_read_at(uint64_t offset, uint32_t size, bool require_all) {
+        task fmake_read_at(uint64_t offset, uint32_t size, bool require_all) {
             File_* file = File_::command_read(this, _handle, size, offset, require_all);
             auto [data, task_] = create_dummy_handle(file);
             try {
@@ -577,7 +586,7 @@ namespace fast_task::file {
             });
         }
 
-        std::shared_ptr<task> fmake_write(const uint8_t* data_, uint32_t size) {
+        task fmake_write(const uint8_t* data_, uint32_t size) {
             File_* file = File_::command_write(this, _handle, (char*)data_, size, write_pointer);
             switch (_pointer_mode) {
             case pointer_mode::separated:
@@ -598,7 +607,7 @@ namespace fast_task::file {
             return task_;
         }
 
-        std::shared_ptr<task> fmake_write_at(uint64_t offset, const uint8_t* data_, uint32_t size) {
+        task fmake_write_at(uint64_t offset, const uint8_t* data_, uint32_t size) {
             File_* file = File_::command_write(this, _handle, (char*)data_, size, offset);
             auto [data, task_] = create_dummy_handle(file);
             try {
@@ -675,7 +684,7 @@ namespace fast_task::file {
             });
         }
 
-        std::shared_ptr<task> fmake_append(const uint8_t* data_, uint32_t size) {
+        task fmake_append(const uint8_t* data_, uint32_t size) {
             File_* file = File_::command_write(this, _handle, (char*)data_, size, (uint64_t)-1);
             auto [data, task_] = create_dummy_handle(file);
             try {
@@ -850,15 +859,15 @@ namespace fast_task::file {
 namespace fast_task::file {
     template <>
     bool io_operation<std::vector<uint8_t>>::is_done() const noexcept {
-        return slot_ && slot_->is_ended();
+        return slot_ && slot_.is_ended();
     }
 
     template <>
     std::optional<io_errors> io_operation<std::vector<uint8_t>>::get_error() {
-        if (!slot_ || !slot_->is_ended())
+        if (!slot_ || !slot_.is_ended())
             return std::nullopt;
         std::optional<io_errors> res;
-        slot_->access_dummy([&](void* e_data) {
+        slot_.access_dummy([&](void* e_data) {
             auto data = (completion_struct*)e_data;
             if (data->error != io_errors::no_error)
                 res = data->error;
@@ -868,10 +877,10 @@ namespace fast_task::file {
 
     template <>
     std::optional<std::vector<uint8_t>> io_operation<std::vector<uint8_t>>::try_get() {
-        if (!slot_ || !slot_->is_ended())
+        if (!slot_ || !slot_.is_ended())
             return std::nullopt;
         std::optional<std::vector<uint8_t>> res;
-        slot_->access_dummy([&](void* e_data) {
+        slot_.access_dummy([&](void* e_data) {
             auto data = (completion_struct*)e_data;
 
             if (data->error == io_errors::no_error || data->error == io_errors::eof)
@@ -882,10 +891,10 @@ namespace fast_task::file {
 
     template <>
     std::vector<uint8_t> io_operation<std::vector<uint8_t>>::get() {
-        if (!slot_ || !slot_->is_ended())
+        if (!slot_ || !slot_.is_ended())
             throw std::runtime_error("The operations is not complete");
         std::optional<std::vector<uint8_t>> res;
-        slot_->access_dummy([&](void* e_data) {
+        slot_.access_dummy([&](void* e_data) {
             auto data = (completion_struct*)e_data;
 
             if (data->error == io_errors::no_error || data->error == io_errors::eof)
@@ -897,34 +906,39 @@ namespace fast_task::file {
     }
 
     template <>
-    bool io_operation<std::vector<uint8_t>>::enter_wait(const std::shared_ptr<task>& t) {
+    bool io_operation<std::vector<uint8_t>>::enter_wait(const task& t, enter_state& state) {
         if (slot_)
-            return slot_->enter_wait(t);
+            return slot_.enter_wait(t, state);
         else
             return true;
     }
 
     template <>
-    bool io_operation<std::vector<uint8_t>>::enter_wait_until(const std::shared_ptr<task>& t, std::chrono::high_resolution_clock::time_point tp) {
+    bool io_operation<std::vector<uint8_t>>::enter_wait_until(const task& t, enter_state& state, std::chrono::high_resolution_clock::time_point tp) {
         if (slot_)
-            return slot_->enter_wait_until(t, tp);
+            return slot_.enter_wait_until(t, state, tp);
         else
             return true;
+    }
+
+    template <>
+    bool io_operation<std::vector<uint8_t>>::enter_cancel(const task& t, enter_state& state) {
+        return slot_.enter_cancel(t, state);
     }
 
     template <>
     bool io_operation<void>::is_done() const noexcept {
-        return !slot_ || slot_->is_ended();
+        return !slot_ || slot_.is_ended();
     }
 
     template <>
     std::optional<io_errors> io_operation<void>::get_error() {
         if (!slot_)
             return io_errors::unknown_error;
-        if (!slot_->is_ended())
+        if (!slot_.is_ended())
             return std::nullopt;
         std::optional<io_errors> res;
-        slot_->access_dummy([&](void* e_data) {
+        slot_.access_dummy([&](void* e_data) {
             auto data = (completion_struct*)e_data;
             if (data->error != io_errors::no_error)
                 res = data->error;
@@ -934,14 +948,14 @@ namespace fast_task::file {
 
     template <>
     bool io_operation<void>::try_get() {
-        return slot_ && slot_->is_ended();
+        return slot_ && slot_.is_ended();
     }
 
     template <>
     void io_operation<void>::get() {
-        if (!slot_ || !slot_->is_ended())
+        if (!slot_ || !slot_.is_ended())
             throw std::runtime_error("The operations is not complete");
-        slot_->access_dummy([&](void* e_data) {
+        slot_.access_dummy([&](void* e_data) {
             auto data = (completion_struct*)e_data;
 
             if (data->error != io_errors::no_error && data->error != io_errors::eof)
@@ -950,18 +964,18 @@ namespace fast_task::file {
     }
 
     template <>
-    bool io_operation<void>::enter_wait(const std::shared_ptr<task>& t) {
-        return slot_->enter_wait(t);
+    bool io_operation<void>::enter_wait(const task& t, enter_state& state) {
+        return slot_.enter_wait(t, state);
     }
 
     template <>
-    bool io_operation<void>::enter_wait_until(const std::shared_ptr<task>& t, std::chrono::high_resolution_clock::time_point tp) {
-        return slot_->enter_wait_until(t, tp);
+    bool io_operation<void>::enter_wait_until(const task& t, enter_state& state, std::chrono::high_resolution_clock::time_point tp) {
+        return slot_.enter_wait_until(t, state, tp);
     }
 
     template <>
-    bool io_operation<void>::enter_cancel(const std::shared_ptr<task>& t) {
-        return slot_->enter_cancel(t);
+    bool io_operation<void>::enter_cancel(const task& t, enter_state& state) {
+        return slot_.enter_cancel(t, state);
     }
 
     file_handle file_handle::open(const std::filesystem::path& path, open_mode open, on_open_action action, file_flags flags, share_mode share, pointer_mode pointer_mode) {

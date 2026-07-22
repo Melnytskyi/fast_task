@@ -14,6 +14,7 @@ namespace fast_task {
     namespace detail {
         template <class T>
         struct future_mov_result_awaiter {
+            enter_state state;
             future_ptr<T> t;
 
             bool await_ready() noexcept {
@@ -23,18 +24,21 @@ namespace fast_task {
             template <class Promise>
             bool await_suspend(std::coroutine_handle<Promise> h) {
                 if constexpr (std::derived_from<Promise, task_promise_base>) {
-                    return !t->enter_wait(h.promise().task_object);
+                    return !t->enter_wait(h.promise().task_object, state);
                 } else {
-                    auto on_start_resume = [](void* handle_addr) {
-                        std::coroutine_handle<>::from_address(handle_addr).resume();
+                    static task_vtable vt = {
+                        nullptr, //no special treatment for the on_await
+                        nullptr, //no special treatment for the on_cancel, the flag set automatically
+                        [](void* handle_addr) {
+                            std::coroutine_handle<>::from_address(handle_addr).resume();
+                        },
+                        nullptr,
+                        nullptr,
+                        false
                     };
-                    auto on_nop = [](void*) {};
-                    auto bridge_task = std::make_shared<fast_task::task>(
+                    auto bridge_task = fast_task::task(
                         h.address(),
-                        on_start_resume,
-                        on_nop,
-                        on_nop,
-                        on_nop,
+                        &vt,
                         false,
                         true
                     );
@@ -52,6 +56,7 @@ namespace fast_task {
 
         template <class T>
         struct future_cop_result_awaiter {
+            enter_state state;
             future_ptr<T> t;
 
             bool await_ready() noexcept {
@@ -61,18 +66,21 @@ namespace fast_task {
             template <class Promise>
             bool await_suspend(std::coroutine_handle<Promise> h) {
                 if constexpr (std::derived_from<Promise, task_promise_base>) {
-                    return !t->enter_wait(h.promise().task_object);
+                    return !t->enter_wait(h.promise().task_object, state);
                 } else {
-                    auto on_start_resume = [](void* handle_addr) {
-                        std::coroutine_handle<>::from_address(handle_addr).resume();
+                    static task_vtable vt = {
+                        nullptr, //no special treatment for the on_await
+                        nullptr, //no special treatment for the on_cancel, the flag set automatically
+                        [](void* handle_addr) {
+                            std::coroutine_handle<>::from_address(handle_addr).resume();
+                        },
+                        nullptr,
+                        nullptr,
+                        false
                     };
-                    auto on_nop = [](void*) {};
-                    auto bridge_task = std::make_shared<fast_task::task>(
+                    auto bridge_task = fast_task::task(
                         h.address(),
-                        on_start_resume,
-                        on_nop,
-                        on_nop,
-                        on_nop,
+                        &vt,
                         false,
                         true
                     );
@@ -90,12 +98,12 @@ namespace fast_task {
     }
     template<class T>
     inline auto operator co_await(future_ptr<T>&& t) noexcept {
-        return detail::future_mov_result_awaiter{std::move(t)};
+        return detail::future_mov_result_awaiter{{}, std::move(t)};
     }
 
     template <class T>
     inline auto operator co_await(const future_ptr<T>& t) noexcept {
-        return detail::future_cop_result_awaiter{std::move(t)};
+        return detail::future_cop_result_awaiter{{}, std::move(t)};
     }
 }
 

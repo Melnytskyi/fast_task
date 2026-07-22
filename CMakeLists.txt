@@ -20,3 +20,7 @@ if(FAST_TASK_BUILD_TESTS)
   enable_testing()
   add_subdirectory(tests)
 endif()
+
+if(FAST_TASK_BUILD_BENCHMARKS)
+    add_subdirectory(benchmark)
+endif()

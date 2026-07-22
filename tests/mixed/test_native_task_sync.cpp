@@ -32,12 +32,12 @@ TEST_F(NativeTaskSyncTest, NativeThreadAndTaskShareMutex) {
 
     // Task tries to acquire the same mutex
     std::atomic<int> task_value{0};
-    auto t = std::make_shared<fast_task::task>([&] {
+    auto t = fast_task::task::create([&] {
         fast_task::lock_guard<fast_task::task_mutex> lk(mtx);
         task_value = value + 1;
     });
     fast_task::scheduler::start(t);
-    t->await_task();
+    t.await_task();
     native.join();
 
     EXPECT_TRUE(native_done.load());
@@ -57,9 +57,9 @@ TEST_F(NativeTaskSyncTest, ProtectedValueFromMultipleTasks) {
         shared = v + 1;
     };
 
-    std::vector<std::shared_ptr<fast_task::task>> tasks;
+    std::vector<fast_task::task> tasks;
     for (int i = 0; i < 5; ++i) {
-        tasks.push_back(std::make_shared<fast_task::task>(worker));
+        tasks.push_back(fast_task::task::create(worker));
         fast_task::scheduler::start(tasks.back());
     }
     fast_task::task::await_multiple(tasks, true);
@@ -86,15 +86,15 @@ TEST_F(NativeTaskSyncTest, RwMutexMixedReaderWriter) {
         written_value = 42;
     };
 
-    auto r1 = std::make_shared<fast_task::task>(reader);
-    auto r2 = std::make_shared<fast_task::task>(reader);
-    auto w  = std::make_shared<fast_task::task>(writer);
+    auto r1 = fast_task::task::create(reader);
+    auto r2 = fast_task::task::create(reader);
+    auto w = fast_task::task::create(writer);
 
     fast_task::scheduler::start(r1);
     fast_task::scheduler::start(r2);
     fast_task::scheduler::start(w);
 
-    auto tasks = std::vector<std::shared_ptr<fast_task::task>>{r1, r2, w};
+    auto tasks = std::vector<fast_task::task>{r1, r2, w};
     fast_task::task::await_multiple(tasks, true);
 
     EXPECT_EQ(written_value, 42);

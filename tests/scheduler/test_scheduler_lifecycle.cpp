@@ -44,11 +44,11 @@ TEST(SchedulerLifecycle, AwaitNoTasks) {
         std::this_thread::yield();
     std::atomic<int> done{0};
 
-    auto t1 = std::make_shared<fast_task::task>([&] {
+    auto t1 = fast_task::task::create([&] {
         fast_task::this_task::sleep_for(std::chrono::milliseconds(10));
         ++done;
     });
-    auto t2 = std::make_shared<fast_task::task>([&] {
+    auto t2 = fast_task::task::create([&] {
         fast_task::this_task::sleep_for(std::chrono::milliseconds(10));
         ++done;
     });
@@ -66,7 +66,7 @@ TEST(SchedulerLifecycle, AwaitEndTasks) {
         std::this_thread::yield();
     std::atomic<int> done{0};
 
-    auto t = std::make_shared<fast_task::task>([&] {
+    auto t = fast_task::task::create([&] {
         fast_task::this_task::sleep_for(std::chrono::milliseconds(10));
         ++done;
     });
@@ -84,7 +84,7 @@ TEST(SchedulerLifecycle, Schedule) {
     fast_task::scheduler::explicit_start_timer();
     std::atomic<bool> ran{false};
 
-    auto t = std::make_shared<fast_task::task>([&] { ran = true; });
+    auto t = fast_task::task::create([&] { ran = true; });
     fast_task::scheduler::schedule(t, std::chrono::milliseconds(30));
 
     fast_task::this_thread::sleep_for(std::chrono::milliseconds(100));

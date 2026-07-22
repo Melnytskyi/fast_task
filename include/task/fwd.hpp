@@ -4,8 +4,8 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
-#ifndef FAST_TASK_TASK_FWD
-#define FAST_TASK_TASK_FWD
+#ifndef INCLUDE_TASK_TASK_FWD
+#define INCLUDE_TASK_TASK_FWD
 #pragma once
 #include <chrono>
 #include <coroutine>
@@ -22,7 +22,7 @@ namespace fast_task {
     class task_condition_variable;
     class task_semaphore;
     class task_limiter;
-    class task_query;
+    class task_queue;
 
     struct task_promise_base;
     struct base_coro_handle;

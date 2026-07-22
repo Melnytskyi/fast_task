@@ -43,11 +43,11 @@ TEST_F(TaskMutexTest, TryLockFailsWhenHeld) {
     bool failed = false;
     run_task([&] {
         m.lock();
-        auto t2 = std::make_shared<fast_task::task>([&] {
+        auto t2 = fast_task::task::create([&] {
             failed = !m.try_lock();
         });
         fast_task::scheduler::start(t2);
-        t2->await_task();
+        t2.await_task();
         m.unlock();
     });
     EXPECT_TRUE(failed);
@@ -67,11 +67,11 @@ TEST_F(TaskMutexTest, Contention) {
     };
 
     run_task([&] {
-        auto t1 = std::make_shared<fast_task::task>([&] { worker(); });
-        auto t2 = std::make_shared<fast_task::task>([&] { worker(); });
+        auto t1 = fast_task::task::create([&] { worker(); });
+        auto t2 = fast_task::task::create([&] { worker(); });
         fast_task::scheduler::start(t1);
         fast_task::scheduler::start(t2);
-        std::vector<std::shared_ptr<fast_task::task>> tasks2{t1, t2};
+        std::vector<fast_task::task> tasks2{t1, t2};
         fast_task::task::await_multiple(tasks2, true);
     });
 
@@ -85,12 +85,12 @@ TEST_F(TaskMutexTest, TryLockForTimeout) {
     run_task([&] {
         m.lock();
 
-        auto t2 = std::make_shared<fast_task::task>([&] {
+        auto t2 = fast_task::task::create([&] {
             timed_out = !m.try_lock_for(std::chrono::milliseconds(50)); // 50 ms
         });
         fast_task::scheduler::start(t2);
         fast_task::this_task::sleep_for(std::chrono::milliseconds(100));
-        t2->await_task();
+        t2.await_task();
         m.unlock();
     });
 
@@ -106,7 +106,7 @@ TEST_F(TaskMutexTest, AsyncLock) {
 
         // stackful task blocks on m.lock() until outer releases it
         std::atomic<bool> t2_started{false};
-        auto t2 = std::make_shared<fast_task::task>([&] {
+        auto t2 = fast_task::task::create([&] {
             t2_started = true;
             m.lock();
             order = 2;
@@ -121,7 +121,7 @@ TEST_F(TaskMutexTest, AsyncLock) {
         order = 1;
         m.unlock(); // wakes t2
 
-        t2->await_task();
+        t2.await_task();
     });
 
     EXPECT_EQ(order.load(), 2);

@@ -20,14 +20,14 @@ TEST_F(DeadlineTimerTest, CancelBeforeTimeout) {
     fast_task::deadline_timer::status received_status{};
 
     run_task([&] {
-        auto waiter = std::make_shared<fast_task::task>([&] {
+        auto waiter = fast_task::task::create([&] {
             received_status = timer.wait();
         });
         fast_task::scheduler::start(waiter);
         fast_task::this_task::sleep_for(std::chrono::milliseconds(20));
         size_t cancelled = timer.cancel();
         EXPECT_GT(cancelled, 0u);
-        waiter->await_task();
+        waiter.await_task();
     });
 
     EXPECT_EQ(received_status, fast_task::deadline_timer::status::canceled);
@@ -76,10 +76,10 @@ TEST_F(DeadlineTimerTest, AsyncWaitTask) {
     std::atomic<bool> ran{false};
 
     run_task([&] {
-        auto t = std::make_shared<fast_task::task>([&] { ran = true; });
+        auto t = fast_task::task::create([&] { ran = true; });
         timer.async_wait(t);
         fast_task::scheduler::start(t);
-        t->await_task();
+        t.await_task();
     });
 
     EXPECT_TRUE(ran.load());

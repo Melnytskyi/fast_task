@@ -40,27 +40,41 @@ TEST_F(StackfullBasicTest, GetIdNonZeroInsideTask) {
 TEST_F(StackfullBasicTest, TaskRunHelper) {
     std::atomic<bool> ran{false};
     auto t = fast_task::task::run([&] { ran = true; });
-    t->await_task();
+    t.await_task();
     EXPECT_TRUE(ran.load());
 }
 
 TEST_F(StackfullBasicTest, IsEndedAfterAwait) {
-    auto t = std::make_shared<fast_task::task>([] {});
-    EXPECT_FALSE(t->is_ended());
+    auto t = fast_task::task::create([] {});
+    EXPECT_FALSE(t.is_ended());
     fast_task::scheduler::start(t);
-    t->await_task();
-    EXPECT_TRUE(t->is_ended());
+    t.await_task();
+    EXPECT_TRUE(t.is_ended());
 }
 
 TEST_F(StackfullBasicTest, NestedTaskAwaitedFromParent) {
     std::atomic<int> order{0};
     run_task([&] {
-        auto child = std::make_shared<fast_task::task>([&] {
+        auto child = fast_task::task::create([&] {
             fast_task::this_task::sleep_for(std::chrono::milliseconds(10));
             ++order;
         });
         fast_task::scheduler::start(child);
-        child->await_task();
+        child.await_task();
+        ++order;
+    });
+    EXPECT_EQ(order.load(), 2);
+}
+
+TEST_F(StackfullBasicTest, Yield) {
+    std::atomic<int> order{0};
+    run_task([&] {
+        auto child = fast_task::task::create([&] {
+            fast_task::this_task::yield();
+            ++order;
+        });
+        fast_task::scheduler::start(child);
+        child.await_task();
         ++order;
     });
     EXPECT_EQ(order.load(), 2);

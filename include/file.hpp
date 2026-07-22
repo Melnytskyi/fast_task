@@ -95,11 +95,11 @@ namespace fast_task::file {
 
     template <class T>
     class io_operation {
-        std::shared_ptr<task> slot_;
+        task slot_;
 
         using try_get_t = std::conditional_t<std::is_same_v<T, void>, bool, std::optional<T>>;
     public:
-        explicit io_operation(std::shared_ptr<task> slot_) : slot_(slot_) {}
+        explicit io_operation(task slot_) : slot_(slot_) {}
 
         io_operation(const io_operation&) = delete;
         io_operation& operator=(const io_operation&) = delete;
@@ -112,25 +112,32 @@ namespace fast_task::file {
 
         try_get_t try_get();
         T get();
-        bool enter_wait(const std::shared_ptr<task>& t);
-        bool enter_wait_until(const std::shared_ptr<task>& t, std::chrono::high_resolution_clock::time_point tp);
+        bool enter_wait(const task& t, enter_state& state);
+        bool enter_wait_until(const task& t, enter_state& state, std::chrono::high_resolution_clock::time_point tp);
 
-        bool enter_cancel(const std::shared_ptr<task>& t);
+        bool enter_cancel(const task& t, enter_state& state);
     };
 
     template <> bool io_operation<std::vector<uint8_t>>::is_done() const noexcept;
     template <> std::optional<io_errors> io_operation<std::vector<uint8_t>>::get_error();
     template <> std::optional<std::vector<uint8_t>> io_operation<std::vector<uint8_t>>::try_get();
     template <> std::vector<uint8_t> io_operation<std::vector<uint8_t>>::get();
-    template <> bool io_operation<std::vector<uint8_t>>::enter_wait(const std::shared_ptr<task>& t);
-    template <> bool io_operation<std::vector<uint8_t>>::enter_wait_until(const std::shared_ptr<task>& t, std::chrono::high_resolution_clock::time_point tp);
+    template <>
+    bool io_operation<std::vector<uint8_t>>::enter_wait(const task& t, enter_state& state);
+    template <>
+    bool io_operation<std::vector<uint8_t>>::enter_wait_until(const task& t, enter_state& state, std::chrono::high_resolution_clock::time_point tp);
+    template <>
+    bool io_operation<void>::enter_cancel(const task& t, enter_state& state);
     template <> bool io_operation<void>::is_done() const noexcept;
     template <> std::optional<io_errors> io_operation<void>::get_error();
     template <> bool io_operation<void>::try_get();
     template <> void io_operation<void>::get();
-    template <> bool io_operation<void>::enter_wait(const std::shared_ptr<task>& t);
-    template <> bool io_operation<void>::enter_wait_until(const std::shared_ptr<task>& t, std::chrono::high_resolution_clock::time_point tp);
-    template <> bool io_operation<void>::enter_cancel(const std::shared_ptr<task>& t);
+    template <>
+    bool io_operation<void>::enter_wait(const task& t, enter_state& state);
+    template <>
+    bool io_operation<void>::enter_wait_until(const task& t, enter_state& state, std::chrono::high_resolution_clock::time_point tp);
+    template <>
+    bool io_operation<void>::enter_cancel(const task& t, enter_state& state);
 
     class FT_API file_handle {
         class file_manager* handle;

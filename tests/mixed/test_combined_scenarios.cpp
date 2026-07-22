@@ -10,17 +10,17 @@
 
 class CombinedScenariosTest : public SchedulerFixture {};
 
-// ---- task_query grouping stackful + stackless tasks ----
+// ---- task_queue grouping stackful + stackless tasks ----
 
 TEST_F(CombinedScenariosTest, TaskQueryMixedTasksAndCoroutines) {
-    fast_task::task_query query(3);
+    fast_task::task_queue queue(3);
     std::atomic<int> count{0};
 
     // Stackful tasks
-    auto t1 = std::make_shared<fast_task::task>([&] { ++count; });
-    auto t2 = std::make_shared<fast_task::task>([&] { ++count; });
-    query.add(t1);
-    query.add(t2);
+    auto t1 = fast_task::task::create([&] { ++count; });
+    auto t2 = fast_task::task::create([&] { ++count; });
+    queue.add(t1);
+    queue.add(t2);
 
     // Stackless coroutine
     auto make_coro = [&]() -> fast_task::task_coro<void> {
@@ -28,12 +28,12 @@ TEST_F(CombinedScenariosTest, TaskQueryMixedTasksAndCoroutines) {
         co_return;
     };
     auto c = make_coro();
-    query.add(c.get_task());
-    query.enable();
-    query.wait();
+    queue.add(c.get_task());
+    queue.enable();
+    queue.wait();
 
-    t1->await_task();
-    t2->await_task();
+    t1.await_task();
+    t2.await_task();
     c->await_task();
 
     EXPECT_EQ(count.load(), 3);
@@ -47,7 +47,7 @@ TEST_F(CombinedScenariosTest, DeadlineTimerCancelsBlockedTask) {
     std::atomic<bool> cancelled{false};
 
     auto deadline = std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(50);
-    auto t = std::make_shared<fast_task::task>(
+    auto t = fast_task::task::create(
         [&] {
             try {
                 fast_task::unique_lock<fast_task::task_mutex> lock(mtx);
@@ -62,7 +62,7 @@ TEST_F(CombinedScenariosTest, DeadlineTimerCancelsBlockedTask) {
 
     fast_task::unique_lock<fast_task::task_mutex> native_lock(mtx);
     fast_task::scheduler::start(t);
-    t->await_task();
+    t.await_task();
 
     EXPECT_TRUE(cancelled.load());
 }

@@ -43,11 +43,11 @@ public:
 template <class F>
 void run_task(F&& fn) {
     std::exception_ptr ex;
-    auto t = std::make_shared<fast_task::task>(
+    auto t = fast_task::task::run(
         std::forward<F>(fn),
-        [&ex](const std::exception_ptr& e) { ex = e; });
-    fast_task::scheduler::start(t);
-    t->await_task();
+        [&ex](const std::exception_ptr& e) { ex = e; }
+    );
+    t.await_task();
     if (ex)
         std::rethrow_exception(ex);
 }

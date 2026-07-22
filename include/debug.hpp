@@ -8,6 +8,7 @@
 #define FAST_TASK_INCLUDE_DEBUG
 
 #include "allocator.hpp"
+#include "internal/task_object.hpp"
 #include "shared.hpp"
 #include "task.hpp"
 #include <cstdint>
@@ -17,6 +18,7 @@
 namespace fast_task::debug {
     struct FT_API program_state_dump;
     struct FT_API raw_stack_trace;
+
     /**
      * @brief Captures a raw snapshot of the entire fast_task state.
      *
@@ -38,6 +40,19 @@ namespace fast_task::debug {
 
 
     /**
+     * @brief Callback to iterate the task objects.
+     *
+     * This function is like dump_program_state and save_program_state_dump initiates the STW,
+     * and iterates all alive alive task objects, but the only difference is the function still works,
+     * even if the library compiled with disabled debug tracking, because the function iterates the areas directly
+     * from task object allocator.
+     *
+     * @throw invalid_native_context 
+     * @note The function could be called only from native thread
+     */
+    void FT_API iterate_task_objects(void (*callback)(const task_object&, void* data), void* data);
+
+    /**
      * @brief Captures the tasks raw stack trace
      *
      * This function initiates a short "Stop-the-World" pause to ensure safe access to
@@ -49,7 +64,7 @@ namespace fast_task::debug {
      * 
      * @return A tasks current stack trace if available
      */
-    std::optional<raw_stack_trace> FT_API request_task_stack_trace(const std::shared_ptr<task>&);
+    std::optional<raw_stack_trace> FT_API request_task_stack_trace(const task&);
 
     /**
      * @brief Gets the tasks initialization raw stack trace
@@ -62,7 +77,7 @@ namespace fast_task::debug {
      * 
      * @return A task initialization stack trace if available
      */
-    std::optional<raw_stack_trace> FT_API request_task_init_stack_trace(const std::shared_ptr<task>&);
+    std::optional<raw_stack_trace> FT_API request_task_init_stack_trace(const task&);
     void FT_API enable_init_stack_trace(bool enable = true);
     bool FT_API is_debug_enabled();
 
@@ -197,9 +212,37 @@ namespace fast_task::debug {
         array<entry> entries;
     };
 
+    struct FT_API raw_tls_info {
+        //RESERVED
+        uint16_t tls_capacity;
+    };
+
     struct FT_API raw_task_info {
         uintptr_t task_id;
-        uintptr_t internal_condition_id;
+        enum class status_e : uint8_t {
+            created,
+            scheduled,
+            running,
+            suspending,
+            suspended,
+            ended,
+        };
+        status_e status;
+        bool is_restartable : 1;
+        bool is_on_scheduler : 1;
+        bool time_end : 1;
+        bool awaked : 1;
+        bool auto_bind : 1;
+        bool is_sbo : 1;
+        bool spin_lock_locked : 1;
+        bool cancellation_requested : 1;
+        bool invalid_switch_caught : 1;
+        bool completed : 1;
+        bool stored_exception : 1;
+        uint32_t counter;
+        array<awake_item> waiting_tasks_ids;
+        raw_tls_info* tls_info; //could be nullptr
+        int64_t timeout_timestamp;
 
         raw_stack_trace call_stack;
         size_t counter_interrupt;
@@ -207,20 +250,15 @@ namespace fast_task::debug {
         task_priority priority;
         uint16_t awake_check; //if check does not match with check from awake_item the awake is invalid and would be ignored by scheduler. This is intended behavior.
         uint16_t bind_to_worker_id;
-        bool time_end_flag : 1;
-        bool started : 1;
-        bool awaked : 1;
-        bool end_of_life : 1;
-        bool make_cancel : 1;
-        bool auto_bind_worker : 1;
-        bool invalid_switch_caught : 1;
-        bool completed : 1;
-
-        int64_t timeout_timestamp;
-        raw_stack_trace* init_call_stack = nullptr;
 
         uintptr_t created_by_id;
         bool created_by_is_native; //defines meanin of the created_by_id field, of false the id is the tasks id
+
+        uint64_t current_available_quantum_ns;
+        size_t interrupt_data;
+        to_start_override* on_start_override;
+        const task_vtable* vtable;
+        raw_stack_trace* init_call_stack = nullptr;
 
         raw_task_info();
         ~raw_task_info();
@@ -309,8 +347,8 @@ namespace fast_task::debug {
         ~raw_limiter_info();
     };
 
-    struct FT_API raw_query_info {
-        uintptr_t query_id;
+    struct FT_API raw_queue_info {
+        uintptr_t queue_id;
         uintptr_t internal_condition_id;
         array<uintptr_t> waiting_tasks_ids;
         size_t current_in_run;
@@ -321,8 +359,8 @@ namespace fast_task::debug {
         uintptr_t created_by_id;
         bool created_by_is_native; //defines meanin of the created_by_id field, of false the id is the tasks id
 
-        raw_query_info();
-        ~raw_query_info();
+        raw_queue_info();
+        ~raw_queue_info();
     };
 
     struct FT_API raw_deadline_timer_info {
@@ -351,8 +389,14 @@ namespace fast_task::debug {
         array<raw_condition_info> condition_variables;
         array<raw_semaphore_info> semaphores;
         array<raw_limiter_info> limiters;
-        array<raw_query_info> queries;
+        array<raw_queue_info> queries;
         array<raw_deadline_timer_info> deadlines;
     };
 }
+
+/** 
+ * @brief helpers for debuggers with functionality to call functions for debug state, obviously is not safe for use in programs
+ */
+std::vector<fast_task::task_object*> collect_task_objects(); //available in all settings
+
 #endif /* FAST_TASK_INCLUDE_DEBUG */

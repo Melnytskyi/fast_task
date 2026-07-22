@@ -20,7 +20,7 @@ TEST_F(StackfullGuardTest, ExceptionCallback_ReceivesCorrectException) {
     std::atomic<bool> called{false};
     std::string message;
 
-    auto t = std::make_shared<fast_task::task>(
+    auto t = fast_task::task::create(
         [] { throw std::runtime_error("guard_test"); },
         [&](const std::exception_ptr& ep) {
             called.store(true);
@@ -32,7 +32,7 @@ TEST_F(StackfullGuardTest, ExceptionCallback_ReceivesCorrectException) {
         }
     );
     fast_task::scheduler::start(t);
-    t->await_task();
+    t.await_task();
 
     EXPECT_TRUE(called.load());
     EXPECT_EQ(message, "guard_test");
@@ -49,7 +49,7 @@ TEST_F(StackfullGuardTest, ExceptionCallback_RaiiDestructorCalledOnException) {
     std::atomic<bool> dtor_called{false};
     std::atomic<bool> handler_called{false};
 
-    auto t = std::make_shared<fast_task::task>(
+    auto t = fast_task::task::create(
         [&] {
             DtorGuard guard{dtor_called};
             throw std::runtime_error("raii_test");
@@ -59,7 +59,7 @@ TEST_F(StackfullGuardTest, ExceptionCallback_RaiiDestructorCalledOnException) {
         }
     );
     fast_task::scheduler::start(t);
-    t->await_task();
+    t.await_task();
 
     EXPECT_TRUE(handler_called.load()) << "Exception handler must be called";
     EXPECT_TRUE(dtor_called.load()) << "RAII destructor must run before handler";

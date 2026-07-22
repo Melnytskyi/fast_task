@@ -9,11 +9,12 @@
 #include "task.hpp"
 #include <functional>
 #include <list>
+#include <variant>
 #include <vector>
 
 namespace fast_task {
     namespace scheduler {
-        enum class executor_policy {
+        enum class preemption_policy {
             allows_preempt = 0,   //if fast_task built with preemptive scheduling disabled it would behave like cooperative_only
             cooperative_only = 1, //forces the scheduler to disable preemption for this executor
 
@@ -21,42 +22,26 @@ namespace fast_task {
             default_policy = allows_preempt,
         };
 
-        namespace config {
-            inline constexpr long long background_basic_quantum_ns = 15 * 1000000;
-            inline constexpr long long low_basic_quantum_ns = 30 * 1000000;
-            inline constexpr long long lower_basic_quantum_ns = 40 * 1000000;
-            inline constexpr long long normal_basic_quantum_ns = 80 * 1000000;
-            inline constexpr long long higher_basic_quantum_ns = 90 * 1000000;
-            inline constexpr long long high_basic_quantum_ns = 120 * 1000000;
-
-            inline constexpr long long background_max_quantum_ns = 30 * 1000000;
-            inline constexpr long long low_max_quantum_ns = 60 * 1000000;
-            inline constexpr long long lower_max_quantum_ns = 80 * 1000000;
-            inline constexpr long long normal_max_quantum_ns = 160 * 1000000;
-            inline constexpr long long higher_max_quantum_ns = 180 * 1000000;
-            inline constexpr long long high_max_quantum_ns = 240 * 1000000;
-        };
-
-        void FT_API schedule_until(std::shared_ptr<task>&& task, std::chrono::high_resolution_clock::time_point time_point);
-        void FT_API schedule_until(const std::shared_ptr<task>& task, std::chrono::high_resolution_clock::time_point time_point);
+        void FT_API schedule_until(task&& task, std::chrono::high_resolution_clock::time_point time_point);
+        void FT_API schedule_until(const task& task, std::chrono::high_resolution_clock::time_point time_point);
 
         template <class Dur_resolution, class Dur_type>
-        void schedule(std::shared_ptr<task>&& task, std::chrono::duration<Dur_resolution, Dur_type> duration) {
+        void schedule(task&& task, std::chrono::duration<Dur_resolution, Dur_type> duration) {
             schedule_until(std::move(task), std::chrono::high_resolution_clock::now() + duration);
         }
 
         template <class Dur_resolution, class Dur_type>
-        void schedule(const std::shared_ptr<task>& task, std::chrono::duration<Dur_resolution, Dur_type> duration) {
+        void schedule(const task& task, std::chrono::duration<Dur_resolution, Dur_type> duration) {
             schedule_until(task, std::chrono::high_resolution_clock::now() + duration);
         }
 
-        void FT_API start(std::shared_ptr<task>&& lgr_task);
-        void FT_API start(std::list<std::shared_ptr<task>>& lgr_task);
-        void FT_API start(std::vector<std::shared_ptr<task>>& lgr_task);
-        void FT_API start(const std::shared_ptr<task>& lgr_task);
+        void FT_API start(task&& lgr_task);
+        void FT_API start(std::list<task>& lgr_task);
+        void FT_API start(std::vector<task>& lgr_task);
+        void FT_API start(const task& lgr_task);
 
-        uint16_t FT_API create_bind_only_executor(uint16_t fixed_count, bool allow_implicit_start, executor_policy policy = executor_policy::default_policy);
-        void FT_API assign_bind_only_executor(uint16_t id, uint16_t fixed_count, bool allow_implicit_start, executor_policy policy = executor_policy::default_policy);
+        uint16_t FT_API create_bind_only_executor(uint16_t fixed_count, bool allow_implicit_start, preemption_policy policy = preemption_policy::default_policy);
+        void FT_API assign_bind_only_executor(uint16_t id, uint16_t fixed_count, bool allow_implicit_start, preemption_policy policy = preemption_policy::default_policy);
         void FT_API close_bind_only_executor(uint16_t id, bool abort_tasks = false);
 
         void FT_API create_executor(size_t count = 1);
@@ -70,7 +55,7 @@ namespace fast_task {
         void FT_API explicit_start_timer();
         void FT_API shut_down();
 
-        const std::shared_ptr<task>& FT_API current_context_task();
+        const task& FT_API current_context_task();
 
 
         /**
@@ -85,9 +70,11 @@ namespace fast_task {
          */
         void FT_API request_stw(const std::function<void()>& func);
 
-        //DEBUG ONLY, not recommended use in production
+        //clean ups the unused memory
         void FT_API clean_up();
-        //DEBUG ONLY, not recommended use in production
+        void FT_API local_clean_up();
+
+        bool FT_API preemption_enabled();
     }
 }
 

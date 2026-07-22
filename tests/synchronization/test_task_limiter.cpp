@@ -40,11 +40,11 @@ TEST_F(TaskLimiterTest, TryLockFailsAtThreshold) {
     bool failed = false;
     run_task([&] {
         lim.lock();
-        auto t2 = std::make_shared<fast_task::task>([&] {
+        auto t2 = fast_task::task::create([&] {
             failed = !lim.try_lock();
         });
         fast_task::scheduler::start(t2);
-        t2->await_task();
+        t2.await_task();
         lim.unlock();
     });
     EXPECT_TRUE(failed);
@@ -56,7 +56,7 @@ TEST_F(TaskLimiterTest, WaiterUnblockedOnUnlock) {
     std::atomic<bool> waiter_done{false};
     std::atomic<bool> holder_locked{false};
 
-    auto holder = std::make_shared<fast_task::task>([&] {
+    auto holder = fast_task::task::create([&] {
         lim.lock();
         holder_locked = true;
         fast_task::this_task::sleep_for(std::chrono::milliseconds(20));
@@ -67,14 +67,14 @@ TEST_F(TaskLimiterTest, WaiterUnblockedOnUnlock) {
     while (!holder_locked.load())
         fast_task::this_thread::yield();
 
-    auto waiter = std::make_shared<fast_task::task>([&] {
+    auto waiter = fast_task::task::create([&] {
         lim.lock();
         waiter_done = true;
         lim.unlock();
     });
     fast_task::scheduler::start(waiter);
 
-    std::vector<std::shared_ptr<fast_task::task>> tasks{holder, waiter};
+    std::vector<fast_task::task> tasks{holder, waiter};
     fast_task::task::await_multiple(tasks, true);
 
     EXPECT_TRUE(waiter_done.load());
@@ -88,7 +88,7 @@ TEST_F(TaskLimiterTest, MultipleSlots) {
 
     // Each task holds exactly one slot — one lock per context is allowed
     auto make_holder = [&] {
-        return std::make_shared<fast_task::task>([&] {
+        return fast_task::task::create([&] {
             lim.lock();
             locked_count.fetch_add(1);
             while (!release.load())
@@ -118,8 +118,8 @@ TEST_F(TaskLimiterTest, MultipleSlots) {
     EXPECT_TRUE(fourth_failed);
 
     release = true;
-    t1->await_task();
-    t2->await_task();
-    t3->await_task();
+    t1.await_task();
+    t2.await_task();
+    t3.await_task();
     EXPECT_FALSE(lim.is_locked());
 }

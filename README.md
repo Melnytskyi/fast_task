@@ -13,7 +13,7 @@ Built on a lock-free work-stealing scheduler, Fast Task allows developers to sea
 
 - **Universal Synchronization (Mix & Match):** Primitives like `task_mutex`, `task_rw_mutex`, and `task_condition_variable` are designed to bridge execution contexts. You can safely mix stackful tasks, stackless coroutines, and OS-level native threads—all waiting on the exact same synchronization primitive without blocking the underlying scheduler worker threads.
 - **C++20 Stackless Coroutines:** Full support for modern `co_await` syntax to create ultra-lightweight, state-machine-based tasks that consume a fraction of the memory of standard threads.
-- **Lock-Free Work-Stealing Scheduler:** An M:N scheduler architecture using thread-local deques to maximize CPU cache locality and eliminate lock contention during task dispatching.
+- **Work-Stealing Scheduler:** An M:N scheduler architecture using thread-local deques to maximize CPU cache locality and eliminate lock contention during task dispatching.
 - **Asynchronous I/O Multiplexing:** Built-in non-blocking file and network I/O operations (leveraging `io_uring` on Linux and IOCP on Windows) for highly responsive server applications.
 - **Preemptive & Cooperative Scheduling:** Operates cooperatively by default for maximum throughput, but includes an optional time-sliced preemptive scheduler to prevent long-running tasks from monopolizing worker threads.
 - **Advanced Task Management:** Support for graceful task cancellation, timeout handling, and bound executors for strict thread affinity.

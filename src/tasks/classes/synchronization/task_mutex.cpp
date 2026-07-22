@@ -8,45 +8,83 @@
 #include <tasks/_internal.hpp>
 
 namespace fast_task {
+    void task_mutex::push_back(private_values& values, resume_task* node) {
+        node->next = nullptr;
+        node->prev = values.end;
+        if (values.end) {
+            values.end->next = node;
+        } else
+            values.begin = node;
+
+        values.end = node;
+    }
+
+    void task_mutex::erase(private_values& values, resume_task* node) {
+        if (node->prev) {
+            node->prev->next = node->next;
+        } else
+            values.begin = node->next;
+
+        if (node->next) {
+            node->next->prev = node->prev;
+        } else
+            values.end = node->prev;
+
+        node->next = nullptr;
+        node->prev = nullptr;
+    }
+
     task_mutex::task_mutex() {
         FT_DEBUG_ONLY(register_object(this));
     }
 
     task_mutex::~task_mutex() {
         FT_DEBUG_ONLY(unregister_object(this));
-        if (!values.resume_task.empty()) {
+        if (values.current_task) {
             assert(false && "Tried to destroy locked mutex");
             std::terminate();
         }
     }
 
     void task_mutex::lock() {
-        if (get_loc().is_task_thread) {
-            get_data(get_loc().curr_task).awaked = false;
-            get_data(get_loc().curr_task).time_end_flag = false;
+        interrupt_unsafe_region region;
+        resume_task node;
+
+        auto* loc = &get_loc();
+
+        if (loc->is_task_thread) {
+            get_data(loc->curr_task).set_awaked(false);
+            get_data(loc->curr_task).set_time_end(false);
+            node.task = loc->curr_task;
 
             fast_task::lock_guard lg(values.no_race);
-            if (values.current_task == &*get_loc().curr_task)
+            if (values.current_task == loc->curr_task.get_id())
                 throw std::logic_error("Tried lock mutex twice");
             while (values.current_task) {
-                values.resume_task.emplace_back(get_loc().curr_task, get_data(get_loc().curr_task).awake_check);
+                node.awake_check = get_data(loc->curr_task).awake_check;
+                push_back(values, &node);
                 swapCtxRelock(values.no_race);
+                loc = &get_loc();
             }
-            values.current_task = &*get_loc().curr_task;
+            values.current_task = loc->curr_task.get_id();
         } else {
+            fast_task::condition_variable_any cd;
+            bool has_res = false;
+            node.task = nullptr;
+            node.awake_check = 0;
+            node.native_cv = &cd;
+            node.native_check = &has_res;
             fast_task::unique_lock ul(values.no_race);
-            std::shared_ptr<task> task;
 
-            if (values.current_task == reinterpret_cast<fast_task::task*>((size_t)_thread_id() | native_thread_flag))
+            if (values.current_task == ((size_t)_thread_id() | native_thread_flag))
                 throw std::logic_error("Tried lock mutex twice");
             while (values.current_task) {
-                fast_task::condition_variable_any cd;
-                bool has_res = false;
-                values.resume_task.emplace_back(nullptr, (uint16_t)0, &cd, &has_res);
+                has_res = false;
+                push_back(values, &node);
                 while (!has_res) //-V654
                     cd.wait(ul);
             }
-            values.current_task = reinterpret_cast<fast_task::task*>((size_t)_thread_id() | native_thread_flag);
+            values.current_task = (size_t)_thread_id() | native_thread_flag;
         }
     }
 
@@ -54,97 +92,124 @@ namespace fast_task {
         if (!values.no_race.try_lock())
             return false;
         fast_task::unique_lock ul(values.no_race, fast_task::adopt_lock);
+        auto& loc = get_loc();
 
         if (values.current_task)
             return false;
-        else if (get_loc().is_task_thread || get_loc().context_in_swap) {
-            if (values.current_task == &*get_loc().curr_task)
+        else if (loc.is_task_thread || loc.context_in_swap) {
+            if (values.current_task == loc.curr_task.get_id())
                 return false;
-            values.current_task = &*get_loc().curr_task;
+            values.current_task = loc.curr_task.get_id();
         } else {
-            if (values.current_task == reinterpret_cast<task*>((size_t)_thread_id() | native_thread_flag))
+            if (values.current_task == ((size_t)_thread_id() | native_thread_flag))
                 return false;
-            values.current_task = reinterpret_cast<task*>((size_t)_thread_id() | native_thread_flag);
+            values.current_task = (size_t)_thread_id() | native_thread_flag;
         }
         return true;
     }
 
     bool task_mutex::try_lock_until(std::chrono::high_resolution_clock::time_point time_point) {
+        resume_task node;
         fast_task::unique_lock ul(values.no_race);
 
         if (get_loc().is_task_thread && !get_loc().context_in_swap) {
-            if (values.current_task == &*get_loc().curr_task)
+            if (values.current_task == get_loc().curr_task.get_id())
                 return false;
+            node.task = get_loc().curr_task;
             while (values.current_task) {
-                fast_task::lock_guard guard(glob.task_timer_safety);
-                makeTimeWait_unsafe(time_point);
-                values.resume_task.emplace_back(get_loc().curr_task, get_data(get_loc().curr_task).awake_check);
-                swapCtxRelock(glob.task_timer_safety, values.no_race);
-                auto awaked = get_data(get_loc().curr_task).awaked;
+                get_loc().pending_timer = time_point;
+                node.awake_check = get_data(get_loc().curr_task).awake_check;
+                push_back(values, &node);
+                swapCtxRelock(values.no_race);
+                auto awaked = get_data(get_loc().curr_task).get_awaked();
                 resetTimeWait();
                 if (!awaked) {
-                    auto it = std::find_if(values.resume_task.begin(), values.resume_task.end(), [](const auto& a) { return a.task == get_loc().curr_task; });
-                    if (it != values.resume_task.end())
-                        values.resume_task.erase(it);
+                    erase(values, &node);
                     return false;
                 }
             }
-            values.current_task = &*get_loc().curr_task;
+            values.current_task = get_loc().curr_task.get_id();
             return true;
         } else {
-            if (values.current_task == reinterpret_cast<task*>((size_t)_thread_id() | native_thread_flag))
+            if (values.current_task == ((size_t)_thread_id() | native_thread_flag))
                 return false;
-            bool has_res;
             fast_task::condition_variable_any cd;
+            bool has_res = false;
+            node.task = nullptr;
+            node.awake_check = 0;
+            node.native_cv = &cd;
+            node.native_check = &has_res;
             while (values.current_task) {
                 has_res = false;
-                auto& rs_task = values.resume_task.emplace_back(nullptr, (uint16_t)0, &cd, &has_res);
                 while (!has_res) { //-V654
                     if (cd.wait_until(ul, time_point) == cv_status::timeout) {
-                        rs_task.native_cv = nullptr;
+                        node.native_cv = nullptr;
                         return false;
                     }
                 }
             }
             if (!get_loc().context_in_swap)
-                values.current_task = reinterpret_cast<task*>((size_t)_thread_id() | native_thread_flag);
+                values.current_task = (size_t)_thread_id() | native_thread_flag;
             else
-                values.current_task = &*get_loc().curr_task;
+                values.current_task = get_loc().curr_task.get_id();
             return true;
         }
     }
 
     void task_mutex::unlock() {
-        fast_task::lock_guard lg0(values.no_race);
+        bool to_yield = false;
+        fast_task::unique_lock no_race_guard(values.no_race);
         if (get_loc().is_task_thread) {
-            if (values.current_task != &*get_loc().curr_task)
+            if (values.current_task != get_loc().curr_task.get_id())
                 throw std::logic_error("Tried unlock non owned mutex");
-        } else if (values.current_task != reinterpret_cast<task*>((size_t)_thread_id() | native_thread_flag))
+        } else if (values.current_task != ((size_t)_thread_id() | native_thread_flag))
             throw std::logic_error("Tried unlock non owned mutex");
 
-        values.current_task = nullptr;
-        while (values.resume_task.size()) {
-            auto [it, awake_check, native_cv, native_flag] = values.resume_task.front();
-            values.resume_task.pop_front();
-            if (it == nullptr) {
-                if (native_cv != nullptr) {
-                    *native_flag = true;
-                    native_cv->notify_all();
-                    return;
+        resume_task* head = values.begin;
+        resume_task* end = values.end;
+        values.begin = nullptr;
+        values.end = nullptr;
+        values.current_task = 0;
+        if (!head)
+            return;
+        resume_task* curr = head;
+        while (curr) {
+            resume_task* next = curr->next;
+            if (curr->task == nullptr) {
+                if (curr->native_cv != nullptr) {
+                    *curr->native_check = true;
+                    curr->native_cv->notify_all();
                 }
-                continue;
+            } else {
+                fast_task::lock_guard guard_loc(get_data(curr->task));
+                if (get_data(curr->task).awake_check == curr->awake_check) {
+                    if (!get_data(curr->task).get_time_end()) {
+                        bool on_scheduler = get_data(curr->task).get_is_on_scheduler();
+                        if (on_scheduler) {
+                            values.current_task = curr->task.get_id();
+                            if (next) {
+                                next->prev = nullptr;
+                                values.begin = next;
+                                values.end = next->next ? end : next;
+                            }
+                        }
+                        get_data(curr->task).set_awaked(true);
+                        transfer_task(task(curr->task));
+
+                        if (on_scheduler)
+                            break;
+                    }
+                }
             }
-            fast_task::lock_guard lg1(get_data(it).no_race);
-            if (get_data(it).awake_check != awake_check)
-                continue;
-            if (!get_data(it).time_end_flag) {
-                get_data(it).awaked = true;
-                if (get_data(it).is_on_scheduler)
-                    values.current_task = it.get();
-                transfer_task(std::move(it));
-                return;
-            }
+            curr = next;
         }
+        if (task::max_running_tasks && get_loc().is_task_thread)
+            if (can_be_scheduled_task_to_hot() && get_loc().curr_task && !get_data(get_loc().curr_task).is_ended())
+                to_yield = true;
+
+        no_race_guard.unlock();
+        if (to_yield)
+            this_task::yield();
     }
 
     bool task_mutex::is_locked() {
@@ -158,21 +223,21 @@ namespace fast_task {
     bool task_mutex::is_own() {
         fast_task::lock_guard lg0(values.no_race);
         if (get_loc().is_task_thread) {
-            if (values.current_task != &*get_loc().curr_task)
+            if (values.current_task != get_loc().curr_task.get_id())
                 return false;
-        } else if (values.current_task != reinterpret_cast<task*>((size_t)_thread_id() | native_thread_flag))
+        } else if (values.current_task != ((size_t)_thread_id() | native_thread_flag))
             return false;
         return true;
     }
 
-    void task_mutex::lifecycle_lock(std::shared_ptr<task>&& lock_task) {
+    void task_mutex::lifecycle_lock(task&& lock_task) {
         {
-            fast_task::lock_guard guard(get_data(lock_task).no_race);
-            if (get_data(lock_task).running || get_data(lock_task).end_of_life)
+            fast_task::lock_guard guard(get_data(lock_task));
+            if (get_data(lock_task).is_running() || get_data(lock_task).is_ended())
                 throw std::runtime_error("Task is running or completed and cannot be registered");
-            if (get_data(lock_task).started && (!get_data(lock_task).suspended && get_data(lock_task).is_on_scheduler))
+            if (get_data(lock_task).is_scheduled() && (!get_data(lock_task).is_suspended() && get_data(lock_task).get_is_on_scheduler()))
                 throw std::runtime_error("Task is already in the scheduler queue");
-            if (!get_data(lock_task).callbacks.on_start)
+            if (!get_data(lock_task).vtable || !get_data(lock_task).vtable->on_start)
                 throw std::logic_error("task_mutex::lifecycle_lock requires the on_start callback to be set");
         }
         task::run([lock_task, this]() {
@@ -181,24 +246,30 @@ namespace fast_task {
         });
     }
 
-    bool task_mutex::enter_wait(const std::shared_ptr<task>& task) {
+    bool task_mutex::enter_wait(const task& task, enter_state& state) {
+        auto node = state.template use<resume_task>();
+        node->task = task;
+        node->awake_check = get_data(task).awake_check;
         fast_task::lock_guard l(values.no_race);
-        if (values.current_task == nullptr) {
-            values.current_task = task.get();
+        if (values.current_task == 0) {
+            values.current_task = task.get_id();
             return true;
         } else {
-            values.resume_task.push_back({task, get_data(task).awake_check, nullptr, nullptr});
+            push_back(values, node);
             return false;
         }
     }
 
-    bool task_mutex::enter_wait_until(const std::shared_ptr<task>& task, std::chrono::high_resolution_clock::time_point time_point) {
+    bool task_mutex::enter_wait_until(const task& task, enter_state& state, std::chrono::high_resolution_clock::time_point time_point) {
+        auto node = state.template use<resume_task>();
+        node->task = task;
+        node->awake_check = get_data(task).awake_check;
         fast_task::lock_guard l(values.no_race);
-        if (values.current_task == nullptr) {
-            values.current_task = task.get();
+        if (values.current_task == 0) {
+            values.current_task = task.get_id();
             return true;
         } else {
-            values.resume_task.push_back({task, get_data(task).awake_check, nullptr, nullptr});
+            push_back(values, node);
             fast_task::makeTimeWait_extern(task, time_point);
             return false;
         }

@@ -39,6 +39,7 @@ namespace fast_task {
 
     [[nodiscard]] inline auto async_read_lock(task_rw_mutex& mut) {
         struct awaiter {
+            enter_state state;
             task_rw_mutex& mutex;
 
             bool await_ready() noexcept {
@@ -46,17 +47,18 @@ namespace fast_task {
             }
 
             bool await_suspend(base_coro_handle h) {
-                return !mutex.enter_read_wait(h.promise->task_object);
+                return !mutex.enter_read_wait(h.promise->task_object, state);
             }
 
             void await_resume() noexcept {}
         };
 
-        return awaiter{mut};
+        return awaiter{{}, mut};
     }
 
     [[nodiscard]] inline auto async_write_lock(task_rw_mutex& mut) {
         struct awaiter {
+            enter_state state;
             task_rw_mutex& mutex;
 
             bool await_ready() noexcept {
@@ -64,21 +66,22 @@ namespace fast_task {
             }
 
             bool await_suspend(base_coro_handle h) {
-                return !mutex.enter_write_wait(h.promise->task_object);
+                return !mutex.enter_write_wait(h.promise->task_object, state);
             }
 
             void await_resume() noexcept {}
         };
 
-        return awaiter{mut};
+        return awaiter{{}, mut};
     }
 
 
     [[nodiscard]] inline auto async_try_read_lock_until(task_rw_mutex& mut, std::chrono::high_resolution_clock::time_point time_point) {
         struct awaiter {
+            enter_state state;
             task_rw_mutex& mutex;
             std::chrono::high_resolution_clock::time_point time_point;
-            std::shared_ptr<fast_task::task> task_obj;
+            fast_task::task task_obj;
             bool successful = false;
 
             bool await_ready() noexcept {
@@ -91,18 +94,18 @@ namespace fast_task {
 
             bool await_suspend(base_coro_handle h) {
                 task_obj = h.promise->task_object;
-                return !mutex.enter_read_wait_until(h.promise->task_object, time_point);
+                return !mutex.enter_read_wait_until(h.promise->task_object, state, time_point);
             }
 
             bool await_resume() noexcept {
                 if (successful)
                     return true;
-                successful = !task_obj->has_wait_timed_out();
+                successful = !task_obj.has_wait_timed_out();
                 return successful;
             }
         };
 
-        return awaiter{mut, time_point};
+        return awaiter{{}, mut, time_point};
     }
 
     template <class Rep, class Period>
@@ -112,9 +115,10 @@ namespace fast_task {
 
     [[nodiscard]] inline auto async_try_write_lock_until(task_rw_mutex& mut, std::chrono::high_resolution_clock::time_point time_point) {
         struct awaiter {
+            enter_state state;
             task_rw_mutex& mutex;
             std::chrono::high_resolution_clock::time_point time_point;
-            std::shared_ptr<fast_task::task> task_obj;
+            fast_task::task task_obj;
             bool successful = false;
 
             bool await_ready() noexcept {
@@ -127,18 +131,18 @@ namespace fast_task {
 
             bool await_suspend(base_coro_handle h) {
                 task_obj = h.promise->task_object;
-                return !mutex.enter_write_wait_until(h.promise->task_object, time_point);
+                return !mutex.enter_write_wait_until(h.promise->task_object, state, time_point);
             }
 
             bool await_resume() noexcept {
                 if (successful)
                     return true;
-                successful = !task_obj->has_wait_timed_out();
+                successful = !task_obj.has_wait_timed_out();
                 return successful;
             }
         };
 
-        return awaiter{mut, time_point};
+        return awaiter{{}, mut, time_point};
     }
 
     template <class Rep, class Period>

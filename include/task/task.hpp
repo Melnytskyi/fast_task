@@ -7,12 +7,9 @@
 #ifndef INCLUDE_TASK_TASK
 #define INCLUDE_TASK_TASK
 
-#include "../exceptions.hpp"
-#include "condition_variable.hpp"
-#include "mutex_unify.hpp"
-#include <functional>
-#include <list>
-#include <vector>
+#include "../shared.hpp"
+#include "enter_state.hpp"
+#include <atomic>
 
 namespace fast_task {
     enum class task_priority {
@@ -25,6 +22,7 @@ namespace fast_task {
         semi_realtime,
     };
 
+    //TODO UPDATE this doc
     //The task class internally uses callbacks like on_start, on_exception, on_await and on_cancel
     //  the on_await and on_cancel executed on calling thread and could be used for example, to wrap the sockets in the task interface
     //  the on_start executed on its own stack like normal one and allows using all synchronization primitives
@@ -36,87 +34,24 @@ namespace fast_task {
     //      for c++20 coroutines use the functions from coroutines/*.hpp headers, if you want to implement own coroutines use these as an example of how to use the enter_* methods
     //      this flag allows to create stackless coroutines like in c++ or other language
     //  the task has is_sbo optimization to reduce the memory consumption on the simple tasks whose have only on_start and on_exception callbacks
-    class FT_API task : public std::enable_shared_from_this<task> {
-        void awaitEnd(fast_task::unique_lock<mutex_unify>& l);
-        bool awaitEnd(fast_task::unique_lock<mutex_unify>& l, std::chrono::high_resolution_clock::time_point);
-        struct FT_API_LOCAL execution_data;
 
-        struct FT_API_LOCAL data {
-            struct FT_API_LOCAL callbacks_data {
-                bool is_sbo : 1 = false;
+    struct alignas(64) FT_API_LOCAL task_object;
 
-                union {
-                    struct {
-                        void* data;
-                        void (*on_await)(void*);
-                        void (*on_cancel)(void*);
-                    } dat;
+    struct FT_API task_vtable {
+        void (*on_await)(void*) = nullptr;
+        void (*on_cancel)(void*) = nullptr;
+        void (*on_start)(void*);
+        void (*on_exception)(void*, const std::exception_ptr&) = nullptr;
+        void (*on_destruct)(void*) = nullptr;
+        bool heap_allocated = false;
+    };
 
-                    alignas(std::max_align_t) std::byte sbo_buffer[sizeof(void*) * 3];
-                } buf;
+    class FT_API task {
+        task_object* obj;
 
-                void (*on_start)(void*) = nullptr;
-                void (*on_exception)(void*, const std::exception_ptr&) = nullptr;
-                void (*on_destruct)(void*) = nullptr;
-                void (*on_move)(void*, void*) noexcept = nullptr;
-
-                void (*on_start_override)(callbacks_data&) = nullptr; //used internally, never deallocated
-                void* on_start_override_data = nullptr;               //used internally, never deallocated
-
-
-                callbacks_data();
-
-                callbacks_data(callbacks_data&& move) noexcept;
-                ~callbacks_data();
-
-                callbacks_data& operator=(callbacks_data&&) = delete;
-
-                void make_await() {
-                    if (!is_sbo)
-                        if (buf.dat.on_await)
-                            buf.dat.on_await(buf.dat.data);
-                }
-
-                void make_cancel() {
-                    if (!is_sbo)
-                        if (buf.dat.on_cancel)
-                            buf.dat.on_cancel(buf.dat.data);
-                }
-
-                void* get_data() {
-                    return is_sbo ? (void**)&buf.sbo_buffer : buf.dat.data;
-                }
-            } callbacks;
-
-            task_condition_variable result_notify;
-            mutable fast_task::spin_lock no_race;
-            mutex_unify relock_0;
-            mutex_unify relock_1;
-            mutex_unify relock_2;
-            std::chrono::high_resolution_clock::time_point::rep timeout = std::chrono::high_resolution_clock::time_point::min().time_since_epoch().count();
-            uint16_t awake_check = 0;
-            uint16_t bind_to_worker_id = (uint16_t)-1;
-            bool time_end_flag : 1 = false;
-            bool started : 1 = false;
-            bool running : 1 = false;
-            bool suspended : 1 = false;
-            bool end_of_life : 1 = false;
-            bool awaked : 1 = false;
-            bool make_cancel : 1 = false;
-            bool auto_bind_worker : 1 = false;
-            bool invalid_switch_caught : 1 = false;
-            bool completed : 1 = false;
-            bool is_on_scheduler : 1 = false;
-            bool is_restartable : 1 = false;
-            execution_data* exdata = nullptr;
-        } data_;
-
-        friend task::data& get_data(task* task);
-        friend task::data& get_data(std::shared_ptr<task>& task);
-        friend task::data& get_data(const std::shared_ptr<task>& task);
-        friend task::execution_data& get_execution_data(task* task);
-        friend task::execution_data& get_execution_data(std::shared_ptr<task>& task);
-        friend task::execution_data& get_execution_data(const std::shared_ptr<task>& task);
+        friend task_object& get_data(task* task);
+        friend task_object& get_data(const task& task);
+        friend struct mutex_unify_relock_access;
 
         template <typename Func, typename ExHandle = std::nullptr_t>
         struct task_state {
@@ -148,61 +83,48 @@ namespace fast_task {
             delete static_cast<State*>(ptr);
         }
 
+        void* init_inplace(task_vtable* vtable, bool is_restartable, bool is_on_scheduler);
+        void init_pointer(void* heap_state, task_vtable* vtable, bool is_restartable, bool is_on_scheduler);
+        void* user_data() const noexcept;
+        void end_of_life_notify() const;
+
+
     public:
         static size_t max_running_tasks;
         static bool enable_task_naming;
+        static constexpr size_t sbo_size = 64; // must match task_object::sbo_buffer size
 
-        task(void* data, void (*on_start)(void*), void (*on_await)(void*), void (*on_cancel)(void*), void (*on_destruct)(void*), bool is_restartable = false, bool is_on_scheduler = false);
+        task(void* data, task_vtable* vtable, bool is_restartable = false, bool is_on_scheduler = false);
 
-        template <typename Func, typename ExHandle = std::nullptr_t>
-        task(Func&& func, ExHandle&& ex_handle = nullptr, std::chrono::high_resolution_clock::time_point timeout = std::chrono::high_resolution_clock::time_point::min(), task_priority priority = task_priority::high, bool is_on_scheduler = false) {
-            if constexpr (std::is_same_v<Func, std::nullptr_t>) {
-                data_.callbacks.on_start = nullptr;
-                data_.callbacks.on_move = nullptr;
-                data_.callbacks.on_destruct = nullptr;
-                data_.callbacks.on_exception = nullptr;
-            } else {
-                using State = task_state<std::decay_t<Func>, std::decay_t<ExHandle>>;
-                constexpr bool use_sbo = sizeof(State) <= sizeof(data_.callbacks.buf.sbo_buffer) &&
-                                         alignof(State) <= alignof(std::max_align_t);
+        task() noexcept;
+        task(std::nullptr_t) noexcept;
+        task(task&& mov) noexcept;
+        task(const task& copy) noexcept;
+        ~task();
+        task& operator=(task&&) noexcept;
+        task& operator=(const task&) noexcept;
 
-                data_.callbacks.is_sbo = use_sbo;
-                data_.is_restartable = false;
-                data_.is_on_scheduler = is_on_scheduler;
-                data_.callbacks.on_move = [](void* dst, void* src) noexcept {
-                    State* state_src = static_cast<State*>(src);
-                    new (dst) State{std::move(state_src->func), std::move(state_src->ex_handle)};
-                    state_src->~State();
-                };
-
-                if constexpr (use_sbo) {
-                    new (data_.callbacks.buf.sbo_buffer) State{std::forward<Func>(func), std::forward<ExHandle>(ex_handle)};
-                    data_.callbacks.on_destruct = sbo_destruct_thunk<State>;
-                } else {
-                    State* ptr = new State{std::forward<Func>(func), std::forward<ExHandle>(ex_handle)};
-                    data_.callbacks.buf.dat.data = ptr;
-                    data_.callbacks.on_destruct = heap_destruct_thunk<State>;
-                }
-
-
-                data_.callbacks.on_start = start_thunk<State>;
-                if constexpr (!std::is_same_v<std::decay_t<ExHandle>, std::nullptr_t>) {
-                    data_.callbacks.on_exception = exception_thunk<State>;
-                }
-
-                this->data_.timeout = timeout.time_since_epoch().count();
-                set_priority(priority);
-            }
+        inline operator bool() const noexcept {
+            return obj;
         }
 
-        task(task&& mov) noexcept;
-        ~task();
-        task& operator=(task&&) = delete;
+        inline bool operator==(const task& tsk) const noexcept {
+            return obj == tsk.obj;
+        }
 
-        void set_auto_bind_worker(bool enable = true) noexcept;
-        void set_worker_id(uint16_t id) noexcept;
-        void set_priority(task_priority) noexcept;
-        void set_timeout(std::chrono::high_resolution_clock::time_point timeout) noexcept;
+        inline bool operator==(std::nullptr_t) const noexcept {
+            return obj == nullptr;
+        }
+
+        void reset() noexcept;
+        task_object* release() noexcept;
+        static task adopt(task_object* raw) noexcept;
+
+
+        void set_auto_bind_worker(bool enable = true) const noexcept;
+        void set_worker_id(uint16_t id) const noexcept;
+        void set_priority(task_priority) const noexcept;
+        void set_timeout(std::chrono::high_resolution_clock::time_point timeout) const noexcept;
         task_priority get_priority() const noexcept;
         size_t get_counter_interrupt() const noexcept;
         size_t get_counter_context_switch() const noexcept;
@@ -210,47 +132,94 @@ namespace fast_task {
         bool has_wait_timed_out() const noexcept; // for timed enter_wait_until, allows to check if the operation timed out. Also resets the flag(locks)
         bool is_cancellation_requested() const noexcept;
         bool is_ended() const noexcept;
-        void await_task();
-        bool await_task_until(std::chrono::high_resolution_clock::time_point);
-        void callback(const std::shared_ptr<task>& task);
-        void notify_cancel();
-        void await_notify_cancel();
-        void reset_awake(); //resets the time_end_flag and awaked flags
+        void await_task() const;
+        bool await_task_until(std::chrono::high_resolution_clock::time_point) const;
+        void callback(const task&) const;
+        void notify_cancel() const;
+        void await_notify_cancel() const;
+        void reset_awake() const; //resets the time_end_flag and awaked flags
+        void start() const;
+        size_t get_id() const noexcept;
 
         template <class FN>
-        void access_dummy(FN&& fn) {
-            fn(data_.callbacks.get_data());
+        void access_dummy(FN&& fn) const {
+            fn(user_data());
         };
 
         template <class FN>
-        void end_dummy(FN&& fn) {
-            fn(data_.callbacks.get_data());
-            fast_task::lock_guard l(data_.no_race);
-            data_.end_of_life = true;
-            data_.result_notify.notify_all();
+        void end_dummy(FN&& fn) const {
+            fn(user_data());
+            end_of_life_notify();
         };
 
-        bool enter_wait(const std::shared_ptr<task>&);
-        bool enter_wait_until(const std::shared_ptr<task>&, std::chrono::high_resolution_clock::time_point);
-        bool enter_cancel(const std::shared_ptr<task>&);
+        bool enter_wait(const task&, enter_state&) const;
+        bool enter_wait_until(const task&, enter_state&, std::chrono::high_resolution_clock::time_point) const;
+        bool enter_cancel(const task&, enter_state&) const;
 
-        static std::shared_ptr<task> run(std::function<void()>&& func);
-        static std::shared_ptr<task> create(std::function<void()>&& func);
+        template <typename Func, typename ExHandle = std::nullptr_t>
+        static task run(Func&& func, ExHandle&& ex_handle = nullptr, std::chrono::high_resolution_clock::time_point timeout = std::chrono::high_resolution_clock::time_point::min(), task_priority priority = task_priority::high, bool is_on_scheduler = false) {
+            auto r = create(std::forward<Func>(func), std::forward<ExHandle>(ex_handle), timeout, priority, is_on_scheduler);
+            r.start();
+            return r;
+        }
 
-        //deprecated
-        static void await_task(const std::shared_ptr<task>& lgr_task, bool make_start = true);
-        //deprecated
-        static void await_multiple(std::list<std::shared_ptr<task>>& tasks, bool pre_started = false, bool release = false);
-        //deprecated
-        static void await_multiple(std::vector<std::shared_ptr<task>>& tasks, bool pre_started = false, bool release = false);
-        //deprecated
-        static void await_multiple(std::shared_ptr<task>* tasks, size_t len, bool pre_started = false, bool release = false);
+        template <typename Func, typename ExHandle = std::nullptr_t>
+        static task create(Func&& func, ExHandle&& ex_handle = nullptr, std::chrono::high_resolution_clock::time_point timeout = std::chrono::high_resolution_clock::time_point::min(), task_priority priority = task_priority::high, bool is_on_scheduler = false) {
+            task res;
+            if constexpr (std::is_same_v<std::decay_t<Func>, std::nullptr_t>) {
+                static task_vtable empty_vtable{
+                    nullptr,
+                    nullptr,
+                    nullptr,
+                    nullptr,
+                    nullptr,
+                    false
+                };
+                res.init_pointer(nullptr, &empty_vtable, false, is_on_scheduler);
+            } else {
+                using State = task_state<std::decay_t<Func>, std::decay_t<ExHandle>>;
+                constexpr bool use_sbo = sizeof(State) <= sbo_size &&
+                                         alignof(State) <= alignof(std::max_align_t);
 
-        static std::shared_ptr<task> callback_dummy(void* dummy_data, void (*on_start)(void*), void (*on_await)(void*), void (*on_cancel)(void*), void (*on_destruct)(void*), bool is_restartable = false, bool is_on_scheduler = false);
-        static std::shared_ptr<task> callback_dummy(void* dummy_data, void (*on_await)(void*), void (*on_cancel)(void*), void (*on_destruct)(void*), bool is_restartable = false, bool is_on_scheduler = false);
+                static task_vtable vtable{
+                    nullptr,
+                    nullptr,
+                    start_thunk<State>,
+                    std::is_same_v<std::decay_t<ExHandle>, std::nullptr_t> ? nullptr : exception_thunk<State>,
+                    use_sbo ? sbo_destruct_thunk<State> : heap_destruct_thunk<State>,
+                    false
+                };
+
+                if constexpr (use_sbo) {
+                    void* storage = res.init_inplace(&vtable, false, is_on_scheduler);
+                    new (storage) State{std::forward<Func>(func), std::forward<ExHandle>(ex_handle)};
+                } else {
+                    State* ptr = new State{std::forward<Func>(func), std::forward<ExHandle>(ex_handle)};
+                    res.init_pointer(ptr, &vtable, false, is_on_scheduler);
+                }
+
+                res.set_timeout(timeout);
+                res.set_priority(priority);
+            }
+            return res;
+        }
+
+        static void await_task(const task& t, bool make_start = true);
+
+        template <class Container>
+        static void await_multiple(const Container& cont, bool make_start = true) {
+            if (make_start)
+                for (auto& it : cont)
+                    it.start();
+            for (auto& it : cont)
+                it.await_task();
+        }
+
+        static task callback_dummy(void* dummy_data, void (*on_start)(void*), void (*on_await)(void*), void (*on_cancel)(void*), void (*on_destruct)(void*), bool is_restartable = false, bool is_on_scheduler = false);
+        static task callback_dummy(void* dummy_data, void (*on_await)(void*), void (*on_cancel)(void*), void (*on_destruct)(void*), bool is_restartable = false, bool is_on_scheduler = false);
 
         template <class Dur_resolution, class Dur_type>
-        bool await_task_for(std::chrono::duration<Dur_resolution, Dur_type> duration) {
+        bool await_task_for(std::chrono::duration<Dur_resolution, Dur_type> duration) const {
             return await_task_until(std::chrono::high_resolution_clock::now() + duration);
         }
     };

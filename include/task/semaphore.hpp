@@ -7,8 +7,9 @@
 #ifndef INCLUDE_TASK_SEMAPHORE
 #define INCLUDE_TASK_SEMAPHORE
 
-#include "fwd.hpp"
 #include "../threading.hpp"
+#include "enter_state.hpp"
+#include "fwd.hpp"
 #include <list>
 
 namespace fast_task {
@@ -17,12 +18,16 @@ namespace fast_task {
         struct FT_API_LOCAL resume_task;
 
         struct private_values {
-            std::list<struct resume_task> resume_task;
+            struct resume_task* begin = nullptr;
+            struct resume_task* end = nullptr;
             fast_task::spin_lock no_race;
             fast_task::condition_variable_any native_notify;
             size_t allow_threshold = 0;
             size_t max_threshold = 0;
         } values;
+
+        static void push_back(private_values& values, resume_task* node);
+        static void erase(private_values& values, resume_task* node);
 
     public:
         task_semaphore();
@@ -36,8 +41,8 @@ namespace fast_task {
         void release_all();
         bool is_locked();
 
-        bool enter_wait(const std::shared_ptr<task>& task);
-        bool enter_wait_until(const std::shared_ptr<task>& task, std::chrono::high_resolution_clock::time_point);
+        bool enter_wait(const task&, enter_state& task);
+        bool enter_wait_until(const task&, enter_state& task, std::chrono::high_resolution_clock::time_point);
 
         template <class Rep, class Period>
         bool try_lock_for(const std::chrono::duration<Rep, Period>& duration) {
@@ -52,8 +57,9 @@ namespace fast_task {
         friend class mutex_unify;
 
         struct private_values {
-            std::list<void*> lock_check;
-            std::list<struct resume_task> resume_task;
+            std::list<size_t> lock_check;
+            struct resume_task* begin = nullptr;
+            struct resume_task* end = nullptr;
             fast_task::spin_lock no_race;
             fast_task::condition_variable_any native_notify;
             size_t allow_threshold = 1;
@@ -62,6 +68,9 @@ namespace fast_task {
         } values;
 
         void unchecked_unlock();
+
+        static void push_back(private_values& values, resume_task* node);
+        static void erase(private_values& values, resume_task* node);
 
     public:
         task_limiter();
@@ -74,8 +83,8 @@ namespace fast_task {
         void unlock();
         bool is_locked();
 
-        bool enter_wait(const std::shared_ptr<task>& task);
-        bool enter_wait_until(const std::shared_ptr<task>& task, std::chrono::high_resolution_clock::time_point);
+        bool enter_wait(const task&, enter_state& task);
+        bool enter_wait_until(const task&, enter_state& task, std::chrono::high_resolution_clock::time_point);
 
         template <class Rep, class Period>
         bool try_lock_for(const std::chrono::duration<Rep, Period>& duration) {

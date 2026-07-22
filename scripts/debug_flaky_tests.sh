@@ -1,13 +1,12 @@
 #!/bin/bash
 
 MAX_JOBS=8
-LOG_FILE="./test_hunt_results_$(date +%Y%m%d_%H%M%S).log"
-BUILD_DIR="../out/build/Linux-Test"
+BUILD_DIR="../out/build/Linux-Test-Rel"
 
-echo "--- Test Hunt Started $(date) ---" > "$LOG_FILE"
 cd "$BUILD_DIR" || exit 1
+LOG_FILE="./test_hunt_results_$(date +%Y%m%d_%H%M%S).log"
 
-readarray -t executables < <(find ./tests -type f -executable | grep "/Debug/")
+readarray -t executables < <(find ./tests -type f -executable)
 
 echo "Found ${#executables[@]} executables. Starting hunt with max $MAX_JOBS parallel jobs..."
 
@@ -17,7 +16,7 @@ hunt_test() {
     local temp_out=$(mktemp)
     local temp_err=$(mktemp)
 
-    echo -e "\n=======================================================" > "$temp_log"
+    echo -e "\n=======================================================" >> "$temp_log"
     echo "--- Starting hunt for: $test_path ---" >> "$temp_log"
 
     local hung=false
@@ -38,7 +37,33 @@ hunt_test() {
 
                 if command -v gdb &> /dev/null; then
                     echo -e "\n--- GDB Stack Trace ---" >> "$temp_log"
-                    gdb -p $pid -batch -ex "set print pretty on" -ex "print fast_task::glob" -ex "thread apply all bt full" -ex "quit" >> "$temp_log" 2>&1
+                    gdb -p $pid -batch \
+                        -ex "set print pretty on" \
+                        -ex "set print static-members off" \
+                        -ex "set print array on" \
+                        -ex "print fast_task::glob" \
+                        -ex "thread apply all bt full" \
+                        -ex "python
+import gdb
+def vector_to_list(std_vector):
+    out_list = []
+    value_reference = std_vector['_M_impl']['_M_start']
+    while value_reference != std_vector['_M_impl']['_M_finish']:
+        out_list.append(value_reference.dereference())
+        value_reference += 1
+
+    return out_list
+
+vec = vector_to_list(gdb.parse_and_eval('\\'collect_task_objects\\'()'))
+gdb.write('=== %d task objects ===\n' % len(vec))
+for i in vec:
+    visualizer = gdb.default_visualizer(i.dereference())
+    if visualizer is not None:
+        gdb.write(visualizer.to_string())
+    else:
+        gdb.write(str(i.dereference()))
+"\
+                        -ex "quit" >> "$temp_log" 2>&1
                 else
                     echo -e "\n[ERROR] gdb not found." >> "$temp_log"
                 fi
@@ -69,6 +94,7 @@ hunt_test() {
     echo "Finished: $test_path"
 }
 
+echo "--- Test Hunt Started $(date) ---" >> "$LOG_FILE"
 for exe in "${executables[@]}"; do
     hunt_test "$exe" &
     

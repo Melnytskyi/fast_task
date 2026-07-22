@@ -1,4 +1,3 @@
-
 // Copyright Danyil Melnytskyi 2025-Present
 //
 // Distributed under the Boost Software License, Version 1.0.
@@ -34,11 +33,7 @@ public:
     work_stealing_deque(work_stealing_deque&&) = delete;
     work_stealing_deque& operator=(work_stealing_deque&&) = delete;
 
-    ~work_stealing_deque() noexcept {
-        for (std::int64_t i = _top.load(std::memory_order_relaxed); i < _bottom.load(std::memory_order_relaxed); ++i) {
-            _buffer[i & _mask].~T();
-        }
-    }
+    ~work_stealing_deque() noexcept = default;
 
     bool empty() const noexcept {
         return size() == 0;
@@ -50,16 +45,14 @@ public:
         return static_cast<std::size_t>(b > t ? b - t : 0);
     }
 
-    template <typename... Args>
-    bool emplace(Args&&... args) {
+    bool emplace(const T& item) {
         auto b = _bottom.load(std::memory_order_relaxed);
         auto t = _top.load(std::memory_order_acquire);
 
-        if (b - t >= _capacity) {
+        if (b - t >= _capacity)
             return false;
-        }
 
-        new (&_buffer[b & _mask]) T(std::forward<Args>(args)...);
+        _buffer[b & _mask] = item;
 
         _bottom.store(b + 1, std::memory_order_release);
         return true;
@@ -69,9 +62,8 @@ public:
         auto b = _bottom.load(std::memory_order_relaxed);
         auto t = _top.load(std::memory_order_acquire);
 
-        if (t >= b) {
+        if (t >= b)
             return false;
-        }
 
         b--;
         _bottom.store(b, std::memory_order_relaxed);
@@ -81,7 +73,7 @@ public:
         t = _top.load(std::memory_order_relaxed);
 
         if (t < b) {
-            item = std::move(_buffer[b & _mask]);
+            item = _buffer[b & _mask];
             return true;
         }
 
@@ -92,7 +84,7 @@ public:
 
         if (_top.compare_exchange_strong(t, t + 1, std::memory_order_seq_cst, std::memory_order_relaxed)) {
             _bottom.store(b + 1, std::memory_order_relaxed);
-            item = std::move(_buffer[b & _mask]);
+            item = _buffer[b & _mask];
             return true;
         } else {
             _bottom.store(b + 1, std::memory_order_relaxed);
@@ -101,20 +93,15 @@ public:
     }
 
     bool steal(T& item) noexcept {
-        auto t = _top.load(std::memory_order_acquire);
-
         while (true) {
+            auto t = _top.load(std::memory_order_acquire);
             auto b = _bottom.load(std::memory_order_acquire);
 
-            if (t >= b) {
+            if (t >= b)
                 return false;
-            }
-
-            std::atomic_thread_fence(std::memory_order_seq_cst);
-            if (_top.compare_exchange_strong(t, t + 1, std::memory_order_seq_cst, std::memory_order_relaxed)) {
-                item = std::move(_buffer[t & _mask]);
+            item = _buffer[t & _mask];
+            if (_top.compare_exchange_strong(t, t + 1, std::memory_order_seq_cst, std::memory_order_relaxed))
                 return true;
-            }
         }
     }
 

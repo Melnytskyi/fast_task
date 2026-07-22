@@ -15,7 +15,7 @@
     #include "coroutine/mutex.hpp"
     #include "coroutine/mutex_unify.hpp"
     #include "coroutine/promise.hpp"
-    #include "coroutine/query.hpp"
+    #include "coroutine/queue.hpp"
     #include "coroutine/semaphore.hpp"
     #include "coroutine/this_task.hpp"
 #endif
