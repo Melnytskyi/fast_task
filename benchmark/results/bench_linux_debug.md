@@ -2,6 +2,7 @@
  - OS: CachyOS x86_64
  - Kernel: Linux 7.0.10-1-cachyos
  - CPU: AMD Ryzen 7 3800XT (16) @ 3.90 GHz (Fixed clock 3.77GHz system wide)
+ - Comment: The benchmark is built in release mode with FAST_TASK_ENABLE_DEBUG_API set to ON
 
 
 # task_spawn_task_large_payload

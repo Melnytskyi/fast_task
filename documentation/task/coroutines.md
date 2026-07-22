@@ -6,7 +6,7 @@
 > Automatically called by the scheduler when the task canceled.
 
 `bool this_task::transfer_to(const task& target);`
-> Directly transfers the scheduler's current executing task to target after completion
+> Directly transfers the scheduler's current executing task to target after yield or completion
 >
 > Both current task(c) and target(t) must:
 >   - (c, t)have the same worker binding

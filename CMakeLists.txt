@@ -13,11 +13,14 @@ add_subdirectory(src)
 
 target_link_libraries(fast_task PRIVATE fast_task_flags)
 target_link_libraries(fast_task PRIVATE fast_task_dependencies)
-set_property(TARGET fast_task PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
 target_include_directories(fast_task PUBLIC "include")
 target_include_directories(fast_task PRIVATE "src")
 
 if(FAST_TASK_BUILD_TESTS)
   enable_testing()
   add_subdirectory(tests)
+endif()
+
+if(FAST_TASK_BUILD_BENCHMARKS)
+    add_subdirectory(benchmark)
 endif()
