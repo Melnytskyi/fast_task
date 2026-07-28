@@ -4,8 +4,8 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
-#ifndef INCLUDE_COROUTINE_DEADLINE_TIMER
-#define INCLUDE_COROUTINE_DEADLINE_TIMER
+#ifndef FAST_TASK_INCLUDE_COROUTINE_DEADLINE_TIMER
+#define FAST_TASK_INCLUDE_COROUTINE_DEADLINE_TIMER
 #include "../task/deadline_timer.hpp"
 #include "core.hpp"
 
@@ -89,5 +89,5 @@ namespace fast_task {
 
         return awaiter{{}, *lock.mutex(), timer};
     }
-} // namespace fast_task
-#endif /* INCLUDE_COROUTINE_DEADLINE_TIMER */
+}
+#endif /* FAST_TASK_INCLUDE_COROUTINE_DEADLINE_TIMER */

@@ -8,7 +8,7 @@
 #include <tasks/_internal.hpp>
 
 namespace fast_task {
-    void task_condition_variable::push_back(private_values& values, resume_task* node) {
+    void condition_variable::push_back(private_values& values, resume_task* node) {
         node->next = nullptr;
         node->prev = values.end;
         if (values.end) {
@@ -19,7 +19,7 @@ namespace fast_task {
         values.end = node;
     }
 
-    void task_condition_variable::erase(private_values& values, resume_task* node) {
+    void condition_variable::erase(private_values& values, resume_task* node) {
         if (node->prev) {
             node->prev->next = node->next;
         } else
@@ -34,11 +34,11 @@ namespace fast_task {
         node->prev = nullptr;
     }
 
-    task_condition_variable::task_condition_variable() {
+    condition_variable::condition_variable() {
         FT_DEBUG_ONLY(register_object(this));
     }
 
-    task_condition_variable::~task_condition_variable() {
+    condition_variable::~condition_variable() {
         FT_DEBUG_ONLY(unregister_object(this));
         if (values.begin) {
             assert(false && "Condition_variable destroyed while waited");
@@ -46,7 +46,7 @@ namespace fast_task {
         }
     }
 
-    void task_condition_variable::wait(fast_task::unique_lock<mutex_unify>& mut) {
+    void condition_variable::wait(fast_task::unique_lock<mutex_unify>& mut) {
         resume_task node;
         if (get_loc().is_task_thread) {
             node.task = get_loc().curr_task;
@@ -58,7 +58,7 @@ namespace fast_task {
             swapCtxRelock(values.no_race);
             guard.unlock();
         } else {
-            fast_task::condition_variable_any cd;
+            fast_task::native::condition_variable_any cd;
             bool has_res = false;
             node.task = nullptr;
             node.awake_check = 0;
@@ -75,7 +75,7 @@ namespace fast_task {
         }
     }
 
-    bool task_condition_variable::wait_until(fast_task::unique_lock<mutex_unify>& mut, std::chrono::high_resolution_clock::time_point time_point) {
+    bool condition_variable::wait_until(fast_task::unique_lock<mutex_unify>& mut, std::chrono::high_resolution_clock::time_point time_point) {
         resume_task node;
         if (get_loc().is_task_thread) {
             node.task = get_loc().curr_task;
@@ -96,7 +96,7 @@ namespace fast_task {
                 return false;
             }
         } else {
-            fast_task::condition_variable_any cd;
+            fast_task::native::condition_variable_any cd;
             bool has_res = false;
             node.task = nullptr;
             node.awake_check = 0;
@@ -119,7 +119,7 @@ namespace fast_task {
         return true;
     }
 
-    void task_condition_variable::wait(std::unique_lock<mutex_unify>& mut) {
+    void condition_variable::wait(std::unique_lock<mutex_unify>& mut) {
         resume_task node;
         if (get_loc().is_task_thread) {
             node.task = get_loc().curr_task;
@@ -129,7 +129,7 @@ namespace fast_task {
             push_back(values, &node);
             swapCtxRelock(values.no_race);
         } else {
-            fast_task::condition_variable_any cd;
+            fast_task::native::condition_variable_any cd;
             bool has_res = false;
             node.task = nullptr;
             node.awake_check = 0;
@@ -146,7 +146,7 @@ namespace fast_task {
         }
     }
 
-    bool task_condition_variable::wait_until(std::unique_lock<mutex_unify>& mut, std::chrono::high_resolution_clock::time_point time_point) {
+    bool condition_variable::wait_until(std::unique_lock<mutex_unify>& mut, std::chrono::high_resolution_clock::time_point time_point) {
         resume_task node;
         if (get_loc().is_task_thread) {
             node.task = get_loc().curr_task;
@@ -167,7 +167,7 @@ namespace fast_task {
                 return false;
             }
         } else {
-            fast_task::condition_variable_any cd;
+            fast_task::native::condition_variable_any cd;
             bool has_res = false;
             node.task = nullptr;
             node.awake_check = 0;
@@ -190,7 +190,7 @@ namespace fast_task {
         return true;
     }
 
-    void task_condition_variable::notify_all() {
+    void condition_variable::notify_all() {
         fast_task::unique_lock no_race_guard(values.no_race);
         resume_task* head = values.begin;
         values.begin = nullptr;
@@ -228,7 +228,7 @@ namespace fast_task {
             this_task::yield();
     }
 
-    void task_condition_variable::notify_one() {
+    void condition_variable::notify_one() {
         task tsk;
         resume_task* popped_node = nullptr;
         {
@@ -277,12 +277,12 @@ namespace fast_task {
             this_task::yield();
     }
 
-    bool task_condition_variable::has_waiters() {
+    bool condition_variable::has_waiters() {
         fast_task::lock_guard guard(values.no_race);
         return values.begin != nullptr;
     }
 
-    void task_condition_variable::callback(fast_task::unique_lock<mutex_unify>& mut, const task& task) {
+    void condition_variable::callback(fast_task::unique_lock<mutex_unify>& mut, const task& task) {
         {
             fast_task::lock_guard guard(get_data(task));
             if (get_data(task).is_running() || get_data(task).is_ended())
@@ -290,7 +290,7 @@ namespace fast_task {
             if (get_data(task).is_scheduled() && (!get_data(task).is_suspended() && get_data(task).get_is_on_scheduler()))
                 throw std::runtime_error("Task is already in the scheduler queue");
             if (!get_data(task).vtable || !get_data(task).vtable->on_start)
-                throw std::logic_error("task_condition_variable::callback requires the on_start callback to be set");
+                throw std::logic_error("condition_variable::callback requires the on_start callback to be set");
         }
         auto* node = new resume_task();
         node->task = task;
@@ -309,7 +309,7 @@ namespace fast_task {
         get_data(task).set_status(task_object::status_e::scheduled);
     }
 
-    void task_condition_variable::callback(std::unique_lock<mutex_unify>& mut, const task& task) {
+    void condition_variable::callback(std::unique_lock<mutex_unify>& mut, const task& task) {
         {
             fast_task::lock_guard guard(get_data(task));
             if (get_data(task).is_running() || get_data(task).is_ended())
@@ -317,7 +317,7 @@ namespace fast_task {
             if (get_data(task).is_scheduled() && (!get_data(task).is_suspended() && get_data(task).get_is_on_scheduler()))
                 throw std::runtime_error("Task is already in the scheduler queue");
             if (!get_data(task).vtable || !get_data(task).vtable->on_start)
-                throw std::logic_error("task_condition_variable::callback requires the on_start callback to be set");
+                throw std::logic_error("condition_variable::callback requires the on_start callback to be set");
         }
         auto* node = new resume_task();
         node->task = task;
@@ -336,7 +336,7 @@ namespace fast_task {
         get_data(task).set_status(task_object::status_e::scheduled);
     }
 
-    bool task_condition_variable::enter_wait(mutex_unify& mut, const task& task, enter_state& st) {
+    bool condition_variable::enter_wait(mutex_unify& mut, const task& task, enter_state& st) {
         fast_task::lock_guard l(values.no_race);
         get_data(task).set_relock(mut);
         auto node = st.template use<resume_task>();
@@ -346,7 +346,7 @@ namespace fast_task {
         return false;
     }
 
-    bool task_condition_variable::enter_wait_until(mutex_unify& mut, const task& task, enter_state& st, std::chrono::high_resolution_clock::time_point time_point) {
+    bool condition_variable::enter_wait_until(mutex_unify& mut, const task& task, enter_state& st, std::chrono::high_resolution_clock::time_point time_point) {
         if (std::chrono::high_resolution_clock::now() >= time_point)
             return true;
         fast_task::lock_guard l(values.no_race);

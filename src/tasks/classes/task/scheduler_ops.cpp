@@ -118,7 +118,7 @@ namespace fast_task::scheduler {
         glob.binded_workers[id].expected_executors = fixed_count;
         for (size_t i = 0; i < fixed_count; i++) {
             ++glob.thread_count;
-            fast_task::thread(bindedTaskExecutor, id).detach();
+            fast_task::native::thread(bindedTaskExecutor, id).detach();
         }
         return id;
     }
@@ -151,7 +151,7 @@ namespace fast_task::scheduler {
             size_t diff = fixed_count - current_expected;
             for (size_t i = 0; i < diff; i++) {
                 ++glob.thread_count;
-                fast_task::thread(bindedTaskExecutor, id).detach();
+                fast_task::native::thread(bindedTaskExecutor, id).detach();
             }
         }
     }
@@ -227,7 +227,7 @@ namespace fast_task::scheduler {
     void create_executor(size_t count) {
         for (size_t i = 0; i < count; i++) {
             ++glob.thread_count;
-            fast_task::thread(taskExecutor, false, false).detach();
+            fast_task::native::thread(taskExecutor, false, false).detach();
         }
     }
 

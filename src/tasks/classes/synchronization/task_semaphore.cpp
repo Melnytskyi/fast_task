@@ -8,7 +8,7 @@
 #include <tasks/_internal.hpp>
 
 namespace fast_task {
-    void task_semaphore::push_back(private_values& values, resume_task* node) {
+    void semaphore::push_back(private_values& values, resume_task* node) {
         node->next = nullptr;
         node->prev = values.end;
         if (values.end) {
@@ -19,7 +19,7 @@ namespace fast_task {
         values.end = node;
     }
 
-    void task_semaphore::erase(private_values& values, resume_task* node) {
+    void semaphore::erase(private_values& values, resume_task* node) {
         if (node->prev) {
             node->prev->next = node->next;
         } else
@@ -34,11 +34,11 @@ namespace fast_task {
         node->prev = nullptr;
     }
 
-    task_semaphore::task_semaphore() {
+    semaphore::semaphore() {
         FT_DEBUG_ONLY(register_object(this));
     }
 
-    task_semaphore::~task_semaphore() {
+    semaphore::~semaphore() {
         FT_DEBUG_ONLY(unregister_object(this));
         if (values.allow_threshold != values.max_threshold) {
             assert(false && "Semaphore destroyed while locked");
@@ -46,7 +46,7 @@ namespace fast_task {
         }
     }
 
-    void task_semaphore::set_max_threshold(size_t val) {
+    void semaphore::set_max_threshold(size_t val) {
         fast_task::lock_guard guard(values.no_race);
         if (values.allow_threshold != values.max_threshold) {
             values.allow_threshold = values.max_threshold;
@@ -71,7 +71,7 @@ namespace fast_task {
         values.allow_threshold = values.max_threshold;
     }
 
-    void task_semaphore::lock() {
+    void semaphore::lock() {
         resume_task node;
         if (get_loc().is_task_thread) {
             node.task = get_loc().curr_task;
@@ -90,7 +90,7 @@ namespace fast_task {
         --values.allow_threshold;
     }
 
-    bool task_semaphore::try_lock() {
+    bool semaphore::try_lock() {
         if (!values.no_race.try_lock())
             return false;
         if (!values.allow_threshold) {
@@ -102,7 +102,7 @@ namespace fast_task {
         return true;
     }
 
-    bool task_semaphore::try_lock_until(std::chrono::high_resolution_clock::time_point time_point) {
+    bool semaphore::try_lock_until(std::chrono::high_resolution_clock::time_point time_point) {
         resume_task node;
         if (get_loc().is_task_thread) {
             node.task = get_loc().curr_task;
@@ -129,7 +129,7 @@ namespace fast_task {
         return true;
     }
 
-    void task_semaphore::release() {
+    void semaphore::release() {
         fast_task::lock_guard lg0(values.no_race);
         if (values.allow_threshold == values.max_threshold)
             return;
@@ -155,7 +155,7 @@ namespace fast_task {
         }
     }
 
-    void task_semaphore::release_all() {
+    void semaphore::release_all() {
         fast_task::lock_guard lg0(values.no_race);
         if (values.allow_threshold == values.max_threshold)
             return;
@@ -182,7 +182,7 @@ namespace fast_task {
         }
     }
 
-    bool task_semaphore::is_locked() {
+    bool semaphore::is_locked() {
         if (try_lock()) {
             release();
             return false;
@@ -190,7 +190,7 @@ namespace fast_task {
         return true;
     }
 
-    bool task_semaphore::enter_wait(const task& task, enter_state& state) {
+    bool semaphore::enter_wait(const task& task, enter_state& state) {
         auto node = state.template use<resume_task>();
         node->task = task;
         node->awake_check = get_data(task).awake_check;
@@ -204,7 +204,7 @@ namespace fast_task {
         }
     }
 
-    bool task_semaphore::enter_wait_until(const task& task, enter_state& state, std::chrono::high_resolution_clock::time_point time_point) {
+    bool semaphore::enter_wait_until(const task& task, enter_state& state, std::chrono::high_resolution_clock::time_point time_point) {
         auto node = state.template use<resume_task>();
         node->task = task;
         node->awake_check = get_data(task).awake_check;

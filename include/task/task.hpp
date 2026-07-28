@@ -4,8 +4,8 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
-#ifndef INCLUDE_TASK_TASK
-#define INCLUDE_TASK_TASK
+#ifndef FAST_TASK_INCLUDE_TASK_TASK
+#define FAST_TASK_INCLUDE_TASK_TASK
 
 #include "../shared.hpp"
 #include "enter_state.hpp"
@@ -224,4 +224,4 @@ namespace fast_task {
         }
     };
 }
-#endif /* INCLUDE_TASK_TASK */
+#endif /* FAST_TASK_INCLUDE_TASK_TASK */

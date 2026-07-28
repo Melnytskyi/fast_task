@@ -1,5 +1,5 @@
-#ifndef INCLUDE_POLYFILL_EXPECTED
-#define INCLUDE_POLYFILL_EXPECTED
+#ifndef FAST_TASK_INCLUDE_POLYFILL_EXPECTED
+#define FAST_TASK_INCLUDE_POLYFILL_EXPECTED
 #include <stdexcept>
 #include <utility>
 #include <variant>
@@ -118,4 +118,4 @@ namespace fast_task::polyfill {
 
 } // namespace fast_task::polyfill
 
-#endif /* INCLUDE_POLYFILL_EXPECTED */
+#endif /* FAST_TASK_INCLUDE_POLYFILL_EXPECTED */

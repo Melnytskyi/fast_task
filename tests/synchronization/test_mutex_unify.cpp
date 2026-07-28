@@ -29,7 +29,7 @@ TEST(MutexUnify, WrapFtMutex) {
 }
 
 TEST(MutexUnify, WrapSpinLock) {
-    fast_task::spin_lock sl;
+    fast_task::native::spin_lock sl;
     fast_task::mutex_unify mu(sl);
     mu.lock();
     mu.unlock();
@@ -61,7 +61,7 @@ TEST(MutexUnify, WrapRecursiveMutex) {
 class MutexUnifyTaskTest : public SchedulerFixture {};
 
 TEST_F(MutexUnifyTaskTest, WrapTaskMutex) {
-    fast_task::task_mutex m;
+    fast_task::mutex m;
     run_task([&] {
         fast_task::mutex_unify mu(m);
         mu.lock();
@@ -70,7 +70,7 @@ TEST_F(MutexUnifyTaskTest, WrapTaskMutex) {
 }
 
 TEST_F(MutexUnifyTaskTest, WrapTaskRwMutexWrite) {
-    fast_task::task_rw_mutex m;
+    fast_task::rw_mutex m;
     run_task([&] {
         fast_task::mutex_unify mu(m, true);
         mu.lock();
@@ -79,7 +79,7 @@ TEST_F(MutexUnifyTaskTest, WrapTaskRwMutexWrite) {
 }
 
 TEST_F(MutexUnifyTaskTest, WrapTaskRecursiveMutex) {
-    fast_task::task_recursive_mutex m;
+    fast_task::recursive_mutex m;
     run_task([&] {
         fast_task::mutex_unify mu(m);
         mu.lock();

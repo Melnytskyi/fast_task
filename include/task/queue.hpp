@@ -4,20 +4,20 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
-#ifndef INCLUDE_TASK_QUEUE
-#define INCLUDE_TASK_QUEUE
+#ifndef FAST_TASK_INCLUDE_TASK_QUEUE
+#define FAST_TASK_INCLUDE_TASK_QUEUE
 #include "enter_state.hpp"
 #include "task.hpp"
 
 namespace fast_task {
-    class FT_API task_queue {
+    class FT_API queue {
         friend struct debug::_debug_collect;
-        struct task_queue_handle* handle;
-        friend void __TaskQueue_add_task_leave(struct task_queue_handle* tqh);
+        struct queue_handle* handle;
+        friend void __TaskQueue_add_leave(struct queue_handle* tqh);
 
     public:
-        task_queue(size_t at_execution_max = 1);
-        ~task_queue();
+        queue(size_t at_execution_max = 1);
+        ~queue();
         void add(task&);
         void add(task&&);
         void enable();
@@ -39,4 +39,4 @@ namespace fast_task {
 }
 
 
-#endif /* INCLUDE_TASK_QUEUE */
+#endif /* FAST_TASK_INCLUDE_TASK_QUEUE */

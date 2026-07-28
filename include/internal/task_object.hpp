@@ -1,5 +1,5 @@
-#ifndef INCLUDE_INTERNAL_TASK_OBJECT
-#define INCLUDE_INTERNAL_TASK_OBJECT
+#ifndef FAST_TASK_INCLUDE_INTERNAL_TASK_OBJECT
+#define FAST_TASK_INCLUDE_INTERNAL_TASK_OBJECT
 #include "../shared.hpp"
 #include <atomic>
 #include <task/mutex_unify.hpp>
@@ -121,4 +121,4 @@ namespace fast_task {
     };
 }
 
-#endif /* INCLUDE_INTERNAL_TASK_OBJECT */
+#endif /* FAST_TASK_INCLUDE_INTERNAL_TASK_OBJECT */

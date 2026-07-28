@@ -10,9 +10,9 @@
 
 class CoroutineAwaitersTest : public SchedulerFixture {};
 
-// ---- async_lock on task_mutex ----
+// ---- async_lock on mutex ----
 
-fast_task::task_coro<void> coro_lock(fast_task::task_mutex& mtx, std::atomic<int>& val) {
+fast_task::task_coro<void> coro_lock(fast_task::mutex& mtx, std::atomic<int>& val) {
     co_await async_lock(mtx);
     int v = val.load();
     // make yield
@@ -22,7 +22,7 @@ fast_task::task_coro<void> coro_lock(fast_task::task_mutex& mtx, std::atomic<int
 }
 
 TEST_F(CoroutineAwaitersTest, AsyncLockMutex) {
-    fast_task::task_mutex mtx;
+    fast_task::mutex mtx;
     std::atomic<int> val{0};
 
     auto c1 = coro_lock(mtx, val);
@@ -40,9 +40,9 @@ TEST_F(CoroutineAwaitersTest, AsyncLockMutex) {
     EXPECT_EQ(val.load(), 3);
 }
 
-// ---- async_try_lock_for on task_mutex ----
+// ---- async_try_lock_for on mutex ----
 
-fast_task::task_coro<bool> coro_try_lock_for_timeout(fast_task::task_mutex& mtx) {
+fast_task::task_coro<bool> coro_try_lock_for_timeout(fast_task::mutex& mtx) {
     bool result = co_await async_try_lock_for(mtx, std::chrono::milliseconds(20));
     if (result) {
         mtx.unlock();
@@ -51,7 +51,7 @@ fast_task::task_coro<bool> coro_try_lock_for_timeout(fast_task::task_mutex& mtx)
 }
 
 TEST_F(CoroutineAwaitersTest, AsyncTryLockForTimesOut) {
-    fast_task::task_mutex mtx;
+    fast_task::mutex mtx;
     mtx.lock();
 
     auto coro = coro_try_lock_for_timeout(mtx);
@@ -67,11 +67,13 @@ TEST_F(CoroutineAwaitersTest, AsyncTryLockForTimesOut) {
     mtx.unlock();
 }
 
-// ---- async_wait on task_condition_variable ----
+// ---- async_wait on condition_variable ----
 
 fast_task::task_coro<void> coro_cv_wait(
-    fast_task::task_mutex& mtx, fast_task::task_condition_variable& cv, bool& ready)
-{
+    fast_task::mutex& mtx,
+    fast_task::condition_variable& cv,
+    bool& ready
+) {
     fast_task::mutex_unify mu(mtx);
     co_await async_lock(mtx);
     fast_task::unique_lock<fast_task::mutex_unify> lk(mu, fast_task::adopt_lock);
@@ -81,8 +83,8 @@ fast_task::task_coro<void> coro_cv_wait(
 }
 
 TEST_F(CoroutineAwaitersTest, AsyncWaitCV) {
-    fast_task::task_mutex mtx;
-    fast_task::task_condition_variable cv;
+    fast_task::mutex mtx;
+    fast_task::condition_variable cv;
     bool ready = false;
 
     auto coro = coro_cv_wait(mtx, cv, ready);
@@ -91,7 +93,7 @@ TEST_F(CoroutineAwaitersTest, AsyncWaitCV) {
     run_task([&] {
         fast_task::this_task::sleep_for(std::chrono::milliseconds(20));
         {
-            fast_task::lock_guard<fast_task::task_mutex> lk(mtx);
+            fast_task::lock_guard<fast_task::mutex> lk(mtx);
             ready = true;
         }
         cv.notify_one();
@@ -101,9 +103,9 @@ TEST_F(CoroutineAwaitersTest, AsyncWaitCV) {
     EXPECT_TRUE(ready);
 }
 
-// ---- async_read_lock / async_write_lock on task_rw_mutex ----
+// ---- async_read_lock / async_write_lock on rw_mutex ----
 
-fast_task::task_coro<void> coro_rw_read(fast_task::task_rw_mutex& mtx, std::atomic<int>& reads) {
+fast_task::task_coro<void> coro_rw_read(fast_task::rw_mutex& mtx, std::atomic<int>& reads) {
     co_await async_read_lock(mtx);
     ++reads;
 
@@ -112,7 +114,7 @@ fast_task::task_coro<void> coro_rw_read(fast_task::task_rw_mutex& mtx, std::atom
     co_return;
 }
 
-fast_task::task_coro<void> coro_rw_write(fast_task::task_rw_mutex& mtx, int& value, int newval) {
+fast_task::task_coro<void> coro_rw_write(fast_task::rw_mutex& mtx, int& value, int newval) {
     co_await async_write_lock(mtx);
     value = newval;
     mtx.write_unlock();
@@ -120,7 +122,7 @@ fast_task::task_coro<void> coro_rw_write(fast_task::task_rw_mutex& mtx, int& val
 }
 
 TEST_F(CoroutineAwaitersTest, AsyncReadLockMultipleReaders) {
-    fast_task::task_rw_mutex mtx;
+    fast_task::rw_mutex mtx;
     std::atomic<int> reads{0};
 
     auto r1 = coro_rw_read(mtx, reads);
@@ -136,7 +138,7 @@ TEST_F(CoroutineAwaitersTest, AsyncReadLockMultipleReaders) {
 }
 
 TEST_F(CoroutineAwaitersTest, AsyncWriteLock) {
-    fast_task::task_rw_mutex mtx;
+    fast_task::rw_mutex mtx;
     int value = 0;
 
     auto w = coro_rw_write(mtx, value, 77);

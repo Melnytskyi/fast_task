@@ -5,8 +5,8 @@
 // http://www.boost.org/LICENSE_1_0.txt)
 
 #pragma once
-#ifndef INCLUDE_TASK_FUTURE
-    #define INCLUDE_TASK_FUTURE
+#ifndef FAST_TASK_INCLUDE_TASK_FUTURE
+    #define FAST_TASK_INCLUDE_TASK_FUTURE
     #include "fwd.hpp"
     #include "queue.hpp"
     #include "scheduler.hpp"
@@ -47,7 +47,7 @@ namespace fast_task {
         }
 
         template <class FN>
-        static std::shared_ptr<future> start(fast_task::task_queue& queue, FN&& fn, uint16_t bind_id = (uint16_t)-1)
+        static std::shared_ptr<future> start(fast_task::queue& queue, FN&& fn, uint16_t bind_id = (uint16_t)-1)
             requires std::is_same_v<std::invoke_result_t<FN>, T>
         {
             std::shared_ptr<future> future_ = std::make_shared<future>();
@@ -238,7 +238,7 @@ namespace fast_task {
         }
 
         template <class FN>
-        static std::shared_ptr<future> start(fast_task::task_queue& queue, FN&& fn, uint16_t bind_id = (uint16_t)-1)
+        static std::shared_ptr<future> start(fast_task::queue& queue, FN&& fn, uint16_t bind_id = (uint16_t)-1)
             requires std::is_same_v<std::invoke_result_t<FN>, void>
         {
             std::shared_ptr<future> future_ = std::make_shared<future>();
@@ -381,7 +381,7 @@ namespace fast_task {
 
     namespace future_tool {
         template <class T, class FN>
-        future_ptr<void> for_each(T& container, fast_task::task_queue& queue, FN&& fn) {
+        future_ptr<void> for_each(T& container, fast_task::queue& queue, FN&& fn) {
             if (container.empty())
                 return future<void>::make_ready();
             std::vector<future_ptr<void>> futures;
@@ -446,7 +446,7 @@ namespace fast_task {
         }
 
         template <class T, class FN>
-        future_ptr<void> for_each_move(T&& container, fast_task::task_queue& queue, FN&& fn) {
+        future_ptr<void> for_each_move(T&& container, fast_task::queue& queue, FN&& fn) {
             if (container.empty())
                 return future<void>::make_ready();
             std::vector<future_ptr<void>> futures;
@@ -469,7 +469,7 @@ namespace fast_task {
         }
 
         template <class T, class FN>
-        void for_each_wait(T& container, fast_task::task_queue& queue, FN&& fn) {
+        void for_each_wait(T& container, fast_task::queue& queue, FN&& fn) {
             if (container.empty())
                 return;
             std::vector<future_ptr<void>> futures;
@@ -530,7 +530,7 @@ namespace fast_task {
         }
 
         template <class Result, class T, class FN>
-        std::vector<Result> process(const T& container, fast_task::task_queue& queue, FN&& fn) {
+        std::vector<Result> process(const T& container, fast_task::queue& queue, FN&& fn) {
             if (container.empty())
                 return {};
 
@@ -568,7 +568,7 @@ namespace fast_task {
         }
 
         template <class Ret>
-        future_ptr<std::vector<Ret>> accumulate(fast_task::task_queue& queue, const std::vector<future_ptr<Ret>>& futures) {
+        future_ptr<std::vector<Ret>> accumulate(fast_task::queue& queue, const std::vector<future_ptr<Ret>>& futures) {
             if (futures.empty())
                 return future<std::vector<Ret>>::make_ready({});
             return future<std::vector<Ret>>::start(queue, [fut = futures] {
@@ -598,7 +598,7 @@ namespace fast_task {
         }
 
         template <class Ret>
-        future_ptr<std::vector<Ret>> accumulate(fast_task::task_queue& queue, std::vector<future_ptr<Ret>>&& futures) {
+        future_ptr<std::vector<Ret>> accumulate(fast_task::queue& queue, std::vector<future_ptr<Ret>>&& futures) {
             if (futures.empty())
                 return future<std::vector<Ret>>::make_ready({});
             return future<std::vector<Ret>>::start(queue, [fut = std::move(futures)] {
@@ -623,7 +623,7 @@ namespace fast_task {
             });
         }
 
-        inline FT_API future_ptr<void> combine_all(fast_task::task_queue& queue, const std::vector<future_ptr<void>>& futures) {
+        inline FT_API future_ptr<void> combine_all(fast_task::queue& queue, const std::vector<future_ptr<void>>& futures) {
             if (futures.empty())
                 return future<void>::make_ready();
             std::vector<future_ptr<void>> fut = {futures.begin(), futures.end()};
@@ -644,7 +644,7 @@ namespace fast_task {
             });
         }
 
-        inline FT_API future_ptr<void> combine_all(fast_task::task_queue& queue, std::vector<future_ptr<void>>&& futures) {
+        inline FT_API future_ptr<void> combine_all(fast_task::queue& queue, std::vector<future_ptr<void>>&& futures) {
             if (futures.empty())
                 return future<void>::make_ready();
             return future<void>::start(queue, [fut = std::move(futures)] {

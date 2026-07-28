@@ -1,5 +1,5 @@
-#ifndef INCLUDE_COROUTINE_FILE
-#define INCLUDE_COROUTINE_FILE
+#ifndef FAST_TASK_INCLUDE_COROUTINE_FILE
+#define FAST_TASK_INCLUDE_COROUTINE_FILE
 #include "../file.hpp"
 #include "../polyfill/expected.hpp"
 #include "core.hpp"
@@ -690,4 +690,4 @@ namespace fast_task {
     }
 }
 
-#endif /* INCLUDE_COROUTINE_FILE */
+#endif /* FAST_TASK_INCLUDE_COROUTINE_FILE */

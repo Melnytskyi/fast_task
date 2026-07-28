@@ -4,8 +4,8 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
-#ifndef INCLUDE_COROUTINE_DETAIL_LOCK_MISC
-#define INCLUDE_COROUTINE_DETAIL_LOCK_MISC
+#ifndef FAST_TASK_INCLUDE_COROUTINE_DETAIL_LOCK_MISC
+#define FAST_TASK_INCLUDE_COROUTINE_DETAIL_LOCK_MISC
 #include "../../task/scheduler.hpp"
 #include <chrono>
 
@@ -61,4 +61,4 @@ namespace fast_task::detail {
     }
 }
 
-#endif /* INCLUDE_COROUTINE_DETAIL_LOCK_MISC */
+#endif /* FAST_TASK_INCLUDE_COROUTINE_DETAIL_LOCK_MISC */

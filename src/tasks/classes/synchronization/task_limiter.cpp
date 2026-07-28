@@ -8,7 +8,7 @@
 #include <tasks/_internal.hpp>
 
 namespace fast_task {
-    void task_limiter::push_back(private_values& values, resume_task* node) {
+    void limiter::push_back(private_values& values, resume_task* node) {
         node->next = nullptr;
         node->prev = values.end;
         if (values.end) {
@@ -19,7 +19,7 @@ namespace fast_task {
         values.end = node;
     }
 
-    void task_limiter::erase(private_values& values, resume_task* node) {
+    void limiter::erase(private_values& values, resume_task* node) {
         if (node->prev) {
             node->prev->next = node->next;
         } else
@@ -34,11 +34,11 @@ namespace fast_task {
         node->prev = nullptr;
     }
 
-    task_limiter::task_limiter() {
+    limiter::limiter() {
         FT_DEBUG_ONLY(register_object(this));
     }
 
-    task_limiter::~task_limiter() {
+    limiter::~limiter() {
         FT_DEBUG_ONLY(unregister_object(this));
         if (values.locked) {
             assert(false && "Tried to destroy locked limiter");
@@ -46,7 +46,7 @@ namespace fast_task {
         }
     }
 
-    void task_limiter::set_max_threshold(size_t val) {
+    void limiter::set_max_threshold(size_t val) {
         fast_task::lock_guard guard(values.no_race);
         if (val < 1)
             val = 1;
@@ -74,7 +74,7 @@ namespace fast_task {
         }
     }
 
-    void task_limiter::lock() {
+    void limiter::lock() {
         resume_task node;
         if (get_loc().is_task_thread)
             node.task = get_loc().curr_task;
@@ -103,7 +103,7 @@ namespace fast_task {
         return;
     }
 
-    bool task_limiter::try_lock() {
+    bool limiter::try_lock() {
         if (!values.no_race.try_lock())
             return false;
         if (values.locked) {
@@ -124,7 +124,7 @@ namespace fast_task {
         return true;
     }
 
-    bool task_limiter::try_lock_until(std::chrono::high_resolution_clock::time_point time_point) {
+    bool limiter::try_lock_until(std::chrono::high_resolution_clock::time_point time_point) {
         resume_task node;
         if (get_loc().is_task_thread)
             node.task = get_loc().curr_task;
@@ -159,7 +159,7 @@ namespace fast_task {
         return true;
     }
 
-    void task_limiter::unlock() {
+    void limiter::unlock() {
         size_t lock_id = this_task::get_id();
         fast_task::lock_guard lg0(values.no_race);
         auto item = std::find(values.lock_check.begin(), values.lock_check.end(), lock_id);
@@ -170,7 +170,7 @@ namespace fast_task {
         unchecked_unlock();
     }
 
-    void task_limiter::unchecked_unlock() {
+    void limiter::unchecked_unlock() {
         if (values.allow_threshold >= values.max_threshold)
             return;
         values.allow_threshold++;
@@ -197,11 +197,11 @@ namespace fast_task {
         }
     }
 
-    bool task_limiter::is_locked() {
+    bool limiter::is_locked() {
         return values.locked;
     }
 
-    bool task_limiter::enter_wait(const task& task, enter_state& state) {
+    bool limiter::enter_wait(const task& task, enter_state& state) {
         auto node = state.template use<resume_task>();
         node->task = task;
         node->awake_check = get_data(task).awake_check;
@@ -225,7 +225,7 @@ namespace fast_task {
         }
     }
 
-    bool task_limiter::enter_wait_until(const task& task, enter_state& state, std::chrono::high_resolution_clock::time_point time_point) {
+    bool limiter::enter_wait_until(const task& task, enter_state& state, std::chrono::high_resolution_clock::time_point time_point) {
         auto node = state.template use<resume_task>();
         node->task = task;
         node->awake_check = get_data(task).awake_check;

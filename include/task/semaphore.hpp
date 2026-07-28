@@ -4,24 +4,24 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
-#ifndef INCLUDE_TASK_SEMAPHORE
-#define INCLUDE_TASK_SEMAPHORE
+#ifndef FAST_TASK_INCLUDE_TASK_SEMAPHORE
+#define FAST_TASK_INCLUDE_TASK_SEMAPHORE
 
-#include "../threading.hpp"
+#include "../native.hpp"
 #include "enter_state.hpp"
 #include "fwd.hpp"
 #include <list>
 
 namespace fast_task {
-    class FT_API task_semaphore {
+    class FT_API semaphore {
         friend struct debug::_debug_collect;
         struct FT_API_LOCAL resume_task;
 
         struct private_values {
             struct resume_task* begin = nullptr;
             struct resume_task* end = nullptr;
-            fast_task::spin_lock no_race;
-            fast_task::condition_variable_any native_notify;
+            fast_task::native::spin_lock no_race;
+            fast_task::native::condition_variable_any native_notify;
             size_t allow_threshold = 0;
             size_t max_threshold = 0;
         } values;
@@ -30,8 +30,8 @@ namespace fast_task {
         static void erase(private_values& values, resume_task* node);
 
     public:
-        task_semaphore();
-        ~task_semaphore();
+        semaphore();
+        ~semaphore();
 
         void set_max_threshold(size_t val);
         void lock();
@@ -50,8 +50,8 @@ namespace fast_task {
         }
     };
 
-    //same as task_semaphore but with checks
-    class FT_API task_limiter {
+    //same as semaphore but with checks
+    class FT_API limiter {
         friend struct debug::_debug_collect;
         struct FT_API_LOCAL resume_task;
         friend class mutex_unify;
@@ -60,8 +60,8 @@ namespace fast_task {
             std::list<size_t> lock_check;
             struct resume_task* begin = nullptr;
             struct resume_task* end = nullptr;
-            fast_task::spin_lock no_race;
-            fast_task::condition_variable_any native_notify;
+            fast_task::native::spin_lock no_race;
+            fast_task::native::condition_variable_any native_notify;
             size_t allow_threshold = 1;
             size_t max_threshold = 1;
             bool locked = false;
@@ -73,8 +73,8 @@ namespace fast_task {
         static void erase(private_values& values, resume_task* node);
 
     public:
-        task_limiter();
-        ~task_limiter();
+        limiter();
+        ~limiter();
 
         void set_max_threshold(size_t val);
         void lock();
@@ -93,4 +93,4 @@ namespace fast_task {
     };
 }
 
-#endif /* INCLUDE_TASK_SEMAPHORE */
+#endif /* FAST_TASK_INCLUDE_TASK_SEMAPHORE */

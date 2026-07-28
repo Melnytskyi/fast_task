@@ -4,28 +4,29 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
-#ifndef INCLUDE_TASK_TASK_FWD
-#define INCLUDE_TASK_TASK_FWD
+#ifndef FAST_TASK_INCLUDE_TASK_TASK_FWD
+#define FAST_TASK_INCLUDE_TASK_TASK_FWD
 #pragma once
+#include "../shared.hpp"
+#include "../shared/primitives.hpp"
 #include <chrono>
 #include <coroutine>
 #include <memory>
-#include "../shared.hpp"
 
 namespace fast_task {
     class task;
-    class task_mutex;
-    class task_recursive_mutex;
-    class task_rw_mutex;
+    class mutex;
+    class recursive_mutex;
+    class rw_mutex;
     class mutex_unify;
     class multiply_mutex;
-    class task_condition_variable;
-    class task_semaphore;
-    class task_limiter;
-    class task_queue;
+    class condition_variable;
+    class semaphore;
+    class limiter;
+    class queue;
 
     struct task_promise_base;
-    struct base_coro_handle;
+    struct task_base_coro_handle;
 
     namespace debug {
         struct _debug_collect;

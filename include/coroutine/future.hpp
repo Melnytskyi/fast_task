@@ -4,8 +4,8 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
-#ifndef INCLUDE_COROUTINE_FUTURE
-#define INCLUDE_COROUTINE_FUTURE
+#ifndef FAST_TASK_INCLUDE_COROUTINE_FUTURE
+#define FAST_TASK_INCLUDE_COROUTINE_FUTURE
 #include "../task/future.hpp"
 #include "core.hpp"
 #include "detail/lock_misc.hpp"
@@ -107,4 +107,4 @@ namespace fast_task {
     }
 }
 
-#endif /* INCLUDE_COROUTINE_FUTURE */
+#endif /* FAST_TASK_INCLUDE_COROUTINE_FUTURE */

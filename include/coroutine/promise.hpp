@@ -1,8 +1,10 @@
-#ifndef INCLUDE_COROUTINE_PROMISE
-#define INCLUDE_COROUTINE_PROMISE
+#ifndef FAST_TASK_INCLUDE_COROUTINE_PROMISE
+#define FAST_TASK_INCLUDE_COROUTINE_PROMISE
 
 #include "../task/fwd.hpp"
+#include "../task/task.hpp"
 #include "../task/this_task.hpp"
+#include <coroutine>
 
 namespace fast_task {
     struct FT_API task_promise_base {
@@ -50,4 +52,4 @@ namespace fast_task {
     };
 }
 
-#endif /* INCLUDE_COROUTINE_PROMISE */
+#endif /* FAST_TASK_INCLUDE_COROUTINE_PROMISE */

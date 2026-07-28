@@ -1,5 +1,5 @@
-#ifndef INCLUDE_TASK_ENTER_STATE
-#define INCLUDE_TASK_ENTER_STATE
+#ifndef FAST_TASK_INCLUDE_TASK_ENTER_STATE
+#define FAST_TASK_INCLUDE_TASK_ENTER_STATE
 
 #include "../shared.hpp"
 
@@ -30,4 +30,4 @@ namespace fast_task {
     };
 }
 
-#endif /* INCLUDE_TASK_ENTER_STATE */
+#endif /* FAST_TASK_INCLUDE_TASK_ENTER_STATE */

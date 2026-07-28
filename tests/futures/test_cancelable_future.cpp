@@ -29,11 +29,10 @@ TEST_F(CancelableFutureTest, CancelStopsTask) {
     });
 
     while (!started.load())
-        fast_task::this_thread::sleep_for(std::chrono::milliseconds(1));
+        fast_task::native::this_thread::sleep_for(std::chrono::milliseconds(1));
 
     f->cancel();
 
-    // After cancellation get() should throw because task was cancelled
     EXPECT_THROW(f->get(), std::runtime_error);
 }
 
@@ -70,7 +69,7 @@ TEST_F(CancelableFutureTest, VoidCancelStopsTask) {
     });
 
     while (!started.load())
-        fast_task::this_thread::sleep_for(std::chrono::milliseconds(1));
+        fast_task::native::this_thread::sleep_for(std::chrono::milliseconds(1));
 
     f->cancel();
     EXPECT_THROW(f->get(), std::runtime_error);

@@ -53,13 +53,13 @@ namespace fast_task::util {
             m_hCompletionPort.reset(CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 0), CloseHandle);
             if (!m_hCompletionPort)
                 throw std::runtime_error("CreateIoCompletionPort failed");
-            fast_task::thread(&native_workers_singleton::dispatch, this).detach();
+            fast_task::native::thread(&native_workers_singleton::dispatch, this).detach();
         }
 
         void dispatch() {
             SetThreadDescription(GetCurrentThread(), L"native_dispatcher");
             std::vector<OVERLAPPED_ENTRY> entries;
-            entries.resize(std::min<size_t>(fast_task::thread::hardware_concurrency(), INT32_MAX));
+            entries.resize(std::min<size_t>(fast_task::native::thread::hardware_concurrency(), INT32_MAX));
             while (true) {
                 ULONG entries_count = 0;
                 auto status = GetQueuedCompletionStatusEx(m_hCompletionPort.get(), entries.data(), (ULONG)entries.size(), &entries_count, INFINITE, false);

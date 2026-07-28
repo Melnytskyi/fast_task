@@ -1,11 +1,13 @@
-#ifndef INCLUDE_COROUTINE_GENERATOR
-#define INCLUDE_COROUTINE_GENERATOR
+#ifndef FAST_TASK_INCLUDE_COROUTINE_GENERATOR
+#define FAST_TASK_INCLUDE_COROUTINE_GENERATOR
+#include "../native/spin_lock.hpp"
 #include "../shared.hpp"
 #include "../task/scheduler.hpp"
 #include "../task/task.hpp"
 #include "promise.hpp"
 #include <concepts>
 #include <queue>
+#include <type_traits>
 
 namespace fast_task {
     //chanel type as coroutine, usage:
@@ -15,7 +17,7 @@ namespace fast_task {
     template <class T>
     class [[nodiscard]] task_generator {
         struct enter_state {
-            fast_task::spin_lock lock;
+            fast_task::native::spin_lock lock;
             std::queue<T> values;
             bool is_finished = false;
             std::exception_ptr ex;
@@ -171,4 +173,4 @@ namespace fast_task {
         }
     };
 }
-#endif /* INCLUDE_COROUTINE_GENERATOR */
+#endif /* FAST_TASK_INCLUDE_COROUTINE_GENERATOR */

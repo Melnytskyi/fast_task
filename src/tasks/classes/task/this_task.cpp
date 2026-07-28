@@ -85,7 +85,7 @@ namespace fast_task::this_task {
             swapCtx();
             resetTimeWait();
         } else
-            this_thread::sleep_until(time_point);
+            native::this_thread::sleep_until(time_point);
     }
 
     bool FT_API enter_sleep_until(enter_state&, std::chrono::high_resolution_clock::time_point time_point) {
@@ -108,6 +108,6 @@ namespace fast_task::this_task {
             get_loc().yield_request = true;
             swapCtx();
         } else
-            this_thread::yield();
+            native::this_thread::yield();
     }
 }

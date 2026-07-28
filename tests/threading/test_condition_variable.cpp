@@ -4,25 +4,25 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
-#include <helpers.hpp>
-#include <threading.hpp>
 #include <atomic>
+#include <helpers.hpp>
+#include <native.hpp>
 
 TEST(ConditionVariable, NotifyOne) {
-    fast_task::mutex m;
-    fast_task::condition_variable cv;
+    fast_task::native::mutex m;
+    fast_task::native::condition_variable cv;
     bool ready = false;
 
-    fast_task::thread waiter([&] {
+    fast_task::native::thread waiter([&] {
         m.lock();
         while (!ready)
             cv.wait(m);
         m.unlock();
     });
 
-    fast_task::this_thread::sleep_for(std::chrono::milliseconds(10));
+    fast_task::native::this_thread::sleep_for(std::chrono::milliseconds(10));
     {
-        fast_task::lock_guard<fast_task::mutex> lg(m);
+        fast_task::lock_guard lg(m);
         ready = true;
     }
     cv.notify_one();
@@ -31,8 +31,8 @@ TEST(ConditionVariable, NotifyOne) {
 }
 
 TEST(ConditionVariable, NotifyAll) {
-    fast_task::mutex m;
-    fast_task::condition_variable cv;
+    fast_task::native::mutex m;
+    fast_task::native::condition_variable cv;
     std::atomic<int> woken{0};
     bool go = false;
 
@@ -44,13 +44,13 @@ TEST(ConditionVariable, NotifyAll) {
         m.unlock();
     };
 
-    fast_task::thread t1(waiter);
-    fast_task::thread t2(waiter);
-    fast_task::thread t3(waiter);
+    fast_task::native::thread t1(waiter);
+    fast_task::native::thread t2(waiter);
+    fast_task::native::thread t3(waiter);
 
-    fast_task::this_thread::sleep_for(std::chrono::milliseconds(10));
+    fast_task::native::this_thread::sleep_for(std::chrono::milliseconds(10));
     {
-        fast_task::lock_guard<fast_task::mutex> lg(m);
+        fast_task::lock_guard lg(m);
         go = true;
     }
     cv.notify_all();
@@ -62,8 +62,8 @@ TEST(ConditionVariable, NotifyAll) {
 }
 
 TEST(ConditionVariable, WaitForTimeout) {
-    fast_task::mutex m;
-    fast_task::condition_variable cv;
+    fast_task::native::mutex m;
+    fast_task::native::condition_variable cv;
     bool timed_out = false;
 
     m.lock();
@@ -75,12 +75,12 @@ TEST(ConditionVariable, WaitForTimeout) {
 }
 
 TEST(ConditionVariable, WaitForSucceeds) {
-    fast_task::mutex m;
-    fast_task::condition_variable cv;
+    fast_task::native::mutex m;
+    fast_task::native::condition_variable cv;
     bool ready = false;
 
-    fast_task::thread notifier([&] {
-        fast_task::this_thread::sleep_for(std::chrono::milliseconds(10));
+    fast_task::native::thread notifier([&] {
+        fast_task::native::this_thread::sleep_for(std::chrono::milliseconds(10));
         m.lock();
         ready = true;
         m.unlock();

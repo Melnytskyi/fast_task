@@ -8,7 +8,7 @@
 #include <tasks/_internal.hpp>
 
 namespace fast_task {
-    void task_mutex::push_back(private_values& values, resume_task* node) {
+    void mutex::push_back(private_values& values, resume_task* node) {
         node->next = nullptr;
         node->prev = values.end;
         if (values.end) {
@@ -19,7 +19,7 @@ namespace fast_task {
         values.end = node;
     }
 
-    void task_mutex::erase(private_values& values, resume_task* node) {
+    void mutex::erase(private_values& values, resume_task* node) {
         if (node->prev) {
             node->prev->next = node->next;
         } else
@@ -34,11 +34,11 @@ namespace fast_task {
         node->prev = nullptr;
     }
 
-    task_mutex::task_mutex() {
+    mutex::mutex() {
         FT_DEBUG_ONLY(register_object(this));
     }
 
-    task_mutex::~task_mutex() {
+    mutex::~mutex() {
         FT_DEBUG_ONLY(unregister_object(this));
         if (values.current_task) {
             assert(false && "Tried to destroy locked mutex");
@@ -46,7 +46,7 @@ namespace fast_task {
         }
     }
 
-    void task_mutex::lock() {
+    void mutex::lock() {
         interrupt_unsafe_region region;
         resume_task node;
 
@@ -68,7 +68,7 @@ namespace fast_task {
             }
             values.current_task = loc->curr_task.get_id();
         } else {
-            fast_task::condition_variable_any cd;
+            fast_task::native::condition_variable_any cd;
             bool has_res = false;
             node.task = nullptr;
             node.awake_check = 0;
@@ -88,7 +88,7 @@ namespace fast_task {
         }
     }
 
-    bool task_mutex::try_lock() {
+    bool mutex::try_lock() {
         if (!values.no_race.try_lock())
             return false;
         fast_task::unique_lock ul(values.no_race, fast_task::adopt_lock);
@@ -108,7 +108,7 @@ namespace fast_task {
         return true;
     }
 
-    bool task_mutex::try_lock_until(std::chrono::high_resolution_clock::time_point time_point) {
+    bool mutex::try_lock_until(std::chrono::high_resolution_clock::time_point time_point) {
         resume_task node;
         fast_task::unique_lock ul(values.no_race);
 
@@ -133,7 +133,7 @@ namespace fast_task {
         } else {
             if (values.current_task == ((size_t)_thread_id() | native_thread_flag))
                 return false;
-            fast_task::condition_variable_any cd;
+            fast_task::native::condition_variable_any cd;
             bool has_res = false;
             node.task = nullptr;
             node.awake_check = 0;
@@ -156,7 +156,7 @@ namespace fast_task {
         }
     }
 
-    void task_mutex::unlock() {
+    void mutex::unlock() {
         bool to_yield = false;
         fast_task::unique_lock no_race_guard(values.no_race);
         if (get_loc().is_task_thread) {
@@ -212,7 +212,7 @@ namespace fast_task {
             this_task::yield();
     }
 
-    bool task_mutex::is_locked() {
+    bool mutex::is_locked() {
         if (try_lock()) {
             unlock();
             return false;
@@ -220,7 +220,7 @@ namespace fast_task {
         return true;
     }
 
-    bool task_mutex::is_own() {
+    bool mutex::is_own() {
         fast_task::lock_guard lg0(values.no_race);
         if (get_loc().is_task_thread) {
             if (values.current_task != get_loc().curr_task.get_id())
@@ -230,7 +230,7 @@ namespace fast_task {
         return true;
     }
 
-    void task_mutex::lifecycle_lock(task&& lock_task) {
+    void mutex::lifecycle_lock(task&& lock_task) {
         {
             fast_task::lock_guard guard(get_data(lock_task));
             if (get_data(lock_task).is_running() || get_data(lock_task).is_ended())
@@ -238,7 +238,7 @@ namespace fast_task {
             if (get_data(lock_task).is_scheduled() && (!get_data(lock_task).is_suspended() && get_data(lock_task).get_is_on_scheduler()))
                 throw std::runtime_error("Task is already in the scheduler queue");
             if (!get_data(lock_task).vtable || !get_data(lock_task).vtable->on_start)
-                throw std::logic_error("task_mutex::lifecycle_lock requires the on_start callback to be set");
+                throw std::logic_error("mutex::lifecycle_lock requires the on_start callback to be set");
         }
         task::run([lock_task, this]() {
             fast_task::lock_guard guard(*this);
@@ -246,7 +246,7 @@ namespace fast_task {
         });
     }
 
-    bool task_mutex::enter_wait(const task& task, enter_state& state) {
+    bool mutex::enter_wait(const task& task, enter_state& state) {
         auto node = state.template use<resume_task>();
         node->task = task;
         node->awake_check = get_data(task).awake_check;
@@ -260,7 +260,7 @@ namespace fast_task {
         }
     }
 
-    bool task_mutex::enter_wait_until(const task& task, enter_state& state, std::chrono::high_resolution_clock::time_point time_point) {
+    bool mutex::enter_wait_until(const task& task, enter_state& state, std::chrono::high_resolution_clock::time_point time_point) {
         auto node = state.template use<resume_task>();
         node->task = task;
         node->awake_check = get_data(task).awake_check;

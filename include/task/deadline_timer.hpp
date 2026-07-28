@@ -4,8 +4,8 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
-#ifndef INCLUDE_TASK_DEADLINE_TIMER
-#define INCLUDE_TASK_DEADLINE_TIMER
+#ifndef FAST_TASK_INCLUDE_TASK_DEADLINE_TIMER
+#define FAST_TASK_INCLUDE_TASK_DEADLINE_TIMER
 #include "enter_state.hpp"
 #include "fwd.hpp"
 #include "mutex_unify.hpp"
@@ -61,4 +61,4 @@ namespace fast_task {
         }
     };
 }
-#endif /* INCLUDE_TASK_DEADLINE_TIMER */
+#endif /* FAST_TASK_INCLUDE_TASK_DEADLINE_TIMER */

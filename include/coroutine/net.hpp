@@ -4,13 +4,14 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
-#ifndef INCLUDE_COROUTINE_NET
-#define INCLUDE_COROUTINE_NET
+#ifndef FAST_TASK_INCLUDE_COROUTINE_NET
+#define FAST_TASK_INCLUDE_COROUTINE_NET
 #include "../net.hpp"
 #include "../polyfill/expected.hpp"
 #include "core.hpp"
 #include <optional>
 #include <span>
+#include <string>
 #include <system_error>
 #include <vector>
 
@@ -472,4 +473,4 @@ namespace fast_task::net {
     }
 }
 
-#endif /* INCLUDE_COROUTINE_NET */
+#endif /* FAST_TASK_INCLUDE_COROUTINE_NET */

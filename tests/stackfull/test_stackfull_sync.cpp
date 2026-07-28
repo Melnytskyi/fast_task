@@ -9,14 +9,14 @@
 
 class StackfullSyncTest : public SchedulerFixture {};
 
-// ---- task_mutex shared between tasks ----
+// ---- mutex shared between tasks ----
 
 TEST_F(StackfullSyncTest, TaskMutexMutualExclusion) {
-    fast_task::task_mutex mtx;
+    fast_task::mutex mtx;
     int value = 0;
 
     auto worker = [&] {
-        fast_task::lock_guard<fast_task::task_mutex> lk(mtx);
+        fast_task::lock_guard<fast_task::mutex> lk(mtx);
         int v = value;
         fast_task::this_task::yield();
         value = v + 1;
@@ -34,11 +34,11 @@ TEST_F(StackfullSyncTest, TaskMutexMutualExclusion) {
     EXPECT_EQ(value, 3);
 }
 
-// ---- task_condition_variable ----
+// ---- condition_variable ----
 
 TEST_F(StackfullSyncTest, TaskCVWakesSleeper) {
-    fast_task::task_mutex mtx;
-    fast_task::task_condition_variable cv;
+    fast_task::mutex mtx;
+    fast_task::condition_variable cv;
     bool ready = false;
 
     auto waiter = fast_task::task::create([&] {
@@ -51,7 +51,7 @@ TEST_F(StackfullSyncTest, TaskCVWakesSleeper) {
     auto notifier = fast_task::task::create([&] {
         fast_task::this_task::sleep_for(std::chrono::milliseconds(20));
         {
-            fast_task::lock_guard<fast_task::task_mutex> lk(mtx);
+            fast_task::lock_guard<fast_task::mutex> lk(mtx);
             ready = true;
         }
         cv.notify_one();
@@ -65,10 +65,10 @@ TEST_F(StackfullSyncTest, TaskCVWakesSleeper) {
     EXPECT_TRUE(ready);
 }
 
-// ---- task_semaphore ----
+// ---- semaphore ----
 
 TEST_F(StackfullSyncTest, TaskSemaphoreThrottles) {
-    fast_task::task_semaphore sem;
+    fast_task::semaphore sem;
     sem.set_max_threshold(2); // allow 2 concurrent holders
     std::atomic<int> concurrent{0};
     std::atomic<int> max_concurrent{0};

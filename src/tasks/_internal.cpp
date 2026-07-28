@@ -38,14 +38,14 @@ namespace fast_task {
         static mutex_unify from_raw(void* ptr, uint8_t type) noexcept {
             mutex_unify m(nullptr);
             m.type = static_cast<mutex_unify::mutex_unify_type>(type);
-            m.nmut = reinterpret_cast<fast_task::mutex*>(ptr);
+            m.nmut = reinterpret_cast<fast_task::native::mutex*>(ptr);
             return m;
         }
 
         static mutex_unify from_task_object(task_object& obj) noexcept {
             mutex_unify m(nullptr);
             m.type = mutex_unify::mutex_unify_type::task_obj;
-            m.nmut = reinterpret_cast<fast_task::mutex*>(&obj);
+            m.nmut = reinterpret_cast<fast_task::native::mutex*>(&obj);
             return m;
         }
 
@@ -432,7 +432,7 @@ namespace fast_task {
             on_wait.store(&node, std::memory_order_relaxed);
             swapCtxRelock(self);
         } else {
-            fast_task::condition_variable_any cd;
+            fast_task::native::condition_variable_any cd;
             bool done = false;
             fast_task::unique_lock<mutex_unify> g(self);
             if (is_ended())
@@ -466,7 +466,7 @@ namespace fast_task {
             if (timed)
                 mutex_unify_relock_access::unlink_wait(on_wait, &node);
         } else {
-            fast_task::condition_variable_any cd;
+            fast_task::native::condition_variable_any cd;
             bool done = false;
             fast_task::unique_lock<mutex_unify> g(self);
             if (is_ended())

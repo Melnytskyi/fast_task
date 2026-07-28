@@ -5,32 +5,32 @@
 // http://www.boost.org/LICENSE_1_0.txt)
 
 #include <helpers.hpp>
-#include <threading.hpp>
+#include <native/mutex.hpp>
 
 TEST(TimedMutex, BasicLockUnlock) {
-    fast_task::timed_mutex m;
+    fast_task::native::timed_mutex m;
     m.lock();
     m.unlock();
 }
 
 TEST(TimedMutex, TryLockSucceedsWhenFree) {
-    fast_task::timed_mutex m;
+    fast_task::native::timed_mutex m;
     EXPECT_TRUE(m.try_lock());
     m.unlock();
 }
 
 TEST(TimedMutex, TryLockForSucceeds) {
-    fast_task::timed_mutex m;
+    fast_task::native::timed_mutex m;
     EXPECT_TRUE(m.try_lock_for(std::chrono::milliseconds(100)));
     m.unlock();
 }
 
 TEST(TimedMutex, TryLockForTimesOut) {
-    fast_task::timed_mutex m;
+    fast_task::native::timed_mutex m;
     m.lock(); // held by this thread
 
     bool result = true;
-    fast_task::thread t([&] {
+    fast_task::native::thread t([&] {
         result = m.try_lock_for(std::chrono::milliseconds(30));
     });
     t.join();
@@ -39,17 +39,17 @@ TEST(TimedMutex, TryLockForTimesOut) {
 }
 
 TEST(TimedMutex, TryLockUntilSucceeds) {
-    fast_task::timed_mutex m;
+    fast_task::native::timed_mutex m;
     auto deadline = std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(200);
     EXPECT_TRUE(m.try_lock_until(deadline));
     m.unlock();
 }
 
 TEST(TimedMutex, TryLockUntilTimesOut) {
-    fast_task::timed_mutex m;
+    fast_task::native::timed_mutex m;
     m.lock();
     bool result = true;
-    fast_task::thread t([&] {
+    fast_task::native::thread t([&] {
         auto deadline = std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(30);
         result = m.try_lock_until(deadline);
     });

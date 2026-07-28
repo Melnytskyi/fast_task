@@ -88,43 +88,43 @@ namespace fast_task {
     struct FT_API_LOCAL task_object::wait_item {
         wait_item* next = nullptr;
         task waiter;
-        fast_task::condition_variable_any* native_cv = nullptr;
+        fast_task::native::condition_variable_any* native_cv = nullptr;
         bool* native_check = nullptr;
         uint16_t awake_check = 0;
         bool heap_allocated = false;
     };
 
-    struct task_condition_variable::resume_task {
+    struct condition_variable::resume_task {
         class task task;
         uint16_t awake_check = 0;
-        fast_task::condition_variable_any* native_cv = nullptr;
+        fast_task::native::condition_variable_any* native_cv = nullptr;
         bool* native_check = nullptr;
         resume_task* next = nullptr;
         resume_task* prev = nullptr;
         bool heap_allocated = false;
     };
 
-    struct task_limiter::resume_task {
+    struct limiter::resume_task {
         class task task;
         uint16_t awake_check;
         resume_task* next = nullptr;
         resume_task* prev = nullptr;
     };
 
-    struct task_mutex::resume_task {
+    struct mutex::resume_task {
         class task task;
         uint16_t awake_check = 0;
-        fast_task::condition_variable_any* native_cv = nullptr;
+        fast_task::native::condition_variable_any* native_cv = nullptr;
         bool* native_check = nullptr;
         resume_task* next = nullptr;
         resume_task* prev = nullptr;
     };
 
-    struct task_queue_handle {                //96 [sizeof]
-        task_condition_variable end_of_queue; //32
+    struct queue_handle {                     //96 [sizeof]
+        condition_variable end_of_queue;      //32
         std::list<task> tasks;                //24
-        fast_task::spin_lock no_race;         //8
-        task_queue* tq = nullptr;             //8
+        fast_task::native::spin_lock no_race; //8
+        queue* tq = nullptr;                  //8
         size_t now_at_execution = 0;          //8
         size_t at_execution_max = 0;          //8
         bool destructed = false;              //1
@@ -132,9 +132,9 @@ namespace fast_task {
                                               //6 [padding]
     };
 
-    struct task_rw_mutex::resume_task {
+    struct rw_mutex::resume_task {
         class task task;
-        fast_task::condition_variable_any* native_cv = nullptr;
+        fast_task::native::condition_variable_any* native_cv = nullptr;
         bool* native_check = nullptr;
         resume_task* next = nullptr;
         resume_task* prev = nullptr;
@@ -142,7 +142,7 @@ namespace fast_task {
         std::optional<bool> lock_read;
     };
 
-    struct task_semaphore::resume_task {
+    struct semaphore::resume_task {
         class task task;
         uint16_t awake_check;
         resume_task* next = nullptr;
@@ -151,7 +151,7 @@ namespace fast_task {
 
     struct deadline_timer::handle {
         std::atomic_size_t usage_count{1}; // The reference counter
-        task_mutex no_race;
+        mutex no_race;
         std::chrono::high_resolution_clock::time_point time_point;
         std::unordered_set<size_t> canceled_tasks; //fast_task::task
         std::list<task> scheduled_tasks;           // tasks registered via async_wait(task)
@@ -261,9 +261,9 @@ namespace fast_task {
         binded_executor_registry executors_registry;
         std::list<uint32_t> completions;
         moodycamel::ConcurrentQueue<task_object*> tasks;
-        task_condition_variable on_closed_notifier;
-        fast_task::rw_mutex no_race;
-        fast_task::condition_variable_any new_task_notifier;
+        condition_variable on_closed_notifier;
+        fast_task::native::rw_mutex no_race;
+        fast_task::native::condition_variable_any new_task_notifier;
         uint16_t executors = 0;
         uint16_t expected_executors = 0;
         bool in_close : 1 = false;
@@ -278,15 +278,15 @@ namespace fast_task {
         global_task_allocator gba;
         internal_sched_cv no_tasks_execute_notifier;
         futex_waiter timer_waiter;
-        fast_task::condition_variable_any tasks_notifier;
-        fast_task::condition_variable_any executor_shutdown_notifier;
+        fast_task::native::condition_variable_any tasks_notifier;
+        fast_task::native::condition_variable_any executor_shutdown_notifier;
 
         global_executor_registry executors_registry;
         moodycamel::ConcurrentQueue<task_object*> tasks;
         moodycamel::ConcurrentQueue<task_object*> cold_tasks;
         hashed_timing_wheel timed_wheel;
 
-        fast_task::rw_mutex task_thread_safety;
+        fast_task::native::rw_mutex task_thread_safety;
 
 
         std::atomic<bool> time_control_enabled{false};
@@ -302,7 +302,7 @@ namespace fast_task {
         std::atomic_size_t executing_tasks = 0; //scheduled and in run tasks, including tasks in swap
 
 
-        fast_task::rw_mutex binded_workers_safety;
+        fast_task::native::rw_mutex binded_workers_safety;
         std::unordered_map<uint16_t, binded_context, std::hash<uint16_t>> binded_workers;
 
 
@@ -310,7 +310,7 @@ namespace fast_task {
         std::unique_ptr<std::barrier<>> stw_barrier_enter;
         std::unique_ptr<std::barrier<>> stw_barrier_exit;
         std::atomic<size_t> thread_count{0}; //including native worker and timer
-        fast_task::mutex stw_mutex;
+        fast_task::native::mutex stw_mutex;
 
         executor_global();
         ~executor_global();
@@ -376,24 +376,24 @@ namespace fast_task {
     unsigned long FT_API_LOCAL _thread_id();
     bool FT_API_LOCAL is_debugger_attached();
 
-    FT_DEBUG_ONLY(void FT_API_LOCAL register_object(task_mutex*));
-    FT_DEBUG_ONLY(void FT_API_LOCAL register_object(task_recursive_mutex*));
-    FT_DEBUG_ONLY(void FT_API_LOCAL register_object(task_rw_mutex*));
-    FT_DEBUG_ONLY(void FT_API_LOCAL register_object(task_condition_variable*));
+    FT_DEBUG_ONLY(void FT_API_LOCAL register_object(mutex*));
+    FT_DEBUG_ONLY(void FT_API_LOCAL register_object(recursive_mutex*));
+    FT_DEBUG_ONLY(void FT_API_LOCAL register_object(rw_mutex*));
+    FT_DEBUG_ONLY(void FT_API_LOCAL register_object(condition_variable*));
     FT_DEBUG_ONLY(void FT_API_LOCAL register_object(task_object*));
-    FT_DEBUG_ONLY(void FT_API_LOCAL register_object(task_semaphore*));
-    FT_DEBUG_ONLY(void FT_API_LOCAL register_object(task_limiter*));
-    FT_DEBUG_ONLY(void FT_API_LOCAL register_object(task_queue*));
+    FT_DEBUG_ONLY(void FT_API_LOCAL register_object(semaphore*));
+    FT_DEBUG_ONLY(void FT_API_LOCAL register_object(limiter*));
+    FT_DEBUG_ONLY(void FT_API_LOCAL register_object(queue*));
     FT_DEBUG_ONLY(void FT_API_LOCAL register_object(deadline_timer*));
 
-    FT_DEBUG_ONLY(void FT_API_LOCAL unregister_object(task_mutex*));
-    FT_DEBUG_ONLY(void FT_API_LOCAL unregister_object(task_recursive_mutex*));
-    FT_DEBUG_ONLY(void FT_API_LOCAL unregister_object(task_rw_mutex*));
-    FT_DEBUG_ONLY(void FT_API_LOCAL unregister_object(task_condition_variable*));
+    FT_DEBUG_ONLY(void FT_API_LOCAL unregister_object(mutex*));
+    FT_DEBUG_ONLY(void FT_API_LOCAL unregister_object(recursive_mutex*));
+    FT_DEBUG_ONLY(void FT_API_LOCAL unregister_object(rw_mutex*));
+    FT_DEBUG_ONLY(void FT_API_LOCAL unregister_object(condition_variable*));
     FT_DEBUG_ONLY(void FT_API_LOCAL unregister_object(task_object*));
-    FT_DEBUG_ONLY(void FT_API_LOCAL unregister_object(task_semaphore*));
-    FT_DEBUG_ONLY(void FT_API_LOCAL unregister_object(task_limiter*));
-    FT_DEBUG_ONLY(void FT_API_LOCAL unregister_object(task_queue*));
+    FT_DEBUG_ONLY(void FT_API_LOCAL unregister_object(semaphore*));
+    FT_DEBUG_ONLY(void FT_API_LOCAL unregister_object(limiter*));
+    FT_DEBUG_ONLY(void FT_API_LOCAL unregister_object(queue*));
     FT_DEBUG_ONLY(void FT_API_LOCAL unregister_object(deadline_timer*));
 }
 

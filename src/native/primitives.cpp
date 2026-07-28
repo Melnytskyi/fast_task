@@ -4,63 +4,43 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
-#include <cassert>
-#include <interrupt.hpp>
-#include <tasks/util/cpu.hpp>
+#include <native/condition_variable.hpp>
+#include <native/mutex.hpp>
 #include <tasks/util/interrupt.hpp>
-#include <threading.hpp>
 
+#include <cassert>
+#include <errno.h>
+#include <exception>
 
 #ifdef _WIN32
-
-    #ifdef FT_INCLUDE_THREAD_INTERRUPT_CODE
-extern "C" void thread_interrupter_asm_zmm();
-extern "C" void thread_interrupter_asm_ymm();
-extern "C" void thread_interrupter_asm_xmm();
-extern "C" void thread_interrupter_asm_xmm_small();
-extern "C" void thread_interrupter_asm();
-void (*thread_interrupter_asm_ptr)() = []() {
-    if (psnip_cpu_feature_check(PSNIP_CPU_FEATURE_X86_AVX512F))
-        return thread_interrupter_asm_zmm;
-    if (psnip_cpu_feature_check(PSNIP_CPU_FEATURE_X86_AVX))
-        return thread_interrupter_asm_ymm;
-    if (psnip_cpu_feature_check(PSNIP_CPU_FEATURE_X86_SSE2))
-        return thread_interrupter_asm_xmm;
-    return thread_interrupter_asm;
-}();
-    #endif
-
     #define NOMINMAX
     #include <Windows.h>
-    #include <process.h>
 #else
+    #include <chrono>
+
     #include <pthread.h>
     #include <semaphore.h>
     #include <signal.h>
-    #include <tasks/_internal.hpp>
     #include <ucontext.h>
 
-    static timespec to_abs_timespec(std::chrono::high_resolution_clock::time_point time) {
-        struct timespec ts;
-        clock_gettime(CLOCK_REALTIME, &ts);
-        auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(time - std::chrono::high_resolution_clock::now());
-        ts.tv_sec += ns.count() / 1000000000;
-        ts.tv_nsec += ns.count() % 1000000000;
-        if (ts.tv_nsec >= 1000000000) {
-            ts.tv_sec++;
-            ts.tv_nsec -= 1000000000;
-        } else if (ts.tv_nsec < 0) {
-            ts.tv_sec--;
-            ts.tv_nsec += 1000000000;
-        }
-        return ts;
+static timespec to_abs_timespec(std::chrono::high_resolution_clock::time_point time) {
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(time - std::chrono::high_resolution_clock::now());
+    ts.tv_sec += ns.count() / 1000000000;
+    ts.tv_nsec += ns.count() % 1000000000;
+    if (ts.tv_nsec >= 1000000000) {
+        ts.tv_sec++;
+        ts.tv_nsec -= 1000000000;
+    } else if (ts.tv_nsec < 0) {
+        ts.tv_sec--;
+        ts.tv_nsec += 1000000000;
     }
+    return ts;
+}
 #endif
 
-#if defined(__x86_64__) || defined(__i386__) || defined(_M_IX86) || defined(_M_X64)
-    #define __IS_X86_OR_X64
-#endif
-namespace fast_task {
+namespace fast_task::native {
 #ifdef _WIN32
     mutex::mutex() {
         _mutex = SRWLOCK_INIT;
@@ -135,7 +115,7 @@ namespace fast_task {
     }
 
     void timed_mutex::lock() {
-        fast_task::lock_guard<mutex> lock(_mutex);
+        lock_guard<mutex> lock(_mutex);
         while (locked != 0)
             _cond.wait(_mutex);
         locked = UINT_MAX;
@@ -144,7 +124,7 @@ namespace fast_task {
 
     void timed_mutex::unlock() {
         {
-            fast_task::lock_guard<mutex> lock(_mutex);
+            lock_guard<mutex> lock(_mutex);
             locked = 0;
             interrupt_unsafe_region::unlock();
         }
@@ -152,7 +132,7 @@ namespace fast_task {
     }
 
     bool timed_mutex::try_lock() {
-        fast_task::lock_guard<mutex> lock(_mutex);
+        lock_guard<mutex> lock(_mutex);
         if (locked == 0) {
             locked = UINT_MAX;
             interrupt_unsafe_region::lock();
@@ -166,42 +146,13 @@ namespace fast_task {
     }
 
     bool timed_mutex::try_lock_until(std::chrono::high_resolution_clock::time_point time) {
-        fast_task::lock_guard<mutex> lock(_mutex);
+        lock_guard<mutex> lock(_mutex);
         while (locked != 0)
             if (_cond.wait_until(_mutex, time) == cv_status::timeout)
                 return false;
         locked = UINT_MAX;
         interrupt_unsafe_region::lock();
         return true;
-    }
-
-    spin_lock::spin_lock() = default;
-
-    spin_lock::~spin_lock() = default;
-
-    void spin_lock::lock() {
-        interrupt_unsafe_region::lock();
-        while (
-            flag.test_and_set(std::memory_order_acquire)) {
-    #ifdef __IS_X86_OR_X64
-            _mm_pause();
-    #endif
-        }
-    }
-
-    bool spin_lock::try_lock() {
-        interrupt_unsafe_region::lock();
-        bool prev = flag.test_and_set(std::memory_order_acquire);
-        if (prev) {
-            interrupt_unsafe_region::unlock();
-            return false;
-        }
-        return true;
-    }
-
-    void spin_lock::unlock() {
-        flag.clear(std::memory_order_release);
-        interrupt_unsafe_region::unlock();
     }
 
     condition_variable::condition_variable() {
@@ -286,152 +237,6 @@ namespace fast_task {
             if (!res && err != ERROR_TIMEOUT)
                 throw std::system_error(err, std::system_category());
             return status;
-        }
-    }
-
-    void thread::init_dat() {}
-
-    void* thread::create(void (*function)(void*), void* arg, unsigned long& id, size_t stack_size, bool stack_reservation, int& error_code) {
-        error_code = 0;
-        interrupt_unsafe_region region;
-        void* handle = (void*)_beginthreadex(nullptr, (uint32_t)std::min<size_t>(stack_size, UINT32_MAX), reinterpret_cast<_beginthreadex_proc_type>(reinterpret_cast<void*>(function)), arg, CREATE_SUSPENDED | (stack_reservation ? STACK_SIZE_PARAM_IS_A_RESERVATION : 0), (unsigned int*)&id);
-        if (!handle) {
-            error_code = GetLastError();
-            return nullptr;
-        }
-        ResumeThread(handle);
-        return handle;
-    }
-
-    [[nodiscard]] unsigned int thread::hardware_concurrency() noexcept {
-        interrupt_unsafe_region region;
-        SYSTEM_INFO sysinfo;
-        GetSystemInfo(&sysinfo);
-        int numCPU = sysinfo.dwNumberOfProcessors;
-        if (numCPU < 1)
-            numCPU = 1;
-        return (unsigned int)numCPU;
-    }
-
-    void thread::join() {
-        if (_thread) {
-            interrupt_unsafe_region region;
-            WaitForSingleObject(_thread, INFINITE);
-            CloseHandle(_thread);
-            _thread = nullptr;
-        }
-    }
-
-    void thread::detach() {
-        if (_thread) {
-            interrupt_unsafe_region region;
-            CloseHandle(_thread);
-            _thread = nullptr;
-        }
-    }
-
-    bool thread::suspend() {
-        return suspend(_id);
-    }
-
-    bool thread::resume() {
-        return resume(_id);
-    }
-
-    void thread::insert_context(void (*inserted_context)(void*), void* arg) {
-        insert_context(_id, inserted_context, arg);
-    }
-
-    struct HANDLE_CLOSER {
-        HANDLE handle = nullptr;
-
-        HANDLE_CLOSER(HANDLE handle)
-            : handle(handle) {}
-
-        ~HANDLE_CLOSER() {
-            if (handle != nullptr) {
-                interrupt_unsafe_region region;
-                CloseHandle(handle);
-            }
-            handle = nullptr;
-        }
-    };
-
-    bool thread::suspend(id id) {
-        interrupt_unsafe_region region;
-        HANDLE_CLOSER thread_handle(OpenThread(THREAD_SUSPEND_RESUME | THREAD_QUERY_INFORMATION, false, id._id));
-        if (SuspendThread(thread_handle.handle) == DWORD(-1))
-            return false;
-        return true;
-    }
-
-    bool thread::resume(id id) {
-        interrupt_unsafe_region region;
-        HANDLE_CLOSER thread_handle(OpenThread(THREAD_SUSPEND_RESUME | THREAD_QUERY_INFORMATION, false, id._id));
-        if (ResumeThread(thread_handle.handle) == DWORD(-1))
-            return false;
-        return true;
-    }
-
-    bool thread::insert_context(id id, void (*inserted_context)(void*), void* arg) {
-    #ifdef FT_INCLUDE_THREAD_INTERRUPT_CODE
-        interrupt_unsafe_region region;
-        HANDLE_CLOSER thread_handle(OpenThread(THREAD_SUSPEND_RESUME | THREAD_QUERY_INFORMATION | THREAD_GET_CONTEXT | THREAD_SET_CONTEXT, false, id._id));
-        if (SuspendThread(thread_handle.handle) == DWORD(-1))
-            return false;
-
-        CONTEXT context;
-        context.ContextFlags = CONTEXT_CONTROL;
-        if (GetThreadContext(thread_handle.handle, &context) == 0) {
-            ResumeThread(thread_handle.handle);
-            return false;
-        }
-        bool res = true;
-        try {
-            auto rsp = context.Rsp;
-            rsp -= sizeof(DWORD64);
-            *(DWORD64*)rsp = context.Rip; //return address
-            rsp -= sizeof(DWORD64);
-            *(DWORD64*)rsp = (DWORD64)inserted_context; //inserted_context
-            rsp -= sizeof(DWORD64);
-            *(DWORD64*)rsp = (DWORD64)arg; //arg
-            context.Rsp = rsp;
-            //set rip to trampoline
-            context.Rip = (DWORD64)thread_interrupter_asm_ptr;
-            res = SetThreadContext(thread_handle.handle, &context);
-        } catch (...) {
-        }
-        ResumeThread(thread_handle.handle);
-        return res;
-    #else
-        return false;
-    #endif
-    }
-
-    namespace this_thread {
-        thread::id get_id() noexcept {
-            interrupt_unsafe_region region;
-            return thread::id(GetCurrentThreadId());
-        }
-
-        void yield() noexcept {
-            interrupt_unsafe_region region;
-            SwitchToThread();
-        }
-
-        void sleep_for(std::chrono::milliseconds ms) {
-            interrupt_unsafe_region region;
-            Sleep((DWORD)ms.count());
-        }
-
-        void sleep_until(std::chrono::high_resolution_clock::time_point time) {
-            interrupt_unsafe_region region;
-            auto diff = time - std::chrono::high_resolution_clock::now();
-            while (diff.count() > 0) {
-                std::chrono::milliseconds ms = std::chrono::duration_cast<std::chrono::milliseconds>(diff);
-                Sleep((DWORD)ms.count());
-                diff = time - std::chrono::high_resolution_clock::now();
-            }
         }
     }
 #else
@@ -624,34 +429,6 @@ namespace fast_task {
         }
     }
 
-    spin_lock::spin_lock() = default;
-
-    spin_lock::~spin_lock() = default;
-
-    void spin_lock::lock() {
-        interrupt_unsafe_region::lock();
-        while (flag.test_and_set(std::memory_order_acquire)) {
-    #if (defined(__GNUC__) || defined(__clang__)) && defined(__IS_X86_OR_X64)
-            __builtin_ia32_pause();
-    #endif
-        }
-    }
-
-    bool spin_lock::try_lock() {
-        interrupt_unsafe_region::lock();
-        bool prev = flag.test_and_set(std::memory_order_acquire);
-        if (prev) {
-            interrupt_unsafe_region::unlock();
-            return false;
-        }
-        return true;
-    }
-
-    void spin_lock::unlock() {
-        flag.clear(std::memory_order_release);
-        interrupt_unsafe_region::unlock();
-    }
-
     condition_variable::condition_variable() {
         interrupt_unsafe_region region;
         _cond = new pthread_cond_t;
@@ -727,143 +504,15 @@ namespace fast_task {
         }
         return cv_status::no_timeout;
     }
-
-    void thread::init_dat() {
-    }
-
-    void* thread::create(void (*function)(void*), void* arg, unsigned long& id, size_t stack_size, bool stack_reservation, int& error_code) {
-        interrupt_unsafe_region region;
-        error_code = 0;
-        pthread_attr_t attr;
-        if (int err = pthread_attr_init(&attr); err) {
-            error_code = err;
-            return nullptr;
-        }
-        if (int err = pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE); err) {
-            error_code = err;
-            return nullptr;
-        }
-        if (stack_reservation) {
-            if (int err = pthread_attr_setstacksize(&attr, stack_size); err) {
-                error_code = err;
-                return nullptr;
-            }
-        }
-        pthread_t thread;
-        if (int err = pthread_create(&thread, &attr, reinterpret_cast<void* (*)(void*)>(function), arg); err) {
-            error_code = err;
-            return nullptr;
-        }
-        if (int err = pthread_attr_destroy(&attr); err) {
-            error_code = err;
-            return nullptr;
-        }
-        id = (unsigned long)thread;
-        return (void*)thread;
-    }
-
-    [[nodiscard]] unsigned int thread::hardware_concurrency() noexcept {
-        interrupt_unsafe_region region;
-        return sysconf(_SC_NPROCESSORS_ONLN);
-    }
-
-    void thread::join() {
-        interrupt_unsafe_region region;
-        if (_thread) {
-            if (int err = pthread_join((pthread_t)_thread, nullptr); err) {
-                switch (err) {
-                case EDEADLK:
-                    throw std::logic_error("Thread::join() called on itself");
-                case EINVAL:
-                    throw std::logic_error("Thread::join() called on a non joinable/detachable thread");
-                case ESRCH:
-                    throw std::logic_error("Thread::join() called on a thread that does not exist or has already been joined/detached");
-                default:
-                    throw std::system_error(err, std::system_category());
-                }
-            }
-            _thread = nullptr;
-        }
-    }
-
-    void thread::detach() {
-        interrupt_unsafe_region region;
-        if (_thread) {
-            if (int err = pthread_detach((pthread_t)_thread); err) {
-                switch (err) {
-                case EINVAL:
-                    throw std::logic_error("Thread::detach() called on a non joinable/detachable thread");
-                case ESRCH:
-                    throw std::logic_error("Thread::detach() called on a thread that does not exist or has already been joined/detached");
-                default:
-                    throw std::system_error(err, std::system_category());
-                }
-            }
-            _thread = nullptr;
-        }
-    }
-
-    bool thread::suspend() {
-        interrupt_unsafe_region region;
-        return suspend(_id);
-    }
-
-    bool thread::resume() {
-        interrupt_unsafe_region region;
-        return resume(_id);
-    }
-
-    void thread::insert_context(void (*)(void*), void*) {
-    }
-
-    bool thread::suspend(id) {
-        return false;
-    }
-
-    bool thread::resume(id) {
-        return false;
-    }
-
-    bool thread::insert_context(id, void (*)(void*), void*) {
-        return false;
-    }
-
-    namespace this_thread {
-        thread::id get_id() noexcept {
-            interrupt_unsafe_region region;
-            return thread::id(pthread_self());
-        }
-
-        void yield() noexcept {
-            interrupt_unsafe_region region;
-            sched_yield();
-        }
-
-        void sleep_for(std::chrono::milliseconds ms) {
-            interrupt_unsafe_region region;
-            sleep_until(std::chrono::high_resolution_clock::now() + ms);
-        }
-
-        void sleep_until(std::chrono::high_resolution_clock::time_point time) {
-            interrupt_unsafe_region region;
-            auto diff = time - std::chrono::high_resolution_clock::now();
-            while (diff.count() > 0) {
-                timespec ts;
-                ts.tv_sec = diff.count() / 1000000000;
-                ts.tv_nsec = diff.count() % 1000000000;
-                nanosleep(&ts, nullptr);
-                diff = time - std::chrono::high_resolution_clock::now();
-            }
-        }
-    }
 #endif
+
     recursive_mutex::recursive_mutex() {
         count = 0;
-        owner = fast_task::thread::id();
+        owner = thread::id();
     }
 
     recursive_mutex::~recursive_mutex() noexcept {
-        if (owner != fast_task::thread::id()) {
+        if (owner != thread::id()) {
             assert(false && "Recursive mutex destroyed while locked");
             std::terminate();
         }
@@ -871,7 +520,7 @@ namespace fast_task {
 
     void recursive_mutex::lock() {
         interrupt_unsafe_region region;
-        if (owner == fast_task::this_thread::get_id()) {
+        if (owner == this_thread::get_id()) {
             count++;
             if (count == 0) {
                 count--;
@@ -880,38 +529,38 @@ namespace fast_task {
             return;
         }
         actual_mutex.lock();
-        owner = fast_task::this_thread::get_id();
+        owner = this_thread::get_id();
         count = 1;
     }
 
     void recursive_mutex::unlock() {
         interrupt_unsafe_region region;
-        if (owner != fast_task::this_thread::get_id()) {
+        if (owner != this_thread::get_id()) {
             throw std::logic_error("Thread tried to unlock non-owned mutex");
         }
         count--;
         if (count == 0) {
-            owner = fast_task::thread::id();
+            owner = thread::id();
             actual_mutex.unlock();
         }
     }
 
     bool recursive_mutex::try_lock() {
         interrupt_unsafe_region region;
-        if (owner == fast_task::this_thread::get_id()) {
+        if (owner == this_thread::get_id()) {
             count++;
             return true;
         }
         if (actual_mutex.try_lock()) {
-            owner = fast_task::this_thread::get_id();
+            owner = this_thread::get_id();
             count = 1;
             return true;
         }
         return false;
     }
 
-    relock_state recursive_mutex::relock_begin() {
-        if (owner != fast_task::this_thread::get_id())
+    recursive_mutex::relock_state recursive_mutex::relock_begin() {
+        if (owner != this_thread::get_id())
             throw std::logic_error("Thread tried to relock non-owned mutex");
         size_t _count = count;
         count = 1;
@@ -919,21 +568,21 @@ namespace fast_task {
     }
 
     void recursive_mutex::relock_end(relock_state state) {
-        if (owner != fast_task::this_thread::get_id())
+        if (owner != this_thread::get_id())
             throw std::logic_error("Thread tried to relock non-owned mutex");
         count = state._state;
-        owner = fast_task::this_thread::get_id();
+        owner = this_thread::get_id();
     }
 
     void condition_variable_any::notify_one() {
         interrupt_unsafe_region region;
-        fast_task::lock_guard<mutex> lock(_mutex);
+        lock_guard<mutex> lock(_mutex);
         _cond.notify_one();
     }
 
     void condition_variable_any::notify_all() {
         interrupt_unsafe_region region;
-        fast_task::lock_guard<mutex> lock(_mutex);
+        lock_guard<mutex> lock(_mutex);
         _cond.notify_all();
     }
 
@@ -943,41 +592,5 @@ namespace fast_task {
 
     void condition_variable_any::unsafe_notify_all() {
         _cond.notify_all();
-    }
-
-    [[nodiscard]] thread::id thread::get_id() const noexcept {
-        return id(_id);
-    }
-
-    bool thread::id::operator==(const id& other) const noexcept {
-        return _id == other._id;
-    }
-
-    bool thread::id::operator!=(const id& other) const noexcept {
-        return _id != other._id;
-    }
-
-    bool thread::id::operator<(const id& other) const noexcept {
-        return _id < other._id;
-    }
-
-    bool thread::id::operator<=(const id& other) const noexcept {
-        return _id <= other._id;
-    }
-
-    bool thread::id::operator>(const id& other) const noexcept {
-        return _id > other._id;
-    }
-
-    bool thread::id::operator>=(const id& other) const noexcept {
-        return _id >= other._id;
-    }
-
-    thread::id::operator size_t() const noexcept {
-        return (size_t)_id;
-    }
-
-    [[nodiscard]] bool thread::joinable() const noexcept {
-        return _thread != nullptr;
     }
 }

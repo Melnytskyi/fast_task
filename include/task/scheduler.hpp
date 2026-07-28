@@ -4,8 +4,8 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
-#ifndef INCLUDE_TASK_SCHEDULER
-#define INCLUDE_TASK_SCHEDULER
+#ifndef FAST_TASK_INCLUDE_TASK_SCHEDULER
+#define FAST_TASK_INCLUDE_TASK_SCHEDULER
 #include "task.hpp"
 #include <functional>
 #include <list>
@@ -78,4 +78,4 @@ namespace fast_task {
     }
 }
 
-#endif /* INCLUDE_TASK_SCHEDULER */
+#endif /* FAST_TASK_INCLUDE_TASK_SCHEDULER */

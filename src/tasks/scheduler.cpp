@@ -4,11 +4,11 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
+#include <native.hpp>
 #include <task.hpp>
 #include <tasks/_internal.hpp>
 #include <tasks/util/interrupt.hpp>
 #include <tasks/util/light_stack.hpp>
-#include <threading.hpp>
 
 namespace fast_task {
 

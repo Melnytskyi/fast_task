@@ -6,5 +6,4 @@
 #else
     #include "fast_task_export.h"
 #endif
-
 #endif

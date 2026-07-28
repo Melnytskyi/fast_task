@@ -10,7 +10,7 @@
 class TaskSemaphoreTest : public SchedulerFixture {};
 
 TEST_F(TaskSemaphoreTest, BasicLockRelease) {
-    fast_task::task_semaphore sem;
+    fast_task::semaphore sem;
     sem.set_max_threshold(1);
     run_task([&] {
         sem.lock();
@@ -21,7 +21,7 @@ TEST_F(TaskSemaphoreTest, BasicLockRelease) {
 }
 
 TEST_F(TaskSemaphoreTest, TryLockSucceeds) {
-    fast_task::task_semaphore sem;
+    fast_task::semaphore sem;
     sem.set_max_threshold(1);
     run_task([&] {
         EXPECT_TRUE(sem.try_lock());
@@ -30,14 +30,14 @@ TEST_F(TaskSemaphoreTest, TryLockSucceeds) {
 }
 
 TEST_F(TaskSemaphoreTest, CountingThreshold) {
-    fast_task::task_semaphore sem;
+    fast_task::semaphore sem;
     sem.set_max_threshold(3);
     run_task([&] {
         sem.lock();
         sem.lock();
         sem.lock();
         EXPECT_TRUE(sem.is_locked());
-        // 4th lock would block — verify try_lock fails
+
         EXPECT_FALSE(sem.try_lock());
         sem.release();
         sem.release();
@@ -46,7 +46,7 @@ TEST_F(TaskSemaphoreTest, CountingThreshold) {
 }
 
 TEST_F(TaskSemaphoreTest, ReleaseAll) {
-    fast_task::task_semaphore sem;
+    fast_task::semaphore sem;
     sem.set_max_threshold(3);
     run_task([&] {
         sem.lock();
@@ -58,24 +58,24 @@ TEST_F(TaskSemaphoreTest, ReleaseAll) {
 }
 
 TEST_F(TaskSemaphoreTest, WaiterUnblocked) {
-    fast_task::task_semaphore sem;
+    fast_task::semaphore sem;
     sem.set_max_threshold(1);
     std::atomic<bool> second_done{false};
     std::atomic<bool> holder_locked{false};
 
     auto holder = fast_task::task::create([&] {
-        sem.lock(); // fill the semaphore
+        sem.lock();
         holder_locked = true;
         fast_task::this_task::sleep_for(std::chrono::milliseconds(20));
-        sem.release(); // unblock waiter
+        sem.release();
     });
     fast_task::scheduler::start(holder);
 
     while (!holder_locked.load())
-        fast_task::this_thread::yield();
+        fast_task::native::this_thread::yield();
 
     auto waiter = fast_task::task::create([&] {
-        sem.lock(); // should block until release
+        sem.lock();
         second_done = true;
         sem.release();
     });
@@ -88,7 +88,7 @@ TEST_F(TaskSemaphoreTest, WaiterUnblocked) {
 }
 
 TEST_F(TaskSemaphoreTest, TryLockForTimeout) {
-    fast_task::task_semaphore sem;
+    fast_task::semaphore sem;
     sem.set_max_threshold(1);
     bool timed_out = false;
 

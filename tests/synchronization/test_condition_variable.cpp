@@ -10,8 +10,8 @@
 class TaskCvTest : public SchedulerFixture {};
 
 TEST_F(TaskCvTest, WaitAndNotifyOne) {
-    fast_task::task_mutex m;
-    fast_task::task_condition_variable cv;
+    fast_task::mutex m;
+    fast_task::condition_variable cv;
     bool ready = false;
 
     run_task([&] {
@@ -25,7 +25,7 @@ TEST_F(TaskCvTest, WaitAndNotifyOne) {
 
         fast_task::this_task::sleep_for(std::chrono::milliseconds(20));
         {
-            fast_task::lock_guard<fast_task::task_mutex> lg(m);
+            fast_task::lock_guard<fast_task::mutex> lg(m);
             ready = true;
         }
         cv.notify_one();
@@ -37,8 +37,8 @@ TEST_F(TaskCvTest, WaitAndNotifyOne) {
 }
 
 TEST_F(TaskCvTest, NotifyAll) {
-    fast_task::task_mutex m;
-    fast_task::task_condition_variable cv;
+    fast_task::mutex m;
+    fast_task::condition_variable cv;
     std::atomic<int> woken{0};
     bool go = false;
 
@@ -60,7 +60,7 @@ TEST_F(TaskCvTest, NotifyAll) {
 
         fast_task::this_task::sleep_for(std::chrono::milliseconds(20));
         {
-            fast_task::lock_guard<fast_task::task_mutex> lg(m);
+            fast_task::lock_guard<fast_task::mutex> lg(m);
             go = true;
         }
         cv.notify_all();
@@ -73,8 +73,8 @@ TEST_F(TaskCvTest, NotifyAll) {
 }
 
 TEST_F(TaskCvTest, WaitForTimeout) {
-    fast_task::task_mutex m;
-    fast_task::task_condition_variable cv;
+    fast_task::mutex m;
+    fast_task::condition_variable cv;
     bool timed_out = false;
 
     run_task([&] {
@@ -87,8 +87,8 @@ TEST_F(TaskCvTest, WaitForTimeout) {
 }
 
 TEST_F(TaskCvTest, HasWaiters) {
-    fast_task::task_mutex m;
-    fast_task::task_condition_variable cv;
+    fast_task::mutex m;
+    fast_task::condition_variable cv;
     std::atomic<bool> waiter_in{false};
     bool notify = false;
 
@@ -109,7 +109,7 @@ TEST_F(TaskCvTest, HasWaiters) {
         EXPECT_TRUE(cv.has_waiters());
 
         {
-            fast_task::lock_guard<fast_task::task_mutex> lg(m);
+            fast_task::lock_guard<fast_task::mutex> lg(m);
             notify = true;
         }
         cv.notify_one();
@@ -120,8 +120,8 @@ TEST_F(TaskCvTest, HasWaiters) {
 }
 
 TEST_F(TaskCvTest, AsyncWait) {
-    fast_task::task_mutex m;
-    fast_task::task_condition_variable cv;
+    fast_task::mutex m;
+    fast_task::condition_variable cv;
     bool ready = false;
     bool completed = false;
 
@@ -139,7 +139,7 @@ TEST_F(TaskCvTest, AsyncWait) {
 
         fast_task::this_task::sleep_for(std::chrono::milliseconds(50));
         {
-            fast_task::lock_guard<fast_task::task_mutex> lg(m);
+            fast_task::lock_guard<fast_task::mutex> lg(m);
             ready = true;
         }
         cv.notify_one();

@@ -4,20 +4,20 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
-#ifndef INCLUDE_TASK_CONDITION_VARIABLE
-#define INCLUDE_TASK_CONDITION_VARIABLE
+#ifndef FAST_TASK_INCLUDE_TASK_CONDITION_VARIABLE
+#define FAST_TASK_INCLUDE_TASK_CONDITION_VARIABLE
+#include "../native/spin_lock.hpp"
 #include "enter_state.hpp"
 #include "fwd.hpp"
-#include "threading.hpp"
 #include <mutex>
 
 namespace fast_task {
-    class FT_API task_condition_variable {
+    class FT_API condition_variable {
         friend struct debug::_debug_collect;
         struct FT_API_LOCAL resume_task;
 
         struct FT_API_LOCAL private_values {
-            fast_task::spin_lock no_race;
+            fast_task::native::spin_lock no_race;
             struct resume_task* begin = nullptr;
             struct resume_task* end = nullptr;
         } values;
@@ -26,8 +26,8 @@ namespace fast_task {
         static void erase(private_values& values, resume_task* node);
 
     public:
-        task_condition_variable();
-        ~task_condition_variable();
+        condition_variable();
+        ~condition_variable();
         void wait(fast_task::unique_lock<mutex_unify>& lock);
         bool wait_until(fast_task::unique_lock<mutex_unify>& lock, std::chrono::high_resolution_clock::time_point time_point);
         void wait(std::unique_lock<mutex_unify>& lock);
@@ -54,4 +54,4 @@ namespace fast_task {
     };
 }
 
-#endif /* INCLUDE_TASK_CONDITION_VARIABLE */
+#endif /* FAST_TASK_INCLUDE_TASK_CONDITION_VARIABLE */

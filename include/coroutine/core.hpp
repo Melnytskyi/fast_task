@@ -4,8 +4,8 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
-#ifndef INCLUDE_COROUTINE_CORE
-#define INCLUDE_COROUTINE_CORE
+#ifndef FAST_TASK_INCLUDE_COROUTINE_CORE
+#define FAST_TASK_INCLUDE_COROUTINE_CORE
 #include "../exceptions.hpp"
 #include "../shared.hpp"
 #include "../task/task.hpp"
@@ -395,4 +395,4 @@ struct std::coroutine_traits<fast_task::task_auto_start_coro<T>, Args...> {
     using promise_type = typename fast_task::task_auto_start_coro<T>::promise_type;
 };
 
-#endif /* INCLUDE_COROUTINE_CORE */
+#endif /* FAST_TASK_INCLUDE_COROUTINE_CORE */

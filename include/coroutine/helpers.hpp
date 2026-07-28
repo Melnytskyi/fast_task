@@ -4,15 +4,15 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
-#ifndef INCLUDE_COROUTINE_HELPERS
-#define INCLUDE_COROUTINE_HELPERS
+#ifndef FAST_TASK_INCLUDE_COROUTINE_HELPERS
+#define FAST_TASK_INCLUDE_COROUTINE_HELPERS
 #include "../task/queue.hpp"
 #include "../task/scheduler.hpp"
 #include "core.hpp"
 
 namespace fast_task::coroutine {
     template <class T, class FN>
-    task_coro<void> async_for_each(T&& container, fast_task::task_queue& queue, FN&& fn) {
+    task_coro<void> async_for_each(T&& container, fast_task::queue& queue, FN&& fn) {
         if (container.empty())
             return [] -> fast_task::task_coro<void> {
                 co_return;
@@ -73,7 +73,7 @@ namespace fast_task::coroutine {
     }
 
     template <class T, class FN>
-    void for_each(T& container, fast_task::task_queue& queue, FN&& fn) {
+    void for_each(T& container, fast_task::queue& queue, FN&& fn) {
         if (container.empty())
             return;
         std::vector<fast_task::task_coro<void>> coros;
@@ -132,14 +132,12 @@ namespace fast_task::coroutine {
         if (coros.empty())
             return;
 
-        // Start all tasks first
         for (auto& coro : coros)
             fast_task::scheduler::start(coro);
 
-        // Now, block and wait for each one
         try {
             for (auto& coro : coros)
-                coro->await_task(); // This blocks
+                coro->await_task();
         } catch (...) {
             for (auto& coro : coros)
                 coro->notify_cancel();
@@ -149,4 +147,4 @@ namespace fast_task::coroutine {
 }
 
 
-#endif /* INCLUDE_COROUTINE_HELPERS */
+#endif /* FAST_TASK_INCLUDE_COROUTINE_HELPERS */

@@ -10,7 +10,7 @@
 class TaskMutexTest : public SchedulerFixture {};
 
 TEST_F(TaskMutexTest, BasicLockUnlock) {
-    fast_task::task_mutex m;
+    fast_task::mutex m;
     run_task([&] {
         m.lock();
         m.unlock();
@@ -18,7 +18,7 @@ TEST_F(TaskMutexTest, BasicLockUnlock) {
 }
 
 TEST_F(TaskMutexTest, IsLockedAndIsOwn) {
-    fast_task::task_mutex m;
+    fast_task::mutex m;
     run_task([&] {
         EXPECT_FALSE(m.is_locked());
         m.lock();
@@ -30,7 +30,7 @@ TEST_F(TaskMutexTest, IsLockedAndIsOwn) {
 }
 
 TEST_F(TaskMutexTest, TryLockSucceeds) {
-    fast_task::task_mutex m;
+    fast_task::mutex m;
     run_task([&] {
         EXPECT_TRUE(m.try_lock());
         EXPECT_TRUE(m.is_own());
@@ -39,7 +39,7 @@ TEST_F(TaskMutexTest, TryLockSucceeds) {
 }
 
 TEST_F(TaskMutexTest, TryLockFailsWhenHeld) {
-    fast_task::task_mutex m;
+    fast_task::mutex m;
     bool failed = false;
     run_task([&] {
         m.lock();
@@ -54,7 +54,7 @@ TEST_F(TaskMutexTest, TryLockFailsWhenHeld) {
 }
 
 TEST_F(TaskMutexTest, Contention) {
-    fast_task::task_mutex m;
+    fast_task::mutex m;
     std::atomic<int> counter{0};
     const int per_task = 500;
 
@@ -79,7 +79,7 @@ TEST_F(TaskMutexTest, Contention) {
 }
 
 TEST_F(TaskMutexTest, TryLockForTimeout) {
-    fast_task::task_mutex m;
+    fast_task::mutex m;
     bool timed_out = false;
 
     run_task([&] {
@@ -98,7 +98,7 @@ TEST_F(TaskMutexTest, TryLockForTimeout) {
 }
 
 TEST_F(TaskMutexTest, AsyncLock) {
-    fast_task::task_mutex m;
+    fast_task::mutex m;
     std::atomic<int> order{0};
 
     run_task([&] {

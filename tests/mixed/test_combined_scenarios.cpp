@@ -10,10 +10,8 @@
 
 class CombinedScenariosTest : public SchedulerFixture {};
 
-// ---- task_queue grouping stackful + stackless tasks ----
-
 TEST_F(CombinedScenariosTest, TaskQueryMixedTasksAndCoroutines) {
-    fast_task::task_queue queue(3);
+    fast_task::queue queue(3);
     std::atomic<int> count{0};
 
     // Stackful tasks
@@ -39,18 +37,16 @@ TEST_F(CombinedScenariosTest, TaskQueryMixedTasksAndCoroutines) {
     EXPECT_EQ(count.load(), 3);
 }
 
-// ---- deadline_timer canceling a blocked task ----
-
 TEST_F(CombinedScenariosTest, DeadlineTimerCancelsBlockedTask) {
     GTEST_SKIP() << "Skipped: library limitation — task deadline does not cancel a task on wait, but would only prevent it from being scheduled after the wait is over. This is a known issue and will be fixed in a future .";
-    fast_task::task_mutex mtx;
+    fast_task::mutex mtx;
     std::atomic<bool> cancelled{false};
 
     auto deadline = std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(50);
     auto t = fast_task::task::create(
         [&] {
             try {
-                fast_task::unique_lock<fast_task::task_mutex> lock(mtx);
+                fast_task::unique_lock<fast_task::mutex> lock(mtx);
             } catch (const fast_task::task_cancellation&) {
                 cancelled = true;
                 throw;
@@ -60,14 +56,12 @@ TEST_F(CombinedScenariosTest, DeadlineTimerCancelsBlockedTask) {
         deadline
     );
 
-    fast_task::unique_lock<fast_task::task_mutex> native_lock(mtx);
+    fast_task::unique_lock<fast_task::mutex> native_lock(mtx);
     fast_task::scheduler::start(t);
     t.await_task();
 
     EXPECT_TRUE(cancelled.load());
 }
-
-// ---- nested coroutines ----
 
 fast_task::task_coro<int> nested_inner(int v) {
     co_return v * 2;
@@ -100,8 +94,6 @@ TEST_F(CombinedScenariosTest, NestedCoroutinesComputeCorrectly) {
 
     EXPECT_EQ(result, 21);
 }
-
-// ---- future chained from coroutine result ----
 
 fast_task::task_coro<int> compute_coro() {
     co_return 5;

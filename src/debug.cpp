@@ -47,14 +47,14 @@ namespace fast_task::debug {
     };
 
     struct debug_registry {
-        std::unordered_map<task_mutex*, debug_data> mutex_instances;
-        std::unordered_map<task_recursive_mutex*, debug_data> rec_mutex_instances;
-        std::unordered_map<task_rw_mutex*, debug_data> rw_mutex_instances;
-        std::unordered_map<task_condition_variable*, debug_data> cv_instances;
+        std::unordered_map<mutex*, debug_data> mutex_instances;
+        std::unordered_map<recursive_mutex*, debug_data> rec_mutex_instances;
+        std::unordered_map<rw_mutex*, debug_data> rw_mutex_instances;
+        std::unordered_map<condition_variable*, debug_data> cv_instances;
         std::unordered_map<size_t, debug_data> task_instances;
-        std::unordered_map<task_semaphore*, debug_data> sem_instances;
-        std::unordered_map<task_limiter*, debug_data> limiter_instances;
-        std::unordered_map<task_queue*, debug_data> queue_instances;
+        std::unordered_map<semaphore*, debug_data> sem_instances;
+        std::unordered_map<limiter*, debug_data> limiter_instances;
+        std::unordered_map<queue*, debug_data> queue_instances;
         std::unordered_map<deadline_timer*, debug_data> dtimer_instances;
 
         uintptr_t task_id_counter{0};
@@ -142,7 +142,7 @@ namespace fast_task::debug {
                 auto& [id, trace, created_by_id, created_by_is_native] = ddata;
                 raw_recursive_mutex_info& info = dump.rec_mutexes[i++];
                 info.mutex_id = id;
-                info.internal_mutex_id = reg.mutex_instances.at(&mutd->mutex).virtual_id;
+                info.internal_mutex_id = reg.mutex_instances.at(&mutd->mut).virtual_id;
                 info.recursion_count = mutd->recursive_count;
                 info.created_by_id = created_by_id;
                 info.created_by_is_native = created_by_is_native;
@@ -570,25 +570,25 @@ namespace fast_task::debug {
 }
 
 namespace fast_task {
-    void register_object(task_mutex* val) {
+    void register_object(mutex* val) {
         debug::dbg_registry().set([val](auto& reg) {
             reg.mutex_instances.emplace(val, reg);
         });
     }
 
-    void register_object(task_recursive_mutex* val) {
+    void register_object(recursive_mutex* val) {
         debug::dbg_registry().set([val](auto& reg) {
             reg.rec_mutex_instances.emplace(val, reg);
         });
     }
 
-    void register_object(task_rw_mutex* val) {
+    void register_object(rw_mutex* val) {
         debug::dbg_registry().set([val](auto& reg) {
             reg.rw_mutex_instances.emplace(val, reg);
         });
     }
 
-    void register_object(task_condition_variable* val) {
+    void register_object(condition_variable* val) {
         debug::dbg_registry().set([val](auto& reg) {
             reg.cv_instances.emplace(val, reg);
         });
@@ -600,19 +600,19 @@ namespace fast_task {
         });
     }
 
-    void register_object(task_semaphore* val) {
+    void register_object(semaphore* val) {
         debug::dbg_registry().set([val](auto& reg) {
             reg.sem_instances.emplace(val, reg);
         });
     }
 
-    void register_object(task_limiter* val) {
+    void register_object(limiter* val) {
         debug::dbg_registry().set([val](auto& reg) {
             reg.limiter_instances.emplace(val, reg);
         });
     }
 
-    void register_object(task_queue* val) {
+    void register_object(queue* val) {
         debug::dbg_registry().set([val](auto& reg) {
             reg.queue_instances.emplace(val, reg);
         });
@@ -624,25 +624,25 @@ namespace fast_task {
         });
     }
 
-    void unregister_object(task_mutex* val) {
+    void unregister_object(mutex* val) {
         debug::dbg_registry().set([val](auto& reg) {
             reg.mutex_instances.erase(val);
         });
     }
 
-    void unregister_object(task_recursive_mutex* val) {
+    void unregister_object(recursive_mutex* val) {
         debug::dbg_registry().set([val](auto& reg) {
             reg.rec_mutex_instances.erase(val);
         });
     }
 
-    void unregister_object(task_rw_mutex* val) {
+    void unregister_object(rw_mutex* val) {
         debug::dbg_registry().set([val](auto& reg) {
             reg.rw_mutex_instances.erase(val);
         });
     }
 
-    void unregister_object(task_condition_variable* val) {
+    void unregister_object(condition_variable* val) {
         debug::dbg_registry().set([val](auto& reg) {
             reg.cv_instances.erase(val);
         });
@@ -654,19 +654,19 @@ namespace fast_task {
         });
     }
 
-    void unregister_object(task_semaphore* val) {
+    void unregister_object(semaphore* val) {
         debug::dbg_registry().set([val](auto& reg) {
             reg.sem_instances.erase(val);
         });
     }
 
-    void unregister_object(task_limiter* val) {
+    void unregister_object(limiter* val) {
         debug::dbg_registry().set([val](auto& reg) {
             reg.limiter_instances.erase(val);
         });
     }
 
-    void unregister_object(task_queue* val) {
+    void unregister_object(queue* val) {
         debug::dbg_registry().set([val](auto& reg) {
             reg.queue_instances.erase(val);
         });

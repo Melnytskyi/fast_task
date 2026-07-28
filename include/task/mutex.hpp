@@ -4,22 +4,22 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
-#ifndef INCLUDE_TASK_MUTEX
-#define INCLUDE_TASK_MUTEX
-#include "../threading.hpp"
+#ifndef FAST_TASK_INCLUDE_TASK_MUTEX
+#define FAST_TASK_INCLUDE_TASK_MUTEX
+#include "../native/spin_lock.hpp"
 #include "enter_state.hpp"
 #include "fwd.hpp"
 #include <list>
 
 namespace fast_task {
-    class FT_API task_mutex {
-        friend class task_recursive_mutex;
+    class FT_API mutex {
+        friend class recursive_mutex;
         friend struct debug::_debug_collect;
         struct FT_API_LOCAL resume_task;
         friend class mutex_unify;
 
         struct FT_API_LOCAL private_values {
-            fast_task::spin_lock no_race;
+            fast_task::native::spin_lock no_race;
             struct resume_task* begin = nullptr;
             struct resume_task* end = nullptr;
             size_t current_task = 0;
@@ -29,8 +29,8 @@ namespace fast_task {
         static void erase(private_values& values, resume_task* node);
 
     public:
-        task_mutex();
-        ~task_mutex();
+        mutex();
+        ~mutex();
 
         void lock();
         bool try_lock();
@@ -50,15 +50,17 @@ namespace fast_task {
         }
     };
 
-    class FT_API task_recursive_mutex {
+    using timed_mutex = mutex;
+
+    class FT_API recursive_mutex {
         friend struct debug::_debug_collect;
         friend class mutex_unify;
-        task_mutex mutex;
+        mutex mut;
         uint32_t recursive_count = 0;
 
     public:
-        task_recursive_mutex();
-        ~task_recursive_mutex();
+        recursive_mutex();
+        ~recursive_mutex();
 
         void lock();
         bool try_lock();
@@ -78,17 +80,17 @@ namespace fast_task {
         }
     };
 
-    class FT_API task_rw_mutex {
+    class FT_API rw_mutex {
         friend struct debug::_debug_collect;
         struct FT_API_LOCAL resume_task;
         friend class mutex_unify;
 
         struct FT_API_LOCAL private_values {
-            friend class task_recursive_mutex;
+            friend class recursive_mutex;
             struct resume_task* begin = nullptr;
             struct resume_task* end = nullptr;
             std::list<size_t> readers;
-            fast_task::spin_lock no_race;
+            fast_task::native::spin_lock no_race;
             size_t current_writer_task = 0;
         } values;
 
@@ -97,8 +99,8 @@ namespace fast_task {
 
     public:
         using read_write_mutex = void;
-        task_rw_mutex();
-        ~task_rw_mutex();
+        rw_mutex();
+        ~rw_mutex();
         void read_lock();
         bool try_read_lock();
         bool try_read_lock_until(std::chrono::high_resolution_clock::time_point time_point);
@@ -158,10 +160,10 @@ namespace fast_task {
     };
 
     class FT_API read_lock {
-        task_rw_mutex& mutex;
+        rw_mutex& mutex;
 
     public:
-        read_lock(task_rw_mutex& mutex)
+        read_lock(rw_mutex& mutex)
             : mutex(mutex) {
             mutex.read_lock();
         }
@@ -172,10 +174,10 @@ namespace fast_task {
     };
 
     class FT_API write_lock {
-        task_rw_mutex& mutex;
+        rw_mutex& mutex;
 
     public:
-        write_lock(task_rw_mutex& mutex)
+        write_lock(rw_mutex& mutex)
             : mutex(mutex) {
             mutex.write_lock();
         }
@@ -186,7 +188,7 @@ namespace fast_task {
     };
 
     //stackfull or native tasks only
-    template <class T, class mutex_t = task_rw_mutex>
+    template <class T, class mutex_t = rw_mutex>
     class protected_value {
         T value;
 
@@ -217,4 +219,4 @@ namespace fast_task {
 }
 
 
-#endif /* INCLUDE_TASK_MUTEX */
+#endif /* FAST_TASK_INCLUDE_TASK_MUTEX */

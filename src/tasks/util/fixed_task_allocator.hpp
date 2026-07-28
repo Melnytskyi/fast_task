@@ -16,8 +16,8 @@
 
     #include <internal/task_object.hpp>
     #include <interrupt.hpp>
+    #include <native/spin_lock.hpp>
     #include <shared.hpp>
-    #include <threading.hpp>
 
 namespace fast_task {
     class FT_API_LOCAL global_task_allocator {
@@ -54,7 +54,7 @@ namespace fast_task {
             bool to_release = false;
         };
 
-        spin_lock arena_lock;
+        native::spin_lock arena_lock;
         arena* arena_list_ = nullptr;
         size_t last_arena_size_ = 0;
 

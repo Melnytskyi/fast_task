@@ -4,10 +4,10 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
+#include <native/thread.hpp>
 #include <tasks/_internal.hpp>
 #include <tasks/util/interrupt.hpp>
 #include <tasks/util/light_stack.hpp>
-#include <threading.hpp>
 
 namespace fast_task {
 #if defined(FT_TIMER_PRECISION) && FT_TIMER_PRECISION == 1 && \
@@ -142,7 +142,7 @@ namespace fast_task {
         bool expected = false;
         if (glob.time_control_enabled.compare_exchange_strong(expected, true, std::memory_order_acquire)) {
             ++glob.thread_count;
-            fast_task::thread(taskTimer).detach();
+            fast_task::native::thread(taskTimer).detach();
         }
     }
 

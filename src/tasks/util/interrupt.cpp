@@ -4,10 +4,10 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
+#include <native.hpp>
 #include <tasks/_internal.hpp>
 #include <tasks/util/interrupt.hpp>
 #include <tasks/util/native_workers_singleton.hpp>
-#include <threading.hpp>
 #include <unordered_map>
 
 #ifdef FT_ENABLE_PREEMPTIVE_SCHEDULER

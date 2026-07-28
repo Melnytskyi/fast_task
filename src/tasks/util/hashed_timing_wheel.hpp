@@ -113,7 +113,7 @@ namespace fast_task {
             size_t to_release : 1;
         };
 
-        fast_task::spin_lock arena_lock;
+        fast_task::native::spin_lock arena_lock;
         arena* arena_list_ = nullptr;
         size_t last_arena_size_ = 0;
 

@@ -6,10 +6,10 @@
 
 #ifndef SRC_TASKS_CLASSES_SYNCHRONIZATION_INTERNAL_SCHED_NOTIFY
 #define SRC_TASKS_CLASSES_SYNCHRONIZATION_INTERNAL_SCHED_NOTIFY
-#include "threading.hpp"
+#include "native/condition_variable.hpp"
 #include <task/enter_state.hpp>
-#include <task/task.hpp>
 #include <task/mutex_unify.hpp>
+#include <task/task.hpp>
 
 namespace fast_task {
     namespace debug {
@@ -21,7 +21,7 @@ namespace fast_task {
         struct resume_task {
             class task task;
             uint16_t awake_check = 0;
-            fast_task::condition_variable_any* native_cv = nullptr;
+            fast_task::native::condition_variable_any* native_cv = nullptr;
             bool* native_check = nullptr;
             resume_task* next = nullptr;
         };

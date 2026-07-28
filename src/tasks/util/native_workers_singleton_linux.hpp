@@ -11,8 +11,8 @@
 #include <cstring>
 #include <liburing.h>
 #include <list>
+#include <native/thread.hpp>
 #include <shared.hpp>
-#include <threading.hpp>
 #include <vector>
 
 #include <fcntl.h>
@@ -138,7 +138,7 @@ namespace fast_task::util {
             io_uring ring;
             moodycamel::ConcurrentQueue<native_worker_handle*> queue;
             int wakeup_eventfd;
-            fast_task::thread dispatcher_thread;
+            fast_task::native::thread dispatcher_thread;
             alignas(64) std::atomic<bool> is_sleeping{false};
             std::atomic<bool> stop_flag{false};
 
@@ -154,7 +154,7 @@ namespace fast_task::util {
         std::vector<std::unique_ptr<io_shard>> io_pool;
 
         native_workers_singleton() {
-            auto size = std::max<unsigned int>(fast_task::thread::hardware_concurrency(), 1);
+            auto size = std::max<unsigned int>(fast_task::native::thread::hardware_concurrency(), 1);
             io_pool.reserve(size);
 
             struct rlimit mem_rl = {};
@@ -229,7 +229,7 @@ namespace fast_task::util {
                     std::terminate();
                 }
 
-                shard.dispatcher_thread = fast_task::thread(dispatch, std::ref(shard));
+                shard.dispatcher_thread = fast_task::native::thread(dispatch, std::ref(shard));
             }
         }
 

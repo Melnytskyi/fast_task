@@ -4,8 +4,8 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
-#ifndef INCLUDE_TASK_THIS_TASK
-#define INCLUDE_TASK_THIS_TASK
+#ifndef FAST_TASK_INCLUDE_TASK_THIS_TASK
+#define FAST_TASK_INCLUDE_TASK_THIS_TASK
 #include "enter_state.hpp"
 #include "fwd.hpp"
 
@@ -30,4 +30,4 @@ namespace fast_task::this_task {
     bool FT_API enter_sleep_until(enter_state&, std::chrono::high_resolution_clock::time_point time_point);
     bool FT_API enter_yield(enter_state&);
 }
-#endif /* INCLUDE_TASK_THIS_TASK */
+#endif /* FAST_TASK_INCLUDE_TASK_THIS_TASK */

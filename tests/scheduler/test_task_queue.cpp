@@ -10,7 +10,7 @@
 class TaskQueueTest : public SchedulerFixture {};
 
 TEST_F(TaskQueueTest, AddAndWait) {
-    fast_task::task_queue q;
+    fast_task::queue q;
     q.enable();
     std::atomic<int> done{0};
 
@@ -31,20 +31,20 @@ TEST_F(TaskQueueTest, AddAndWait) {
 }
 
 TEST_F(TaskQueueTest, WaitFor) {
-    fast_task::task_queue q;
+    fast_task::queue q;
     q.enable();
     auto t = fast_task::task::create([&] {
         fast_task::this_task::sleep_for(std::chrono::milliseconds(100));
     });
     q.add(t);
 
-    bool completed = q.wait_for(std::chrono::milliseconds(50)); // should time out
+    bool completed = q.wait_for(std::chrono::milliseconds(50));
     EXPECT_FALSE(completed);
     q.wait();
 }
 
 TEST_F(TaskQueueTest, InQueue) {
-    fast_task::task_queue q;
+    fast_task::queue q;
     auto t = fast_task::task::create([&] {
         fast_task::this_task::sleep_for(std::chrono::milliseconds(50));
     });
@@ -56,7 +56,7 @@ TEST_F(TaskQueueTest, InQueue) {
 }
 
 TEST_F(TaskQueueTest, MaxAtExecution) {
-    fast_task::task_queue q;
+    fast_task::queue q;
     q.enable();
     q.set_max_at_execution(1);
     EXPECT_EQ(q.get_max_at_execution(), 1u);
@@ -84,14 +84,14 @@ TEST_F(TaskQueueTest, MaxAtExecution) {
 }
 
 TEST_F(TaskQueueTest, EnableDisable) {
-    fast_task::task_queue q;
+    fast_task::queue q;
     std::atomic<bool> ran{false};
     auto t = fast_task::task::create([&] { ran = true; });
     q.add(t);
 
-    fast_task::this_thread::sleep_for(std::chrono::milliseconds(50));
-    // Disabled queue shouldn't let tasks complete via queue's throttle
-    // re-enable and wait
+    fast_task::native::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+
     EXPECT_FALSE(ran.load());
     q.enable();
     q.wait();

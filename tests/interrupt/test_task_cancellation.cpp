@@ -4,8 +4,8 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
-#include <helpers.hpp>
 #include <atomic>
+#include <helpers.hpp>
 
 class TaskCancellationTest : public SchedulerFixture {};
 
@@ -20,13 +20,13 @@ TEST_F(TaskCancellationTest, CheckCancellationThrows) {
             fast_task::this_task::check_cancellation();
         } catch (const fast_task::task_cancellation&) {
             caught = true;
-            throw; // must re-throw so context_exec handles destructor cleanup
+            throw;
         }
     },
                                      nullptr);
     fast_task::scheduler::start(t);
     while (!started.load())
-        fast_task::this_thread::sleep_for(std::chrono::milliseconds(1));
+        fast_task::native::this_thread::sleep_for(std::chrono::milliseconds(1));
     t.notify_cancel();
     t.await_task();
     EXPECT_TRUE(caught.load());
@@ -37,14 +37,14 @@ TEST_F(TaskCancellationTest, IsCancellationRequested) {
     std::atomic<bool> started{false};
     auto t = fast_task::task::create([&] {
         started = true;
-        // spin until cancellation is requested from outside
+
         while (!fast_task::this_task::is_cancellation_requested())
             fast_task::this_task::yield();
         requested = fast_task::this_task::is_cancellation_requested();
     });
     fast_task::scheduler::start(t);
     while (!started.load())
-        fast_task::this_thread::sleep_for(std::chrono::milliseconds(1));
+        fast_task::native::this_thread::sleep_for(std::chrono::milliseconds(1));
     t.notify_cancel();
     t.await_task();
     EXPECT_TRUE(requested.load());
@@ -59,8 +59,6 @@ TEST_F(TaskCancellationTest, IsCancellationNotRequestedByDefault) {
 }
 
 TEST_F(TaskCancellationTest, SelfCancel) {
-    // self_cancel() throws task_cancellation which is caught by the scheduler
-    // (context_exec), not passed to ex_handle. Set a flag before throwing.
     std::atomic<bool> cancelled{false};
     auto t = fast_task::task::create([&] {
         cancelled = true;
@@ -79,7 +77,6 @@ TEST_F(TaskCancellationTest, NotifyCancelFromOutside) {
         [&] {
             started = true;
             try {
-                // yield in a loop until cancellation is requested
                 while (!fast_task::this_task::is_cancellation_requested())
                     fast_task::this_task::yield();
                 fast_task::this_task::check_cancellation();
@@ -93,9 +90,8 @@ TEST_F(TaskCancellationTest, NotifyCancelFromOutside) {
 
     fast_task::scheduler::start(t);
 
-    // Wait for the task to have started
     while (!started.load())
-        fast_task::this_thread::sleep_for(std::chrono::milliseconds(1));
+        fast_task::native::this_thread::sleep_for(std::chrono::milliseconds(1));
 
     t.notify_cancel();
     t.await_task();
@@ -106,22 +102,23 @@ TEST_F(TaskCancellationTest, NotifyCancelFromOutside) {
 TEST_F(TaskCancellationTest, AwaitNotifyCancelReturnsWhenCancelled) {
     std::atomic<bool> passed{false};
     std::atomic<bool> started{false};
-    auto t = fast_task::task::create([&] {
-        started = true;
-        // spin until cancellation is requested from outside
-        while (!fast_task::this_task::is_cancellation_requested())
-            fast_task::this_task::yield();
-        try {
-            fast_task::this_task::check_cancellation();
-        } catch (const fast_task::task_cancellation&) {
-            passed = true;
-            throw; // must re-throw so context_exec handles destructor cleanup
-        }
-    },
-                                     nullptr);
+    auto t = fast_task::task::create(
+        [&] {
+            started = true;
+            while (!fast_task::this_task::is_cancellation_requested())
+                fast_task::this_task::yield();
+            try {
+                fast_task::this_task::check_cancellation();
+            } catch (const fast_task::task_cancellation&) {
+                passed = true;
+                throw;
+            }
+        },
+        nullptr
+    );
     fast_task::scheduler::start(t);
     while (!started.load())
-        fast_task::this_thread::sleep_for(std::chrono::milliseconds(1));
+        fast_task::native::this_thread::sleep_for(std::chrono::milliseconds(1));
     t.notify_cancel();
     t.await_task();
     EXPECT_TRUE(passed.load());

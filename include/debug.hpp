@@ -252,7 +252,7 @@ namespace fast_task::debug {
         uint16_t bind_to_worker_id;
 
         uintptr_t created_by_id;
-        bool created_by_is_native; //defines meanin of the created_by_id field, of false the id is the tasks id
+        bool created_by_is_native; //defines meaning of the created_by_id field, if false the id means the task id
 
         uint64_t current_available_quantum_ns;
         size_t interrupt_data;
@@ -272,7 +272,7 @@ namespace fast_task::debug {
         raw_stack_trace* init_call_stack = nullptr;
 
         uintptr_t created_by_id;
-        bool created_by_is_native; //defines meanin of the created_by_id field, of false the id is the tasks id
+        bool created_by_is_native; //defines meaning of the created_by_id field, if false the id means the task id
 
         raw_mutex_info();
         ~raw_mutex_info();
@@ -285,7 +285,7 @@ namespace fast_task::debug {
         raw_stack_trace* init_call_stack = nullptr;
 
         uintptr_t created_by_id;
-        bool created_by_is_native; //defines meanin of the created_by_id field, of false the id is the tasks id
+        bool created_by_is_native; //defines meaning of the created_by_id field, if false the id means the task id
 
         raw_recursive_mutex_info();
         ~raw_recursive_mutex_info();
@@ -300,7 +300,7 @@ namespace fast_task::debug {
         raw_stack_trace* init_call_stack = nullptr;
 
         uintptr_t created_by_id;
-        bool created_by_is_native; //defines meanin of the created_by_id field, of false the id is the tasks id
+        bool created_by_is_native; //defines meaning of the created_by_id field, if false the id means the task id
 
         raw_rw_mutex_info();
         ~raw_rw_mutex_info();
@@ -312,7 +312,7 @@ namespace fast_task::debug {
         raw_stack_trace* init_call_stack = nullptr;
 
         uintptr_t created_by_id;
-        bool created_by_is_native; //defines meanin of the created_by_id field, of false the id is the tasks id
+        bool created_by_is_native; //defines meaning of the created_by_id field, if false the id means the task id
 
         raw_condition_info();
         ~raw_condition_info();
@@ -326,7 +326,7 @@ namespace fast_task::debug {
         raw_stack_trace* init_call_stack = nullptr;
 
         uintptr_t created_by_id;
-        bool created_by_is_native; //defines meanin of the created_by_id field, of false the id is the tasks id
+        bool created_by_is_native; //defines meaning of the created_by_id field, if false the id means the task id
 
         raw_semaphore_info();
         ~raw_semaphore_info();
@@ -341,7 +341,7 @@ namespace fast_task::debug {
         raw_stack_trace* init_call_stack = nullptr;
 
         uintptr_t created_by_id;
-        bool created_by_is_native; //defines meanin of the created_by_id field, of false the id is the tasks id
+        bool created_by_is_native; //defines meaning of the created_by_id field, if false the id means the task id
 
         raw_limiter_info();
         ~raw_limiter_info();
@@ -357,7 +357,7 @@ namespace fast_task::debug {
         raw_stack_trace* init_call_stack = nullptr;
 
         uintptr_t created_by_id;
-        bool created_by_is_native; //defines meanin of the created_by_id field, of false the id is the tasks id
+        bool created_by_is_native; //defines meaning of the created_by_id field, if false the id means the task id
 
         raw_queue_info();
         ~raw_queue_info();
@@ -373,7 +373,7 @@ namespace fast_task::debug {
         raw_stack_trace* init_call_stack = nullptr;
 
         uintptr_t created_by_id;
-        bool created_by_is_native; //defines meanin of the created_by_id field, of false the id is the tasks id
+        bool created_by_is_native; //defines meaning of the created_by_id field, if false the id means the task id
 
         raw_deadline_timer_info();
         ~raw_deadline_timer_info();

@@ -40,7 +40,7 @@ TEST(MultiplyMutex, TryLockFor) {
 
 TEST(MultiplyMutex, ThreeMutexes) {
     fast_task::mutex m1, m2;
-    fast_task::spin_lock sl;
+    fast_task::native::spin_lock sl;
     fast_task::multiply_mutex mm({
         fast_task::mutex_unify(m1),
         fast_task::mutex_unify(m2),
@@ -63,8 +63,8 @@ TEST(MultiplyMutex, Contention) {
         }
     };
 
-    fast_task::thread t1(worker);
-    fast_task::thread t2(worker);
+    fast_task::native::thread t1(worker);
+    fast_task::native::thread t2(worker);
     t1.join();
     t2.join();
     EXPECT_EQ(counter.load(), 2000);

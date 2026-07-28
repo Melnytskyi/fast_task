@@ -203,42 +203,42 @@ namespace fast_task {
         std_nrec = std::addressof(smut);
     }
 
-    mutex_unify::mutex_unify(fast_task::mutex& smut) {
+    mutex_unify::mutex_unify(fast_task::native::mutex& smut) {
         type = mutex_unify_type::nmut;
         nmut = std::addressof(smut);
     }
 
-    mutex_unify::mutex_unify(fast_task::timed_mutex& smut) {
+    mutex_unify::mutex_unify(fast_task::native::timed_mutex& smut) {
         type = mutex_unify_type::ntimed;
         ntimed = std::addressof(smut);
     }
 
-    mutex_unify::mutex_unify(fast_task::rw_mutex& smut, bool write_read) {
+    mutex_unify::mutex_unify(fast_task::native::rw_mutex& smut, bool write_read) {
         type = write_read ? mutex_unify_type::rwmut_w : mutex_unify_type::rwmut_r;
         rwmut = std::addressof(smut);
     }
 
-    mutex_unify::mutex_unify(fast_task::recursive_mutex& smut) {
+    mutex_unify::mutex_unify(fast_task::native::recursive_mutex& smut) {
         type = mutex_unify_type::nrec;
         nrec = std::addressof(smut);
     }
 
-    mutex_unify::mutex_unify(fast_task::spin_lock& spin) {
+    mutex_unify::mutex_unify(fast_task::native::spin_lock& spin) {
         type = mutex_unify_type::uspin;
         uspin = std::addressof(spin);
     }
 
-    mutex_unify::mutex_unify(task_mutex& smut) {
+    mutex_unify::mutex_unify(mutex& smut) {
         type = mutex_unify_type::umut;
         umut = std::addressof(smut);
     }
 
-    mutex_unify::mutex_unify(task_rw_mutex& smut, bool write_read) {
+    mutex_unify::mutex_unify(rw_mutex& smut, bool write_read) {
         type = write_read ? mutex_unify_type::urwmut_w : mutex_unify_type::urwmut_r;
         urwmut = std::addressof(smut);
     }
 
-    mutex_unify::mutex_unify(task_recursive_mutex& smut) {
+    mutex_unify::mutex_unify(recursive_mutex& smut) {
         type = mutex_unify_type::urmut;
         urmut = std::addressof(smut);
     }
@@ -248,12 +248,12 @@ namespace fast_task {
         type = mutex_unify_type::mmut;
     }
 
-    mutex_unify::mutex_unify(task_semaphore& sem)
+    mutex_unify::mutex_unify(semaphore& sem)
         : sem(&sem) {
         type = mutex_unify_type::sem;
     }
 
-    mutex_unify::mutex_unify(task_limiter& lim)
+    mutex_unify::mutex_unify(limiter& lim)
         : lim(&lim) {
         type = mutex_unify_type::lim;
     }
@@ -290,37 +290,37 @@ namespace fast_task {
         return *this;
     }
 
-    mutex_unify& mutex_unify::operator=(fast_task::mutex& smut) {
+    mutex_unify& mutex_unify::operator=(fast_task::native::mutex& smut) {
         type = mutex_unify_type::nmut;
         nmut = std::addressof(smut);
         return *this;
     }
 
-    mutex_unify& mutex_unify::operator=(fast_task::timed_mutex& smut) {
+    mutex_unify& mutex_unify::operator=(fast_task::native::timed_mutex& smut) {
         type = mutex_unify_type::ntimed;
         ntimed = std::addressof(smut);
         return *this;
     }
 
-    mutex_unify& mutex_unify::operator=(fast_task::recursive_mutex& smut) {
+    mutex_unify& mutex_unify::operator=(fast_task::native::recursive_mutex& smut) {
         type = mutex_unify_type::nrec;
         nrec = std::addressof(smut);
         return *this;
     }
 
-    mutex_unify& mutex_unify::operator=(fast_task::spin_lock& spin) {
+    mutex_unify& mutex_unify::operator=(fast_task::native::spin_lock& spin) {
         type = mutex_unify_type::uspin;
         uspin = std::addressof(spin);
         return *this;
     }
 
-    mutex_unify& mutex_unify::operator=(task_mutex& smut) {
+    mutex_unify& mutex_unify::operator=(mutex& smut) {
         type = mutex_unify_type::umut;
         umut = std::addressof(smut);
         return *this;
     }
 
-    mutex_unify& mutex_unify::operator=(task_recursive_mutex& smut) {
+    mutex_unify& mutex_unify::operator=(recursive_mutex& smut) {
         type = mutex_unify_type::urmut;
         urmut = std::addressof(smut);
         return *this;
@@ -332,13 +332,13 @@ namespace fast_task {
         return *this;
     }
 
-    mutex_unify& mutex_unify::operator=(task_semaphore& _sem) {
+    mutex_unify& mutex_unify::operator=(semaphore& _sem) {
         type = mutex_unify_type::sem;
         this->sem = std::addressof(_sem);
         return *this;
     }
 
-    mutex_unify& mutex_unify::operator=(task_limiter& _lim) {
+    mutex_unify& mutex_unify::operator=(limiter& _lim) {
         type = mutex_unify_type::lim;
         this->lim = std::addressof(_lim);
         return *this;
@@ -365,31 +365,31 @@ namespace fast_task {
         return (void*)nmut == (void*)std::addressof(smut);
     }
 
-    bool mutex_unify::operator==(fast_task::mutex& smut) {
+    bool mutex_unify::operator==(fast_task::native::mutex& smut) {
         return (void*)nmut == (void*)std::addressof(smut);
     }
 
-    bool mutex_unify::operator==(fast_task::timed_mutex& smut) {
+    bool mutex_unify::operator==(fast_task::native::timed_mutex& smut) {
         return (void*)nmut == (void*)std::addressof(smut);
     }
 
-    bool mutex_unify::operator==(fast_task::recursive_mutex& smut) {
+    bool mutex_unify::operator==(fast_task::native::recursive_mutex& smut) {
         return (void*)nmut == (void*)std::addressof(smut);
     }
 
-    bool mutex_unify::operator==(fast_task::spin_lock& spin) {
+    bool mutex_unify::operator==(fast_task::native::spin_lock& spin) {
         return (void*)nmut == (void*)std::addressof(spin);
     }
 
-    bool mutex_unify::operator==(task_mutex& smut) {
+    bool mutex_unify::operator==(mutex& smut) {
         return (void*)nmut == (void*)std::addressof(smut);
     }
 
-    bool mutex_unify::operator==(task_rw_mutex& smut) {
+    bool mutex_unify::operator==(rw_mutex& smut) {
         return (void*)nmut == (void*)std::addressof(smut);
     }
 
-    bool mutex_unify::operator==(task_recursive_mutex& smut) {
+    bool mutex_unify::operator==(recursive_mutex& smut) {
         return (void*)nmut == (void*)std::addressof(smut);
     }
 
@@ -397,11 +397,11 @@ namespace fast_task {
         return (void*)nmut == (void*)std::addressof(mut);
     }
 
-    bool mutex_unify::operator==(task_semaphore& _sem) {
+    bool mutex_unify::operator==(semaphore& _sem) {
         return (void*)nmut == (void*)std::addressof(_sem);
     }
 
-    bool mutex_unify::operator==(task_limiter& _lim) {
+    bool mutex_unify::operator==(limiter& _lim) {
         return (void*)nmut == (void*)std::addressof(_lim);
     }
 
@@ -489,7 +489,7 @@ namespace fast_task {
             umut->values.current_task = target_owner->get_id();
             break;
         case mutex_unify_type::urmut:
-            urmut->mutex.values.current_task = target_owner->get_id();
+            urmut->mut.values.current_task = target_owner->get_id();
             break;
         case mutex_unify_type::urwmut_r:
             urwmut->values.readers.remove(get_loc().curr_task.get_id());

@@ -55,7 +55,7 @@ namespace fast_task {
             push_back(&r_node);
             swapCtxRelock(*lock.mutex());
         } else {
-            fast_task::condition_variable_any cd;
+            fast_task::native::condition_variable_any cd;
             bool has_res = false;
             r_node.task = nullptr;
             r_node.awake_check = 0;

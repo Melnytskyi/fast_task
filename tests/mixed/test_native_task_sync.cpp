@@ -9,31 +9,31 @@
 
 class NativeTaskSyncTest : public SchedulerFixture {};
 
-// ---- task_mutex shared between native thread and task context ----
+// ---- mutex shared between native thread and task context ----
 
 TEST_F(NativeTaskSyncTest, NativeThreadAndTaskShareMutex) {
-    fast_task::task_mutex mtx;
+    fast_task::mutex mtx;
     int value = 0;
 
-    // Native thread holds the lock for a while
+
     std::atomic<bool> native_done{false};
     std::atomic<bool> native_holds_lock{false};
-    fast_task::thread native([&] {
-        fast_task::unique_lock<fast_task::task_mutex> lk(mtx);
+    fast_task::native::thread native([&] {
+        fast_task::unique_lock<fast_task::mutex> lk(mtx);
         native_holds_lock = true;
-        fast_task::this_thread::sleep_for(std::chrono::milliseconds(20));
+        fast_task::native::this_thread::sleep_for(std::chrono::milliseconds(20));
         value = 10;
         native_done = true;
     });
 
     while (!native_holds_lock.load()) {
-        fast_task::this_thread::yield();
+        fast_task::native::this_thread::yield();
     }
 
     // Task tries to acquire the same mutex
     std::atomic<int> task_value{0};
     auto t = fast_task::task::create([&] {
-        fast_task::lock_guard<fast_task::task_mutex> lk(mtx);
+        fast_task::lock_guard<fast_task::mutex> lk(mtx);
         task_value = value + 1;
     });
     fast_task::scheduler::start(t);
@@ -47,11 +47,11 @@ TEST_F(NativeTaskSyncTest, NativeThreadAndTaskShareMutex) {
 // ---- protected_value shared between tasks ----
 
 TEST_F(NativeTaskSyncTest, ProtectedValueFromMultipleTasks) {
-    fast_task::task_mutex mtx;
+    fast_task::mutex mtx;
     int shared = 0;
 
     auto worker = [&] {
-        fast_task::lock_guard<fast_task::task_mutex> lk(mtx);
+        fast_task::lock_guard<fast_task::mutex> lk(mtx);
         int v = shared;
         fast_task::this_task::yield();
         shared = v + 1;
@@ -70,7 +70,7 @@ TEST_F(NativeTaskSyncTest, ProtectedValueFromMultipleTasks) {
 // ---- rw_mutex with mixed readers and one writer ----
 
 TEST_F(NativeTaskSyncTest, RwMutexMixedReaderWriter) {
-    fast_task::task_rw_mutex mtx;
+    fast_task::rw_mutex mtx;
     std::atomic<int> readers_concurrent{0};
     int written_value = 0;
 

@@ -35,7 +35,7 @@ TEST_F(DeadlineTimerTest, CancelBeforeTimeout) {
 
 TEST_F(DeadlineTimerTest, TimedOut) {
     fast_task::deadline_timer timer(std::chrono::milliseconds(30));
-    fast_task::this_thread::sleep_for(std::chrono::milliseconds(60));
+    fast_task::native::this_thread::sleep_for(std::chrono::milliseconds(60));
     EXPECT_TRUE(timer.timed_out());
 }
 
@@ -64,7 +64,7 @@ TEST_F(DeadlineTimerTest, AsyncWaitCallback) {
             received_status = s;
             called = true;
         });
-        fast_task::this_thread::sleep_for(std::chrono::milliseconds(100));
+        fast_task::native::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 
     EXPECT_TRUE(called.load());

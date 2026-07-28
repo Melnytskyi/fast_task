@@ -4,8 +4,8 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
-#ifndef INCLUDE_COROUTINE_MUTEX_UNIFY
-#define INCLUDE_COROUTINE_MUTEX_UNIFY
+#ifndef FAST_TASK_INCLUDE_COROUTINE_MUTEX_UNIFY
+#define FAST_TASK_INCLUDE_COROUTINE_MUTEX_UNIFY
 #include "../task/condition_variable.hpp"
 #include "core.hpp"
 #include "detail/lock_misc.hpp"
@@ -37,4 +37,4 @@ namespace fast_task {
         return detail::async_try_lock_until(mut, std::chrono::high_resolution_clock::now() + duration);
     }
 }
-#endif /* INCLUDE_COROUTINE_MUTEX_UNIFY */
+#endif /* FAST_TASK_INCLUDE_COROUTINE_MUTEX_UNIFY */

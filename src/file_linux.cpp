@@ -57,8 +57,8 @@ namespace fast_task::file {
     }
 
     class File_ : public util::native_worker_handle {
-        task_condition_variable awaiters;
-        task_mutex mutex;
+        condition_variable awaiters;
+        mutex mut;
         int handle;
         char* buffer = nullptr;
         bool fullifed = false;
@@ -122,7 +122,7 @@ namespace fast_task::file {
             task old_awaiter;
             if (buffer && awaiter ? !get_data(awaiter).is_ended() : true) {
                 if (util::native_workers_singleton::await_cancel_fd_all(handle)) {
-                    mutex_unify unify(mutex);
+                    mutex_unify unify(mut);
                     fast_task::unique_lock<mutex_unify> lock(unify);
                     fullifed = true;
                     if (awaiter) {
@@ -138,7 +138,7 @@ namespace fast_task::file {
         }
 
         void await() {
-            mutex_unify unify(mutex);
+            mutex_unify unify(mut);
             fast_task::unique_lock<mutex_unify> lock(unify);
             while (!fullifed)
                 awaiters.wait(lock);
@@ -147,7 +147,7 @@ namespace fast_task::file {
         void now_fullifed() {
             task old_awaiter;
             {
-                mutex_unify unify(mutex);
+                mutex_unify unify(mut);
                 fast_task::unique_lock<mutex_unify> lock(unify);
                 fullifed = true;
                 if (awaiter) {
@@ -164,7 +164,7 @@ namespace fast_task::file {
         void exception(io_errors e) {
             task old_awaiter;
             {
-                mutex_unify unify(mutex);
+                mutex_unify unify(mut);
                 fast_task::unique_lock<mutex_unify> lock(unify);
                 fullifed = true;
                 if (awaiter) {
@@ -305,7 +305,7 @@ namespace fast_task::file {
         }
 
     public:
-        std::optional<task_mutex> mimic_non_async;
+        std::optional<mutex> mimic_non_async;
 
         static std::variant<file_manager*, std::string> open(const std::filesystem::path& path, open_mode open, on_open_action action, [[maybe_unused]] share_mode share, file_flags flags, pointer_mode _pointer_mode) {
             std::unique_ptr<file_manager> ptr;
@@ -1057,7 +1057,7 @@ namespace fast_task::file {
         if (!handle)
             throw file_closed();
         if (handle->mimic_non_async.has_value()) {
-            fast_task::lock_guard<task_mutex> lock(*handle->mimic_non_async);
+            fast_task::lock_guard lock(*handle->mimic_non_async);
             return handle->read(data, size, false);
         } else
             return handle->read(data, size, false);
@@ -1067,7 +1067,7 @@ namespace fast_task::file {
         if (!handle)
             throw file_closed();
         if (handle->mimic_non_async.has_value()) {
-            fast_task::lock_guard<task_mutex> lock(*handle->mimic_non_async);
+            fast_task::lock_guard lock(*handle->mimic_non_async);
             return handle->read_at(offset, data, size, false);
         } else
             return handle->read_at(offset, data, size, false);
@@ -1077,7 +1077,7 @@ namespace fast_task::file {
         if (!handle)
             throw file_closed();
         if (handle->mimic_non_async.has_value()) {
-            fast_task::lock_guard<task_mutex> lock(*handle->mimic_non_async);
+            fast_task::lock_guard lock(*handle->mimic_non_async);
             return handle->read(data, size, true);
         } else
             return handle->read(data, size, true);
@@ -1087,7 +1087,7 @@ namespace fast_task::file {
         if (!handle)
             throw file_closed();
         if (handle->mimic_non_async.has_value()) {
-            fast_task::lock_guard<task_mutex> lock(*handle->mimic_non_async);
+            fast_task::lock_guard lock(*handle->mimic_non_async);
             return handle->read_at(offset, data, size, true);
         } else
             return handle->read_at(offset, data, size, true);
@@ -1097,7 +1097,7 @@ namespace fast_task::file {
         if (!handle)
             throw file_closed();
         if (handle->mimic_non_async.has_value()) {
-            fast_task::lock_guard<task_mutex> lock(*handle->mimic_non_async);
+            fast_task::lock_guard lock(*handle->mimic_non_async);
             handle->write_inline(data, size);
         } else
             handle->write_inline(data, size);
@@ -1107,7 +1107,7 @@ namespace fast_task::file {
         if (!handle)
             throw file_closed();
         if (handle->mimic_non_async.has_value()) {
-            fast_task::lock_guard<task_mutex> lock(*handle->mimic_non_async);
+            fast_task::lock_guard lock(*handle->mimic_non_async);
             handle->write_inline_at(offset, data, size);
         } else
             handle->write_inline_at(offset, data, size);
@@ -1117,7 +1117,7 @@ namespace fast_task::file {
         if (!handle)
             throw file_closed();
         if (handle->mimic_non_async.has_value()) {
-            fast_task::lock_guard<task_mutex> lock(*handle->mimic_non_async);
+            fast_task::lock_guard lock(*handle->mimic_non_async);
             handle->append_inline(data, size);
         } else
             handle->append_inline(data, size);
@@ -1127,7 +1127,7 @@ namespace fast_task::file {
         if (!handle)
             throw file_closed();
         if (handle->mimic_non_async.has_value()) {
-            fast_task::lock_guard<task_mutex> lock(*handle->mimic_non_async);
+            fast_task::lock_guard lock(*handle->mimic_non_async);
             return handle->seek_pos(offset, pointer_offset, pointer);
         } else
             return handle->seek_pos(offset, pointer_offset, pointer);
@@ -1137,7 +1137,7 @@ namespace fast_task::file {
         if (!handle)
             throw file_closed();
         if (handle->mimic_non_async.has_value()) {
-            fast_task::lock_guard<task_mutex> lock(*handle->mimic_non_async);
+            fast_task::lock_guard lock(*handle->mimic_non_async);
             return handle->seek_pos(offset, pointer_offset);
         } else
             return handle->seek_pos(offset, pointer_offset);
@@ -1147,7 +1147,7 @@ namespace fast_task::file {
         if (!handle)
             throw file_closed();
         if (handle->mimic_non_async.has_value()) {
-            fast_task::lock_guard<task_mutex> lock(*handle->mimic_non_async);
+            fast_task::lock_guard lock(*handle->mimic_non_async);
             return handle->tell_pos(pointer);
         } else
             return handle->tell_pos(pointer);
@@ -1157,7 +1157,7 @@ namespace fast_task::file {
         if (!handle)
             throw file_closed();
         if (handle->mimic_non_async.has_value()) {
-            fast_task::lock_guard<task_mutex> lock(*handle->mimic_non_async);
+            fast_task::lock_guard lock(*handle->mimic_non_async);
             return handle->flush();
         } else
             return handle->flush();
@@ -1167,7 +1167,7 @@ namespace fast_task::file {
         if (!handle)
             throw file_closed();
         if (handle->mimic_non_async.has_value()) {
-            fast_task::lock_guard<task_mutex> lock(*handle->mimic_non_async);
+            fast_task::lock_guard lock(*handle->mimic_non_async);
             return handle->file_size();
         } else
             return handle->file_size();
@@ -1183,7 +1183,7 @@ namespace fast_task::file {
         if (!handle)
             throw file_closed();
         if (handle->mimic_non_async.has_value()) {
-            fast_task::lock_guard<task_mutex> lock(*handle->mimic_non_async);
+            fast_task::lock_guard lock(*handle->mimic_non_async);
             auto res = handle->fut_read(size, false);
             res->wait();
             return res;
@@ -1195,7 +1195,7 @@ namespace fast_task::file {
         if (!handle)
             throw file_closed();
         if (handle->mimic_non_async.has_value()) {
-            fast_task::lock_guard<task_mutex> lock(*handle->mimic_non_async);
+            fast_task::lock_guard lock(*handle->mimic_non_async);
             auto res = handle->fut_read_at(offset, size, false);
             res->wait();
             return res;
@@ -1207,7 +1207,7 @@ namespace fast_task::file {
         if (!handle)
             throw file_closed();
         if (handle->mimic_non_async.has_value()) {
-            fast_task::lock_guard<task_mutex> lock(*handle->mimic_non_async);
+            fast_task::lock_guard lock(*handle->mimic_non_async);
             auto res = handle->fut_read(size, true);
             res->wait();
             return res;
@@ -1219,7 +1219,7 @@ namespace fast_task::file {
         if (!handle)
             throw file_closed();
         if (handle->mimic_non_async.has_value()) {
-            fast_task::lock_guard<task_mutex> lock(*handle->mimic_non_async);
+            fast_task::lock_guard lock(*handle->mimic_non_async);
             auto res = handle->fut_read_at(offset, size, true);
             res->wait();
             return res;
@@ -1231,7 +1231,7 @@ namespace fast_task::file {
         if (!handle)
             throw file_closed();
         if (handle->mimic_non_async.has_value()) {
-            fast_task::lock_guard<task_mutex> lock(*handle->mimic_non_async);
+            fast_task::lock_guard lock(*handle->mimic_non_async);
             auto res = handle->fut_write(data, size);
             res->wait();
             return res;
@@ -1243,7 +1243,7 @@ namespace fast_task::file {
         if (!handle)
             throw file_closed();
         if (handle->mimic_non_async.has_value()) {
-            fast_task::lock_guard<task_mutex> lock(*handle->mimic_non_async);
+            fast_task::lock_guard lock(*handle->mimic_non_async);
             auto res = handle->fut_write_at(offset, data, size);
             res->wait();
             return res;
@@ -1255,7 +1255,7 @@ namespace fast_task::file {
         if (!handle)
             throw file_closed();
         if (handle->mimic_non_async.has_value()) {
-            fast_task::lock_guard<task_mutex> lock(*handle->mimic_non_async);
+            fast_task::lock_guard lock(*handle->mimic_non_async);
             auto res = handle->fut_append(data, size);
             res->wait();
             return res;

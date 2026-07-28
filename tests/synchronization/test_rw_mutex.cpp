@@ -10,7 +10,7 @@
 class TaskRwMutexTest : public SchedulerFixture {};
 
 TEST_F(TaskRwMutexTest, BasicWriteLock) {
-    fast_task::task_rw_mutex m;
+    fast_task::rw_mutex m;
     run_task([&] {
         m.write_lock();
         EXPECT_TRUE(m.is_write_locked());
@@ -20,7 +20,7 @@ TEST_F(TaskRwMutexTest, BasicWriteLock) {
 }
 
 TEST_F(TaskRwMutexTest, BasicReadLock) {
-    fast_task::task_rw_mutex m;
+    fast_task::rw_mutex m;
     run_task([&] {
         m.read_lock();
         EXPECT_TRUE(m.is_read_locked());
@@ -30,7 +30,7 @@ TEST_F(TaskRwMutexTest, BasicReadLock) {
 }
 
 TEST_F(TaskRwMutexTest, MultipleReaders) {
-    fast_task::task_rw_mutex m;
+    fast_task::rw_mutex m;
     std::atomic<int> concurrent{0};
     std::atomic<int> max_concurrent{0};
 
@@ -60,7 +60,7 @@ TEST_F(TaskRwMutexTest, MultipleReaders) {
 }
 
 TEST_F(TaskRwMutexTest, WriterExcludesReaders) {
-    fast_task::task_rw_mutex m;
+    fast_task::rw_mutex m;
     std::atomic<bool> writer_done{false};
     std::atomic<bool> reader_saw_write_incomplete{false};
 
@@ -85,7 +85,7 @@ TEST_F(TaskRwMutexTest, WriterExcludesReaders) {
 }
 
 TEST_F(TaskRwMutexTest, RaiiReadLock) {
-    fast_task::task_rw_mutex m;
+    fast_task::rw_mutex m;
     run_task([&] {
         {
             fast_task::read_lock rl(m);
@@ -96,7 +96,7 @@ TEST_F(TaskRwMutexTest, RaiiReadLock) {
 }
 
 TEST_F(TaskRwMutexTest, RaiiWriteLock) {
-    fast_task::task_rw_mutex m;
+    fast_task::rw_mutex m;
     run_task([&] {
         {
             fast_task::write_lock wl(m);
@@ -107,7 +107,7 @@ TEST_F(TaskRwMutexTest, RaiiWriteLock) {
 }
 
 TEST_F(TaskRwMutexTest, AsyncReadLock) {
-    fast_task::task_rw_mutex m;
+    fast_task::rw_mutex m;
     std::atomic<bool> completed{false};
 
     run_task([&] {
@@ -126,7 +126,7 @@ TEST_F(TaskRwMutexTest, AsyncReadLock) {
 }
 
 TEST_F(TaskRwMutexTest, AsyncWriteLock) {
-    fast_task::task_rw_mutex m;
+    fast_task::rw_mutex m;
     std::atomic<bool> completed{false};
 
     run_task([&] {

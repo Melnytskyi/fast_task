@@ -4,10 +4,11 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
-#ifndef INCLUDE_TASK_MUTEX_UNIFY
-#define INCLUDE_TASK_MUTEX_UNIFY
+#ifndef FAST_TASK_INCLUDE_TASK_MUTEX_UNIFY
+#define FAST_TASK_INCLUDE_TASK_MUTEX_UNIFY
 
-#include "../threading.hpp"
+#include "../native/mutex.hpp"
+#include "../native/spin_lock.hpp"
 #include "enter_state.hpp"
 #include "fwd.hpp"
 #include <cstdint>
@@ -45,17 +46,17 @@ namespace fast_task {
             std::mutex* std_nmut = nullptr;
             std::timed_mutex* std_ntimed;
             std::recursive_mutex* std_nrec;
-            fast_task::mutex* nmut;
-            fast_task::timed_mutex* ntimed;
-            fast_task::rw_mutex* rwmut;
-            fast_task::recursive_mutex* nrec;
-            fast_task::spin_lock* uspin;
-            task_mutex* umut;
-            task_rw_mutex* urwmut;
-            task_recursive_mutex* urmut;
+            fast_task::native::mutex* nmut;
+            fast_task::native::timed_mutex* ntimed;
+            fast_task::native::rw_mutex* rwmut;
+            fast_task::native::recursive_mutex* nrec;
+            fast_task::native::spin_lock* uspin;
+            mutex* umut;
+            rw_mutex* urwmut;
+            recursive_mutex* urmut;
             class multiply_mutex* mmut;
-            task_semaphore* sem;
-            task_limiter* lim;
+            semaphore* sem;
+            limiter* lim;
         };
 
         mutex_unify_type type;
@@ -68,17 +69,17 @@ namespace fast_task {
         mutex_unify(std::mutex& smut);
         mutex_unify(std::timed_mutex& smut);
         mutex_unify(std::recursive_mutex& smut);
-        mutex_unify(fast_task::mutex& smut);
-        mutex_unify(fast_task::timed_mutex& smut);
-        mutex_unify(fast_task::rw_mutex& smut, bool write_read = true);
-        mutex_unify(fast_task::recursive_mutex& smut);
-        mutex_unify(fast_task::spin_lock& smut);
-        mutex_unify(task_mutex& smut);
-        mutex_unify(task_rw_mutex& smut, bool write_read = true);
-        mutex_unify(task_recursive_mutex& smut);
+        mutex_unify(fast_task::native::mutex& smut);
+        mutex_unify(fast_task::native::timed_mutex& smut);
+        mutex_unify(fast_task::native::rw_mutex& smut, bool write_read = true);
+        mutex_unify(fast_task::native::recursive_mutex& smut);
+        mutex_unify(fast_task::native::spin_lock& smut);
+        mutex_unify(mutex& smut);
+        mutex_unify(rw_mutex& smut, bool write_read = true);
+        mutex_unify(recursive_mutex& smut);
         mutex_unify(multiply_mutex& mmut);
-        mutex_unify(task_semaphore& sem);
-        mutex_unify(task_limiter& lim);
+        mutex_unify(semaphore& sem);
+        mutex_unify(limiter& lim);
         mutex_unify(std::nullptr_t);
 
         ~mutex_unify();
@@ -87,32 +88,32 @@ namespace fast_task {
         mutex_unify& operator=(std::mutex&);
         mutex_unify& operator=(std::timed_mutex&);
         mutex_unify& operator=(std::recursive_mutex&);
-        mutex_unify& operator=(fast_task::mutex&);
-        mutex_unify& operator=(fast_task::timed_mutex&);
-        mutex_unify& operator=(fast_task::recursive_mutex&);
-        mutex_unify& operator=(fast_task::spin_lock&);
-        mutex_unify& operator=(task_mutex&);
-        mutex_unify& operator=(task_recursive_mutex&);
+        mutex_unify& operator=(fast_task::native::mutex&);
+        mutex_unify& operator=(fast_task::native::timed_mutex&);
+        mutex_unify& operator=(fast_task::native::recursive_mutex&);
+        mutex_unify& operator=(fast_task::native::spin_lock&);
+        mutex_unify& operator=(mutex&);
+        mutex_unify& operator=(recursive_mutex&);
         mutex_unify& operator=(class multiply_mutex&);
-        mutex_unify& operator=(task_semaphore&);
-        mutex_unify& operator=(task_limiter&);
+        mutex_unify& operator=(semaphore&);
+        mutex_unify& operator=(limiter&);
         mutex_unify& operator=(std::nullptr_t);
 
         bool operator==(const mutex_unify&);
         bool operator==(std::mutex&);
         bool operator==(std::timed_mutex&);
         bool operator==(std::recursive_mutex&);
-        bool operator==(fast_task::mutex&);
-        bool operator==(fast_task::timed_mutex&);
-        bool operator==(fast_task::rw_mutex&);
-        bool operator==(fast_task::recursive_mutex&);
-        bool operator==(fast_task::spin_lock&);
-        bool operator==(task_mutex&);
-        bool operator==(task_rw_mutex&);
-        bool operator==(task_recursive_mutex&);
+        bool operator==(fast_task::native::mutex&);
+        bool operator==(fast_task::native::timed_mutex&);
+        bool operator==(fast_task::native::rw_mutex&);
+        bool operator==(fast_task::native::recursive_mutex&);
+        bool operator==(fast_task::native::spin_lock&);
+        bool operator==(mutex&);
+        bool operator==(rw_mutex&);
+        bool operator==(recursive_mutex&);
         bool operator==(class multiply_mutex&);
-        bool operator==(task_semaphore&);
-        bool operator==(task_limiter&);
+        bool operator==(semaphore&);
+        bool operator==(limiter&);
         bool operator==(std::nullptr_t);
 
         void lock();
@@ -160,4 +161,4 @@ namespace fast_task {
     };
 }
 
-#endif /* INCLUDE_TASK_MUTEX_UNIFY */
+#endif /* FAST_TASK_INCLUDE_TASK_MUTEX_UNIFY */

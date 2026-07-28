@@ -10,7 +10,7 @@
 class TaskLimiterTest : public SchedulerFixture {};
 
 TEST_F(TaskLimiterTest, BasicLockUnlock) {
-    fast_task::task_limiter lim;
+    fast_task::limiter lim;
     lim.set_max_threshold(1);
     EXPECT_FALSE(lim.is_locked());
     run_task([&] {
@@ -23,7 +23,7 @@ TEST_F(TaskLimiterTest, BasicLockUnlock) {
 }
 
 TEST_F(TaskLimiterTest, TryLockSucceeds) {
-    fast_task::task_limiter lim;
+    fast_task::limiter lim;
     lim.set_max_threshold(1);
     EXPECT_FALSE(lim.is_locked());
     run_task([&] {
@@ -35,7 +35,7 @@ TEST_F(TaskLimiterTest, TryLockSucceeds) {
 }
 
 TEST_F(TaskLimiterTest, TryLockFailsAtThreshold) {
-    fast_task::task_limiter lim;
+    fast_task::limiter lim;
     lim.set_max_threshold(1);
     bool failed = false;
     run_task([&] {
@@ -51,7 +51,7 @@ TEST_F(TaskLimiterTest, TryLockFailsAtThreshold) {
 }
 
 TEST_F(TaskLimiterTest, WaiterUnblockedOnUnlock) {
-    fast_task::task_limiter lim;
+    fast_task::limiter lim;
     lim.set_max_threshold(1);
     std::atomic<bool> waiter_done{false};
     std::atomic<bool> holder_locked{false};
@@ -65,7 +65,7 @@ TEST_F(TaskLimiterTest, WaiterUnblockedOnUnlock) {
     fast_task::scheduler::start(holder);
 
     while (!holder_locked.load())
-        fast_task::this_thread::yield();
+        fast_task::native::this_thread::yield();
 
     auto waiter = fast_task::task::create([&] {
         lim.lock();
@@ -81,12 +81,12 @@ TEST_F(TaskLimiterTest, WaiterUnblockedOnUnlock) {
 }
 
 TEST_F(TaskLimiterTest, MultipleSlots) {
-    fast_task::task_limiter lim;
+    fast_task::limiter lim;
     lim.set_max_threshold(3);
     std::atomic<int> locked_count{0};
     std::atomic<bool> release{false};
 
-    // Each task holds exactly one slot — one lock per context is allowed
+
     auto make_holder = [&] {
         return fast_task::task::create([&] {
             lim.lock();
@@ -104,13 +104,13 @@ TEST_F(TaskLimiterTest, MultipleSlots) {
     fast_task::scheduler::start(t2);
     fast_task::scheduler::start(t3);
 
-    // Wait for all 3 to be holding
+
     while (locked_count.load() < 3)
-        fast_task::this_thread::sleep_for(std::chrono::milliseconds(5));
+        fast_task::native::this_thread::sleep_for(std::chrono::milliseconds(5));
 
     EXPECT_TRUE(lim.is_locked());
 
-    // 4th lock attempt from a 4th task must fail
+
     bool fourth_failed = false;
     run_task([&] {
         fourth_failed = !lim.try_lock();

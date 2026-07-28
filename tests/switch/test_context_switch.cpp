@@ -33,7 +33,6 @@ TEST_F(ContextSwitchTest, NoYieldHasLowCounter) {
     t_ref = t;
     fast_task::scheduler::start(t);
     t.await_task();
-    // Without explicit yields the counter may be 0 or 1 (initial switch)
     EXPECT_LE(t_ref.get_counter_context_switch(), 1u);
 }
 
@@ -62,7 +61,7 @@ TEST_F(ContextSwitchTest, InterruptCounterTracked) {
                 fast_task::this_task::check_cancellation();
             } catch (const fast_task::task_cancellation&) {
                 cancelled = true;
-                throw; // must re-throw so context_exec handles destructor cleanup
+                throw;
             }
         },
         nullptr
@@ -70,11 +69,10 @@ TEST_F(ContextSwitchTest, InterruptCounterTracked) {
     t_ref = t;
     fast_task::scheduler::start(t);
     while (!started.load())
-        fast_task::this_thread::sleep_for(std::chrono::milliseconds(1));
+        fast_task::native::this_thread::sleep_for(std::chrono::milliseconds(1));
     t.notify_cancel();
     t.await_task();
 
     EXPECT_TRUE(cancelled.load());
-    // interrupt counter requires FT_ENABLE_PREEMPTIVE_SCHEDULER; just check >= 0
     EXPECT_GE(t_ref.get_counter_interrupt(), 0u);
 }

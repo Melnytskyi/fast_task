@@ -10,7 +10,7 @@
 class TaskRecursiveMutexTest : public SchedulerFixture {};
 
 TEST_F(TaskRecursiveMutexTest, BasicLockUnlock) {
-    fast_task::task_recursive_mutex m;
+    fast_task::recursive_mutex m;
     run_task([&] {
         m.lock();
         m.unlock();
@@ -18,7 +18,7 @@ TEST_F(TaskRecursiveMutexTest, BasicLockUnlock) {
 }
 
 TEST_F(TaskRecursiveMutexTest, ReentrantFromSameTask) {
-    fast_task::task_recursive_mutex m;
+    fast_task::recursive_mutex m;
     run_task([&] {
         m.lock();
         m.lock(); // must not deadlock
@@ -30,7 +30,7 @@ TEST_F(TaskRecursiveMutexTest, ReentrantFromSameTask) {
 }
 
 TEST_F(TaskRecursiveMutexTest, TryLockFromSameTask) {
-    fast_task::task_recursive_mutex m;
+    fast_task::recursive_mutex m;
     run_task([&] {
         m.lock();
         EXPECT_TRUE(m.try_lock()); // recursive — should succeed
@@ -40,7 +40,7 @@ TEST_F(TaskRecursiveMutexTest, TryLockFromSameTask) {
 }
 
 TEST_F(TaskRecursiveMutexTest, ContentionFromDifferentTask) {
-    fast_task::task_recursive_mutex m;
+    fast_task::recursive_mutex m;
     std::atomic<int> counter{0};
     const int per_task = 200;
 
@@ -67,7 +67,7 @@ TEST_F(TaskRecursiveMutexTest, ContentionFromDifferentTask) {
 }
 
 TEST_F(TaskRecursiveMutexTest, IsOwn) {
-    fast_task::task_recursive_mutex m;
+    fast_task::recursive_mutex m;
     run_task([&] {
         m.lock();
         EXPECT_TRUE(m.is_own());

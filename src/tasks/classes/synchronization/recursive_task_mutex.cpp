@@ -8,11 +8,11 @@
 #include <tasks/_internal.hpp>
 
 namespace fast_task {
-    task_recursive_mutex::task_recursive_mutex() {
+    recursive_mutex::recursive_mutex() {
         FT_DEBUG_ONLY(register_object(this));
     }
 
-    task_recursive_mutex::~task_recursive_mutex() {
+    recursive_mutex::~recursive_mutex() {
         FT_DEBUG_ONLY(unregister_object(this));
         if (recursive_count != 0) {
             assert(false && "Mutex destroyed while locked");
@@ -20,55 +20,55 @@ namespace fast_task {
         }
     }
 
-    void task_recursive_mutex::lock() {
+    void recursive_mutex::lock() {
         if (get_loc().is_task_thread) {
-            if (mutex.values.current_task == get_loc().curr_task.get_id()) {
+            if (mut.values.current_task == get_loc().curr_task.get_id()) {
                 recursive_count++;
                 if (recursive_count == 0) {
                     recursive_count--;
                     throw std::logic_error("Recursive mutex overflow");
                 }
             } else {
-                mutex.lock();
+                mut.lock();
                 recursive_count = 1;
             }
         } else {
-            if (mutex.values.current_task == ((size_t)_thread_id() | native_thread_flag)) {
+            if (mut.values.current_task == ((size_t)_thread_id() | native_thread_flag)) {
                 recursive_count++;
                 if (recursive_count == 0) {
                     recursive_count--;
                     throw std::logic_error("Recursive mutex overflow");
                 }
             } else {
-                mutex.lock();
+                mut.lock();
                 recursive_count = 1;
             }
         }
     }
 
-    bool task_recursive_mutex::try_lock() {
+    bool recursive_mutex::try_lock() {
         if (get_loc().is_task_thread) {
-            if (mutex.values.current_task == get_loc().curr_task.get_id()) {
+            if (mut.values.current_task == get_loc().curr_task.get_id()) {
                 recursive_count++;
                 if (recursive_count == 0) {
                     recursive_count--;
                     return false;
                 }
                 return true;
-            } else if (mutex.try_lock()) {
+            } else if (mut.try_lock()) {
                 recursive_count = 1;
                 return true;
             } else
                 return false;
         } else {
-            if (mutex.values.current_task == ((size_t)_thread_id() | native_thread_flag)) {
+            if (mut.values.current_task == ((size_t)_thread_id() | native_thread_flag)) {
                 recursive_count++;
                 if (recursive_count == 0) {
                     recursive_count--;
                     return false;
                 }
                 return true;
-            } else if (mutex.try_lock()) {
+            } else if (mut.try_lock()) {
                 recursive_count = 1;
                 return true;
             } else
@@ -76,29 +76,29 @@ namespace fast_task {
         }
     }
 
-    bool task_recursive_mutex::try_lock_until(std::chrono::high_resolution_clock::time_point time_point) {
+    bool recursive_mutex::try_lock_until(std::chrono::high_resolution_clock::time_point time_point) {
         if (get_loc().is_task_thread) {
-            if (mutex.values.current_task == get_loc().curr_task.get_id()) {
+            if (mut.values.current_task == get_loc().curr_task.get_id()) {
                 recursive_count++;
                 if (recursive_count == 0) {
                     recursive_count--;
                     return false;
                 }
                 return true;
-            } else if (mutex.try_lock_until(time_point)) {
+            } else if (mut.try_lock_until(time_point)) {
                 recursive_count = 1;
                 return true;
             } else
                 return false;
         } else {
-            if (mutex.values.current_task == ((size_t)_thread_id() | native_thread_flag)) {
+            if (mut.values.current_task == ((size_t)_thread_id() | native_thread_flag)) {
                 recursive_count++;
                 if (recursive_count == 0) {
                     recursive_count--;
                     return false;
                 }
                 return true;
-            } else if (mutex.try_lock_until(time_point)) {
+            } else if (mut.try_lock_until(time_point)) {
                 recursive_count = 1;
                 return true;
             } else
@@ -106,28 +106,28 @@ namespace fast_task {
         }
     }
 
-    void task_recursive_mutex::unlock() {
+    void recursive_mutex::unlock() {
         if (recursive_count) {
-            fast_task::unique_lock no_race_guard(mutex.values.no_race);
+            fast_task::unique_lock no_race_guard(mut.values.no_race);
             recursive_count--;
             if (!recursive_count) {
                 bool to_yield = false;
                 if (get_loc().is_task_thread) {
-                    if (mutex.values.current_task != get_loc().curr_task.get_id())
+                    if (mut.values.current_task != get_loc().curr_task.get_id())
                         throw std::logic_error("Tried unlock non owned mutex");
-                } else if (mutex.values.current_task != ((size_t)_thread_id() | native_thread_flag))
+                } else if (mut.values.current_task != ((size_t)_thread_id() | native_thread_flag))
                     throw std::logic_error("Tried unlock non owned mutex");
 
-                task_mutex::resume_task* head = mutex.values.begin;
-                task_mutex::resume_task* end = mutex.values.end;
-                mutex.values.begin = nullptr;
-                mutex.values.end = nullptr;
-                mutex.values.current_task = 0;
+                mutex::resume_task* head = mut.values.begin;
+                mutex::resume_task* end = mut.values.end;
+                mut.values.begin = nullptr;
+                mut.values.end = nullptr;
+                mut.values.current_task = 0;
                 if (!head)
                     return;
-                task_mutex::resume_task* curr = head;
+                mutex::resume_task* curr = head;
                 while (curr) {
-                    task_mutex::resume_task* next = curr->next;
+                    mutex::resume_task* next = curr->next;
                     if (curr->task == nullptr) {
                         if (curr->native_cv != nullptr) {
                             *curr->native_check = true;
@@ -139,13 +139,13 @@ namespace fast_task {
                             if (!get_data(curr->task).get_time_end()) {
                                 bool on_scheduler = get_data(curr->task).get_is_on_scheduler();
                                 if (on_scheduler) {
-                                    mutex.values.current_task = curr->task.get_id();
+                                    mut.values.current_task = curr->task.get_id();
                                     ++recursive_count;
 
                                     if (next) {
                                         next->prev = nullptr;
-                                        mutex.values.begin = next;
-                                        mutex.values.end = next->next ? end : next;
+                                        mut.values.begin = next;
+                                        mut.values.end = next->next ? end : next;
                                     }
                                 }
                                 get_data(curr->task).set_awaked(true);
@@ -169,66 +169,66 @@ namespace fast_task {
             throw std::logic_error("Mutex not locked");
     }
 
-    bool task_recursive_mutex::is_locked() {
+    bool recursive_mutex::is_locked() {
         if (recursive_count)
             return true;
         else
             return false;
     }
 
-    void task_recursive_mutex::lifecycle_lock(task&& task) {
-        mutex.lifecycle_lock(std::move(task));
+    void recursive_mutex::lifecycle_lock(task&& task) {
+        mut.lifecycle_lock(std::move(task));
     }
 
-    bool task_recursive_mutex::is_own() {
+    bool recursive_mutex::is_own() {
         if (get_loc().is_task_thread) {
-            if (mutex.values.current_task == get_loc().curr_task.get_id())
+            if (mut.values.current_task == get_loc().curr_task.get_id())
                 return true;
-        } else if (mutex.values.current_task == ((size_t)_thread_id() | native_thread_flag))
+        } else if (mut.values.current_task == ((size_t)_thread_id() | native_thread_flag))
             return true;
         return false;
     }
 
-    bool task_recursive_mutex::enter_wait(const task& task, enter_state& state) {
-        auto* node = state.template use<task_mutex::resume_task>();
+    bool recursive_mutex::enter_wait(const task& task, enter_state& state) {
+        auto* node = state.template use<mutex::resume_task>();
         node->task = task;
         node->awake_check = get_data(task).awake_check;
-        fast_task::lock_guard l(mutex.values.no_race);
-        if (mutex.values.current_task == task.get_id()) {
+        fast_task::lock_guard l(mut.values.no_race);
+        if (mut.values.current_task == task.get_id()) {
             recursive_count++;
             if (recursive_count == 0) {
                 recursive_count--;
                 throw std::logic_error("Recursive mutex overflow");
             }
             return true;
-        } else if (mutex.values.current_task == 0) {
-            mutex.values.current_task = task.get_id();
+        } else if (mut.values.current_task == 0) {
+            mut.values.current_task = task.get_id();
             recursive_count = 1;
             return true;
         } else {
-            mutex.push_back(mutex.values, node);
+            mut.push_back(mut.values, node);
             return false;
         }
     }
 
-    bool task_recursive_mutex::enter_wait_until(const task& task, enter_state& state, std::chrono::high_resolution_clock::time_point time_point) {
-        auto* node = state.template use<task_mutex::resume_task>();
+    bool recursive_mutex::enter_wait_until(const task& task, enter_state& state, std::chrono::high_resolution_clock::time_point time_point) {
+        auto* node = state.template use<mutex::resume_task>();
         node->task = task;
         node->awake_check = get_data(task).awake_check;
-        fast_task::lock_guard l(mutex.values.no_race);
-        if (mutex.values.current_task == task.get_id()) {
+        fast_task::lock_guard l(mut.values.no_race);
+        if (mut.values.current_task == task.get_id()) {
             recursive_count++;
             if (recursive_count == 0) {
                 recursive_count--;
                 throw std::logic_error("Recursive mutex overflow");
             }
             return true;
-        } else if (mutex.values.current_task == 0) {
-            mutex.values.current_task = task.get_id();
+        } else if (mut.values.current_task == 0) {
+            mut.values.current_task = task.get_id();
             recursive_count = 1;
             return true;
         } else {
-            mutex.push_back(mutex.values, node);
+            mut.push_back(mut.values, node);
             fast_task::makeTimeWait_extern(task, time_point);
             return false;
         }

@@ -288,7 +288,7 @@ namespace fast_task::file {
 
             class async_filebuf : public std::streambuf {
             private:
-                static constexpr size_t buffer_size = 4096; // Buffer size for reading/writing
+                static constexpr size_t buffer_size = 4096;
                 file_handle& _handle;
                 std::vector<char> buffer;
 

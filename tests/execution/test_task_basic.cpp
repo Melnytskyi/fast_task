@@ -73,7 +73,7 @@ TEST_F(TaskBasicTest, ScheduleDelayed) {
     std::atomic<bool> ran{false};
     auto t = fast_task::task::create([&] { ran = true; });
     fast_task::scheduler::schedule(t, std::chrono::milliseconds(30));
-    fast_task::this_thread::sleep_for(std::chrono::milliseconds(100));
+    fast_task::native::this_thread::sleep_for(std::chrono::milliseconds(100));
     EXPECT_TRUE(ran.load());
 }
 

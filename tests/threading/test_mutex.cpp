@@ -4,30 +4,29 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
-#include <helpers.hpp>
-#include <threading.hpp>
 #include <atomic>
+#include <helpers.hpp>
+#include <native.hpp>
 #include <thread>
 #include <vector>
 
 TEST(Mutex, BasicLockUnlock) {
-    fast_task::mutex m;
+    fast_task::native::mutex m;
     m.lock();
     m.unlock();
 }
 
 TEST(Mutex, TryLockSucceedsWhenFree) {
-    fast_task::mutex m;
+    fast_task::native::mutex m;
     EXPECT_TRUE(m.try_lock());
     m.unlock();
 }
 
 TEST(Mutex, TryLockFailsWhenHeld) {
-    fast_task::mutex m;
+    fast_task::native::mutex m;
     m.lock();
-    // try_lock from a second thread
     bool result = true;
-    fast_task::thread t([&] {
+    fast_task::native::thread t([&] {
         result = m.try_lock();
     });
     t.join();
@@ -36,7 +35,7 @@ TEST(Mutex, TryLockFailsWhenHeld) {
 }
 
 TEST(Mutex, Contention) {
-    fast_task::mutex m;
+    fast_task::native::mutex m;
     std::atomic<int> counter{0};
     const int iterations = 10000;
 
@@ -48,8 +47,8 @@ TEST(Mutex, Contention) {
         }
     };
 
-    fast_task::thread t1(worker);
-    fast_task::thread t2(worker);
+    fast_task::native::thread t1(worker);
+    fast_task::native::thread t2(worker);
     t1.join();
     t2.join();
 

@@ -1,5 +1,5 @@
-#ifndef INCLUDE_COROUTINE_THIS_TASK
-#define INCLUDE_COROUTINE_THIS_TASK
+#ifndef FAST_TASK_INCLUDE_COROUTINE_THIS_TASK
+#define FAST_TASK_INCLUDE_COROUTINE_THIS_TASK
 #include "../task/this_task.hpp"
 #include "core.hpp"
 
@@ -42,9 +42,9 @@ namespace fast_task::this_task {
     }
 
     template <class Rep, class Period>
-    [[nodiscard]] inline auto async_sleep_for(task_limiter& mut, const std::chrono::duration<Rep, Period>& duration) {
-        return async_sleep_until(mut, std::chrono::high_resolution_clock::now() + duration);
+    [[nodiscard]] inline auto async_sleep_for(const std::chrono::duration<Rep, Period>& duration) {
+        return async_sleep_until(std::chrono::high_resolution_clock::now() + duration);
     }
 }
 
-#endif /* INCLUDE_COROUTINE_THIS_TASK */
+#endif /* FAST_TASK_INCLUDE_COROUTINE_THIS_TASK */
