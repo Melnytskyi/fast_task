@@ -20,14 +20,14 @@ namespace fast_task::futex {
 
 
     size_t FT_API wake_and_requeue_on_address(void* address, size_t process_count = SIZE_MAX, size_t wake_count = 1);
-    size_t FT_API wake_and_requeue_on_address(void* address, void (*pre_release)(void*, size_t to_process), size_t process_count = SIZE_MAX, size_t wake_count = 1);
+    size_t FT_API wake_and_requeue_on_address(void* address, void (*pre_release)(void*, size_t to_process, bool has_remaining), size_t process_count = SIZE_MAX, size_t wake_count = 1);
 
 
     size_t FT_API wait_items_on(void* address);
     bool FT_API has_waiters(void* address);
     bool FT_API has_waiters_callback(void* address, void (*callback)(void* address, void* data, bool result), void* data);
 
-    inline size_t FT_API wake_on_address(void* address, void (*pre_release)(void*, size_t to_process), size_t count = 1) {
+    inline size_t FT_API wake_on_address(void* address, void (*pre_release)(void*, size_t to_process, bool has_remaining), size_t count = 1) {
         return wake_and_requeue_on_address(address, pre_release, count, SIZE_MAX);
     }
 

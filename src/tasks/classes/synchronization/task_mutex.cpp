@@ -65,25 +65,28 @@ namespace fast_task {
                 expected |= HAS_WAITER;
             }
             futex::wait_on_address(&state, [](void* addr) {
-                return *reinterpret_cast<size_t*>(addr) == UNLOCKED;
+                return (*reinterpret_cast<size_t*>(addr) & OWNER_MASK) == UNLOCKED;
             });
             expected = state.load(std::memory_order_acquire);
-            if (expected == 0)
-                if (state.compare_exchange_strong(expected, self_id, std::memory_order_acquire, std::memory_order_relaxed))
+            if ((expected & OWNER_MASK) == UNLOCKED)
+                if (state.compare_exchange_strong(expected, self_id | (expected & HAS_WAITER), std::memory_order_acquire, std::memory_order_relaxed))
                     return;
         }
     }
 
     bool mutex::try_lock() {
         interrupt_unsafe_region region;
-        size_t expected = UNLOCKED;
         size_t self_id = this_task::get_id();
-        if (is_own())
+        size_t expected = state.load(std::memory_order_relaxed);
+
+        if ((expected & OWNER_MASK) == self_id)
             return false;
-        if (state.compare_exchange_strong(expected, self_id, std::memory_order_acquire, std::memory_order_relaxed))
-            return true;
-        else
-            return (expected & OWNER_MASK) == self_id;
+
+        while ((expected & OWNER_MASK) == UNLOCKED)
+            if (state.compare_exchange_weak(expected, self_id | (expected & HAS_WAITER), std::memory_order_acquire, std::memory_order_relaxed))
+                return true;
+
+        return false;
     }
 
     bool mutex::try_lock_until(std::chrono::high_resolution_clock::time_point time_point) {
@@ -107,11 +110,17 @@ namespace fast_task {
                 }
                 expected |= HAS_WAITER;
             }
-            if (!futex::wait_on_address_until(&state, [](void* addr) { return *reinterpret_cast<size_t*>(addr) == UNLOCKED; }, time_point))
+            if (!futex::wait_on_address_until(
+                    &state,
+                    [](void* addr) {
+                        return (*reinterpret_cast<size_t*>(addr) & OWNER_MASK) == UNLOCKED;
+                    },
+                    time_point
+                ))
                 return false;
             expected = state.load(std::memory_order_acquire);
-            if (expected == 0)
-                if (state.compare_exchange_strong(expected, self_id, std::memory_order_acquire, std::memory_order_relaxed))
+            if ((expected & OWNER_MASK) == UNLOCKED)
+                if (state.compare_exchange_strong(expected, self_id | (expected & HAS_WAITER), std::memory_order_acquire, std::memory_order_relaxed))
                     return true;
         }
     }
@@ -126,11 +135,13 @@ namespace fast_task {
             if (state.compare_exchange_strong(self_id, 0, std::memory_order_release, std::memory_order_relaxed))
                 return;
 
-        futex::wake_on_address(&state, [](void* addr, size_t) { *reinterpret_cast<size_t*>(addr) = UNLOCKED; });
+        futex::wake_on_address(&state, [](void* addr, size_t, bool has_remaining) {
+            *reinterpret_cast<size_t*>(addr) = has_remaining ? HAS_WAITER : UNLOCKED;
+        });
     }
 
     bool mutex::is_locked() {
-        return state.load(std::memory_order_relaxed) != UNLOCKED;
+        return (state.load(std::memory_order_relaxed) & OWNER_MASK) != UNLOCKED;
     }
 
     bool mutex::is_own() {
@@ -159,10 +170,11 @@ namespace fast_task {
         size_t self_id = task.get_id();
         if ((state.load(std::memory_order_relaxed) & OWNER_MASK) == self_id)
             throw std::logic_error("Tried lock mutex twice");
-        if (state.compare_exchange_strong(expected, self_id, std::memory_order_acquire, std::memory_order_relaxed))
-            return true;
-        if ((expected & OWNER_MASK) == self_id)
-            return true;
+
+        while ((expected & OWNER_MASK) == UNLOCKED)
+            if (state.compare_exchange_weak(expected, self_id | (expected & HAS_WAITER), std::memory_order_acquire, std::memory_order_relaxed))
+                return true;
+
         return futex::enter_wait_on_address_lock(
             task,
             &state,
@@ -174,14 +186,16 @@ namespace fast_task {
 
     bool mutex::enter_wait_until(const task& task, enter_state& es, std::chrono::high_resolution_clock::time_point time_point) {
         interrupt_unsafe_region region;
-        size_t expected = UNLOCKED;
         size_t self_id = task.get_id();
-        if ((state.load(std::memory_order_relaxed) & OWNER_MASK) == self_id)
-            throw std::logic_error("Tried lock mutex twice");
-        if (state.compare_exchange_strong(expected, self_id, std::memory_order_acquire, std::memory_order_relaxed))
-            return true;
+        size_t expected = state.load(std::memory_order_relaxed);
+
         if ((expected & OWNER_MASK) == self_id)
-            return true;
+            throw std::logic_error("Tried lock mutex twice");
+
+        while ((expected & OWNER_MASK) == UNLOCKED)
+            if (state.compare_exchange_weak(expected, self_id | (expected & HAS_WAITER), std::memory_order_acquire, std::memory_order_relaxed))
+                return true;
+
         return futex::enter_wait_on_address_lock_until(
             task,
             &state,

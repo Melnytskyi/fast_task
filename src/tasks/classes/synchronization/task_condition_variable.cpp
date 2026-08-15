@@ -104,16 +104,16 @@ namespace fast_task {
 
     void condition_variable::notify_all() {
         if (address.load(std::memory_order_acquire) == HAS_WAITERS)
-            futex::wake_and_requeue_on_address(&address, [](void* address, size_t to_process) {
-                if (to_process == 0)
+            futex::wake_and_requeue_on_address(&address, [](void* address, size_t, bool has_remaining) {
+                if (has_remaining)
                     reinterpret_cast<std::atomic_uint8_t*>(address)->store(NO_WAITERS, std::memory_order_release);
             });
     }
 
     void condition_variable::notify_one() {
         if (address.load(std::memory_order_acquire) == HAS_WAITERS)
-            futex::wake_on_address(&address, [](void* address, size_t to_process) {
-                if (to_process == 0)
+            futex::wake_on_address(&address, [](void* address, size_t, bool has_remaining) {
+                if (has_remaining)
                     reinterpret_cast<std::atomic_uint8_t*>(address)->store(NO_WAITERS, std::memory_order_release);
             });
     }

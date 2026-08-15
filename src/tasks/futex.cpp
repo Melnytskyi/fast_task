@@ -582,7 +582,7 @@ namespace fast_task::futex {
         return process_wakeups(to_wake_head, wake_count);
     }
 
-    size_t FT_API wake_and_requeue_on_address(void* address, void (*pre_release)(void*, size_t), size_t process_count, size_t wake_count) {
+    size_t FT_API wake_and_requeue_on_address(void* address, void (*pre_release)(void*, size_t, bool has_remaining), size_t process_count, size_t wake_count) {
         bucket_t& bucket = glob.futex_global.get_bucket(address);
         fast_task::unique_lock guard(bucket.lock);
 
@@ -591,14 +591,14 @@ namespace fast_task::futex {
             curr = curr->next_addr;
 
         if (!curr) {
-            pre_release(address, 0);
+            pre_release(address, 0, false);
             return 0;
         }
 
 
         wait_node_t *to_wake_head, *to_wake_tail;
 
-        pre_release(address, extract_waiters(bucket, curr, process_count, to_wake_head, to_wake_tail));
+        pre_release(address, extract_waiters(bucket, curr, process_count, to_wake_head, to_wake_tail), curr != nullptr);
 
         guard.unlock();
 
