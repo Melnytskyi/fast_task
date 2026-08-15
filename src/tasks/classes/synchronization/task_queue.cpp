@@ -10,7 +10,7 @@
 namespace fast_task {
     queue::queue(size_t at_execution_max) {
         FT_DEBUG_ONLY(register_object(this));
-        handle = new queue_handle{.end_of_queue{}, .tasks{}, .no_race{}, .tq = this, .at_execution_max = at_execution_max};
+        handle = new queue_handle{.tasks{}, .end_of_queue{}, .no_race{}, .tq = this, .at_execution_max = at_execution_max};
     }
 
     void __TaskQueue_add_task_leave(queue_handle* tqh) {
@@ -159,15 +159,13 @@ namespace fast_task {
     }
 
     void queue::wait() {
-        mutex_unify unify(handle->no_race);
-        fast_task::unique_lock lock(unify);
+        fast_task::unique_lock lock(handle->no_race);
         while (handle->now_at_execution != 0 || !handle->tasks.empty())
             handle->end_of_queue.wait(lock);
     }
 
     bool queue::wait_until(std::chrono::high_resolution_clock::time_point time_point) {
-        mutex_unify unify(handle->no_race);
-        fast_task::unique_lock lock(unify);
+        fast_task::unique_lock lock(handle->no_race);
         while (handle->now_at_execution != 0 || !handle->tasks.empty()) {
             if (!handle->end_of_queue.wait_until(lock, time_point))
                 return false;

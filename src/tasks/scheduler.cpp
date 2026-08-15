@@ -201,6 +201,11 @@ namespace fast_task {
         swapCtx();
     }
 
+    void swapCtxUnlock(const mutex_unify& mut0) {
+        get_data(get_loc().curr_task).set_unlock(mut0);
+        swapCtx();
+    }
+
     boost::context::continuation context_exec(boost::context::continuation&& sink) {
         auto& task_obj = get_data(get_loc().curr_task);
         auto& stack_current_context = get_execution_data(&task_obj).context;

@@ -355,6 +355,6 @@ namespace fast_task {
     }
 
     size_t task::get_id() const noexcept {
-        return reinterpret_cast<size_t>(obj) & ~native_thread_flag;
+        return reinterpret_cast<size_t>(obj) & native_thread_mask;
     }
 }

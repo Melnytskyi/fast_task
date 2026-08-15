@@ -156,7 +156,7 @@ namespace fast_task {
             return wait_until(std::chrono::high_resolution_clock::now() + duration);
         }
 
-        bool wait_until(std::chrono::time_point<std::chrono::high_resolution_clock> time) {
+        bool wait_until(std::chrono::high_resolution_clock::time_point time) {
             if (!task_.is_ended())
                 if (!task_.await_task_until(time))
                     return false;
@@ -177,7 +177,7 @@ namespace fast_task {
             return wait_until_no_except(std::chrono::high_resolution_clock::now() + duration);
         }
 
-        bool wait_until_no_except(std::chrono::time_point<std::chrono::high_resolution_clock> time) {
+        bool wait_until_no_except(std::chrono::high_resolution_clock::time_point time) {
             if (!task_.is_ended())
                 if (!task_.await_task_until(time))
                     return false;

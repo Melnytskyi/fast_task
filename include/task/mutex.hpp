@@ -17,16 +17,12 @@ namespace fast_task {
         friend struct debug::_debug_collect;
         struct FT_API_LOCAL resume_task;
         friend class mutex_unify;
+        friend class condition_variable;
 
-        struct FT_API_LOCAL private_values {
-            fast_task::native::spin_lock no_race;
-            struct resume_task* begin = nullptr;
-            struct resume_task* end = nullptr;
-            size_t current_task = 0;
-        } values;
+        std::atomic_size_t state;
 
-        static void push_back(private_values& values, resume_task* node);
-        static void erase(private_values& values, resume_task* node);
+        void transfer_ownership(size_t to_owner);
+        void mark_has_wait();
 
     public:
         mutex();

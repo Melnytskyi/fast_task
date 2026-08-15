@@ -486,10 +486,10 @@ namespace fast_task {
     void mutex_unify::donate_ownership(fast_task::task* target_owner) {
         switch (type) {
         case mutex_unify_type::umut:
-            umut->values.current_task = target_owner->get_id();
+            umut->transfer_ownership(target_owner->get_id());
             break;
         case mutex_unify_type::urmut:
-            urmut->mut.values.current_task = target_owner->get_id();
+            urmut->mut.transfer_ownership(target_owner->get_id());
             break;
         case mutex_unify_type::urwmut_r:
             urwmut->values.readers.remove(get_loc().curr_task.get_id());

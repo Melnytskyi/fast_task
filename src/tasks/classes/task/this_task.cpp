@@ -11,7 +11,7 @@
 namespace fast_task::this_task {
     size_t get_id() noexcept {
         if (!get_loc().is_task_thread)
-            return (size_t)_thread_id() | native_thread_flag;
+            return ((size_t)_thread_id() & native_thread_mask) | native_thread_flag;
         else
             return get_loc().curr_task.get_id();
     }

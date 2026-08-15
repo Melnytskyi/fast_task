@@ -527,14 +527,25 @@ namespace fast_task {
         return enter_wait(waiter, st);
     }
 
-    mutex_unify task_object::get_relock() const noexcept {
-        return mutex_unify_relock_access::from_raw(relock, relock_type);
+    mutex_unify task_object::get_relock() noexcept {
+        auto res = mutex_unify_relock_access::from_raw(relock, relock_type);
+        if ((state.load(std::memory_order_relaxed) & (state_f::relock_action_as_unlock)) != 0)
+            set_relock(mutex_unify{});
+        return res;
     }
 
     void task_object::set_relock(mutex_unify mut) noexcept {
         relock = mutex_unify_relock_access::raw_ptr(mut);
         relock_type = mutex_unify_relock_access::raw_type(mut);
+        set_flag<state_f::relock_action_as_unlock>(state, false);
     }
+
+    void task_object::set_unlock(mutex_unify mut) noexcept {
+        relock = mutex_unify_relock_access::raw_ptr(mut);
+        relock_type = mutex_unify_relock_access::raw_type(mut);
+        set_flag<state_f::relock_action_as_unlock>(state, true);
+    }
+
 
     task_object* task_object::alloc() {
         auto obj = static_cast<task_object*>(get_loc().task_alloc_cache.allocate());

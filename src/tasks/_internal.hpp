@@ -23,7 +23,6 @@
     #include <shared.hpp>
     #include <task.hpp>
     #include <tasks/classes/synchronization/futex_waiter.hpp>
-    #include <tasks/classes/synchronization/internal_sched_cv.hpp>
     #include <tasks/util/_dbg_macro.hpp>
     #include <tasks/util/fixed_task_allocator.hpp>
     #include <tasks/util/hashed_timing_wheel.hpp>
@@ -94,16 +93,6 @@ namespace fast_task {
         bool heap_allocated = false;
     };
 
-    struct condition_variable::resume_task {
-        class task task;
-        uint16_t awake_check = 0;
-        fast_task::native::condition_variable_any* native_cv = nullptr;
-        bool* native_check = nullptr;
-        resume_task* next = nullptr;
-        resume_task* prev = nullptr;
-        bool heap_allocated = false;
-    };
-
     struct limiter::resume_task {
         class task task;
         uint16_t awake_check;
@@ -121,8 +110,8 @@ namespace fast_task {
     };
 
     struct queue_handle {                     //96 [sizeof]
-        condition_variable end_of_queue;      //32
         std::list<task> tasks;                //24
+        condition_variable_any end_of_queue;  //16
         fast_task::native::spin_lock no_race; //8
         queue* tq = nullptr;                  //8
         size_t now_at_execution = 0;          //8
@@ -175,12 +164,12 @@ namespace fast_task {
         }
     };
 
-    inline auto FT_API_LOCAL get_data(class task* task) -> task_object& {
-        return *task->obj;
-    }
-
     inline auto FT_API_LOCAL get_data(const class task& task) -> task_object& {
         return *task.obj;
+    }
+
+    inline auto FT_API_LOCAL get_data(class task* task) -> task_object& {
+        return *task->obj;
     }
 
     inline auto FT_API_LOCAL get_execution_data(class task* task) -> task_object::execution_data& {
@@ -223,6 +212,49 @@ namespace fast_task {
     void FT_API_LOCAL task_switch(task_priority priority, std::chrono::nanoseconds& current_available_quantum, std::chrono::nanoseconds elapsed);
     std::chrono::nanoseconds FT_API_LOCAL init_quantum(task_priority priority);
 
+    struct futex_global_t {
+        enum class node_type : uint8_t {
+            wait,
+            unlock_and_wait,
+            enter_wait_and_lock
+        };
+
+        struct wait_node {
+            wait_node* next_addr = nullptr;
+            wait_node* prev_addr = nullptr;
+
+            wait_node* next_waiter = nullptr;
+            wait_node* prev_waiter = nullptr;
+
+            wait_node* tail_waiter = nullptr;
+            void* wait_address;
+            node_type type;
+            bool needs_awake_check = false;
+            uint16_t awake_check = 0;
+            std::atomic_uint32_t native_wake;
+            task waiter;
+            void* next_wait_addr;
+
+            union {
+                bool (*next_wait_addr_check_callback)(void*, bool mark_request);
+                void (*lock_callback)(void*, const task& task_obj);
+            };
+        };
+
+        struct bucket {
+            fast_task::native::spin_lock lock;
+            wait_node* addresses = nullptr;
+        };
+
+        bucket buckets[4096];
+
+        inline bucket& get_bucket(void* addr) {
+            size_t h = reinterpret_cast<size_t>(addr);
+            h ^= (h >> 20) ^ (h >> 12);
+            return buckets[(h ^ (h >> 7) ^ (h >> 4)) & 0xFFF];
+        }
+    };
+
     struct FT_API_LOCAL executors_local {
         tl_task_alloc_cache task_alloc_cache;
         tl_timing_alloc_cache timing_alloc_cache;
@@ -261,7 +293,7 @@ namespace fast_task {
         binded_executor_registry executors_registry;
         std::list<uint32_t> completions;
         moodycamel::ConcurrentQueue<task_object*> tasks;
-        condition_variable on_closed_notifier;
+        condition_variable_any on_closed_notifier;
         fast_task::native::rw_mutex no_race;
         fast_task::native::condition_variable_any new_task_notifier;
         uint16_t executors = 0;
@@ -276,7 +308,7 @@ namespace fast_task {
     struct FT_API_LOCAL executor_global {
         timing_allocator timing_alloc;
         global_task_allocator gba;
-        internal_sched_cv no_tasks_execute_notifier;
+        condition_variable_any no_tasks_execute_notifier;
         futex_waiter timer_waiter;
         fast_task::native::condition_variable_any tasks_notifier;
         fast_task::native::condition_variable_any executor_shutdown_notifier;
@@ -312,6 +344,7 @@ namespace fast_task {
         std::atomic<size_t> thread_count{0}; //including native worker and timer
         fast_task::native::mutex stw_mutex;
 
+        futex_global_t futex_global;
         executor_global();
         ~executor_global();
     };
@@ -319,7 +352,9 @@ namespace fast_task {
     NOINLINE executors_local& get_loc() noexcept;
 
     extern FT_API_LOCAL executor_global glob;
-    constexpr size_t native_thread_flag = size_t(1) << (sizeof(size_t) * 8 - 1);
+    constexpr size_t native_thread_flag = size_t(1) << (sizeof(size_t) * 8 - 2);
+    constexpr size_t native_thread_data = size_t(1) << (sizeof(size_t) * 8 - 1);
+    constexpr size_t native_thread_mask = ~(size_t(3) << (sizeof(size_t) * 8 - 2));
 
     inline void FT_API_LOCAL unsafe_perform_stop_the_world(const std::function<void()>& work) {
         std::lock_guard lock(glob.stw_mutex);
@@ -360,6 +395,7 @@ namespace fast_task {
     void FT_API_LOCAL swapCtx();
     bool FT_API_LOCAL checkCancellation() noexcept;
     void FT_API_LOCAL swapCtxRelock(const mutex_unify& mut0);
+    void FT_API_LOCAL swapCtxUnlock(const mutex_unify& mut0);
     void FT_API_LOCAL transfer_task(task&&, enter_state* stat = nullptr);
     void FT_API_LOCAL makeTimeWait(std::chrono::high_resolution_clock::time_point t);
     void FT_API_LOCAL makeTimeWait_extern(task, std::chrono::high_resolution_clock::time_point time_point);

@@ -56,13 +56,8 @@ TEST_F(CoroutineAwaitersTest, AsyncTryLockForTimesOut) {
 
     auto coro = coro_try_lock_for_timeout(mtx);
     fast_task::scheduler::start(coro.get_task());
-    coro->await_task();
 
-    bool locked = true;
-    coro->access_dummy([&](void* addr) {
-        auto h = std::coroutine_handle<fast_task::task_promise<bool>>::from_address(addr);
-        locked = h.promise().result();
-    });
+    bool locked = coro.sync_get();
     EXPECT_FALSE(locked);
     mtx.unlock();
 }
@@ -74,9 +69,8 @@ fast_task::task_coro<void> coro_cv_wait(
     fast_task::condition_variable& cv,
     bool& ready
 ) {
-    fast_task::mutex_unify mu(mtx);
     co_await async_lock(mtx);
-    fast_task::unique_lock<fast_task::mutex_unify> lk(mu, fast_task::adopt_lock);
+    fast_task::unique_lock lk(mtx, fast_task::adopt_lock);
     while (!ready)
         co_await async_wait(cv, lk);
     co_return;

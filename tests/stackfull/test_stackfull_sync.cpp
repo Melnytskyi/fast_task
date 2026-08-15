@@ -42,8 +42,7 @@ TEST_F(StackfullSyncTest, TaskCVWakesSleeper) {
     bool ready = false;
 
     auto waiter = fast_task::task::create([&] {
-        fast_task::mutex_unify mu(mtx);
-        fast_task::unique_lock<fast_task::mutex_unify> lk(mu);
+        fast_task::unique_lock lk(mtx);
         while (!ready)
             cv.wait(lk);
     });

@@ -39,6 +39,7 @@ namespace fast_task {
                 cancellation_requested = 0x80,
                 invalid_switch_caught = 0x100,
                 completed = 0x200,
+                relock_action_as_unlock = 0x400,
             };
         };
 
@@ -109,8 +110,9 @@ namespace fast_task {
         bool enter_wait_until(const task&, enter_state& state, std::chrono::high_resolution_clock::time_point);
         bool enter_cancel(const task&, enter_state& state);
 
-        mutex_unify get_relock() const noexcept;
+        mutex_unify get_relock() noexcept;
         void set_relock(mutex_unify) noexcept;
+        void set_unlock(mutex_unify) noexcept;
 
         static task_object* alloc();
         static task_object* use(task_object*) noexcept;

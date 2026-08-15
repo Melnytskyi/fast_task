@@ -16,8 +16,7 @@ TEST_F(TaskCvTest, WaitAndNotifyOne) {
 
     run_task([&] {
         auto waiter = fast_task::task::create([&] {
-            fast_task::mutex_unify um(m);
-            fast_task::unique_lock<fast_task::mutex_unify> lock(um);
+            fast_task::unique_lock lock(m);
             while (!ready)
                 cv.wait(lock);
         });
@@ -25,7 +24,7 @@ TEST_F(TaskCvTest, WaitAndNotifyOne) {
 
         fast_task::this_task::sleep_for(std::chrono::milliseconds(20));
         {
-            fast_task::lock_guard<fast_task::mutex> lg(m);
+            fast_task::lock_guard lg(m);
             ready = true;
         }
         cv.notify_one();
@@ -43,8 +42,7 @@ TEST_F(TaskCvTest, NotifyAll) {
     bool go = false;
 
     auto waiter_fn = [&] {
-        fast_task::mutex_unify um(m);
-        fast_task::unique_lock<fast_task::mutex_unify> lock(um);
+        fast_task::unique_lock lock(m);
         while (!go)
             cv.wait(lock);
         ++woken;
@@ -78,8 +76,7 @@ TEST_F(TaskCvTest, WaitForTimeout) {
     bool timed_out = false;
 
     run_task([&] {
-        fast_task::mutex_unify um(m);
-        fast_task::unique_lock<fast_task::mutex_unify> lock(um);
+        fast_task::unique_lock lock(m);
         timed_out = !cv.wait_for(lock, std::chrono::milliseconds(50));
     });
 
@@ -94,8 +91,7 @@ TEST_F(TaskCvTest, HasWaiters) {
 
     run_task([&] {
         auto waiter = fast_task::task::create([&] {
-            fast_task::mutex_unify um(m);
-            fast_task::unique_lock<fast_task::mutex_unify> lock(um);
+            fast_task::unique_lock lock(m);
             waiter_in = true;
             while (!notify)
                 cv.wait(lock);
@@ -127,9 +123,8 @@ TEST_F(TaskCvTest, AsyncWait) {
 
     run_task([&] {
         auto coro = [](auto& m, auto& cv, auto& ready, auto& completed) -> fast_task::task_coro<void> {
-            fast_task::mutex_unify um(m);
             co_await async_lock(m);
-            fast_task::unique_lock<fast_task::mutex_unify> lock(um, fast_task::adopt_lock);
+            fast_task::unique_lock lock(m, fast_task::adopt_lock);
             while (!ready)
                 co_await async_wait(cv, lock);
             completed = true;

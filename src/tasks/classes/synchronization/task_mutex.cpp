@@ -4,43 +4,40 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
+#include <experimental/futex.hpp>
 #include <task.hpp>
 #include <tasks/_internal.hpp>
 
 namespace fast_task {
-    void mutex::push_back(private_values& values, resume_task* node) {
-        node->next = nullptr;
-        node->prev = values.end;
-        if (values.end) {
-            values.end->next = node;
-        } else
-            values.begin = node;
+    constexpr size_t UNLOCKED = 0;
+    constexpr size_t OWNER_MASK = ~native_thread_data;
+    constexpr size_t HAS_WAITER = native_thread_data;
 
-        values.end = node;
+    void mutex::transfer_ownership(size_t to_owner) {
+        if (!is_own())
+            return;
+        size_t expected = state.load(std::memory_order_relaxed);
+        while (true) {
+            if (state.compare_exchange_strong(expected, to_owner | (expected & HAS_WAITER), std::memory_order_acquire, std::memory_order_relaxed))
+                return;
+        }
     }
 
-    void mutex::erase(private_values& values, resume_task* node) {
-        if (node->prev) {
-            node->prev->next = node->next;
-        } else
-            values.begin = node->next;
-
-        if (node->next) {
-            node->next->prev = node->prev;
-        } else
-            values.end = node->prev;
-
-        node->next = nullptr;
-        node->prev = nullptr;
+    void mutex::mark_has_wait() {
+        size_t expected = state.load(std::memory_order_relaxed);
+        while (true) {
+            if (state.compare_exchange_strong(expected, expected | HAS_WAITER, std::memory_order_acquire, std::memory_order_relaxed))
+                return;
+        }
     }
 
-    mutex::mutex() {
+    mutex::mutex() : state(UNLOCKED) {
         FT_DEBUG_ONLY(register_object(this));
     }
 
     mutex::~mutex() {
         FT_DEBUG_ONLY(unregister_object(this));
-        if (values.current_task) {
+        if (is_locked()) {
             assert(false && "Tried to destroy locked mutex");
             std::terminate();
         }
@@ -48,186 +45,96 @@ namespace fast_task {
 
     void mutex::lock() {
         interrupt_unsafe_region region;
-        resume_task node;
-
-        auto* loc = &get_loc();
-
-        if (loc->is_task_thread) {
-            get_data(loc->curr_task).set_awaked(false);
-            get_data(loc->curr_task).set_time_end(false);
-            node.task = loc->curr_task;
-
-            fast_task::lock_guard lg(values.no_race);
-            if (values.current_task == loc->curr_task.get_id())
-                throw std::logic_error("Tried lock mutex twice");
-            while (values.current_task) {
-                node.awake_check = get_data(loc->curr_task).awake_check;
-                push_back(values, &node);
-                swapCtxRelock(values.no_race);
-                loc = &get_loc();
+        size_t expected = UNLOCKED;
+        size_t self_id = this_task::get_id();
+        if ((state.load(std::memory_order_relaxed) & OWNER_MASK) == self_id)
+            throw std::logic_error("Tried lock mutex twice");
+        if (state.compare_exchange_strong(expected, self_id, std::memory_order_acquire, std::memory_order_relaxed))
+            return;
+        if ((expected & OWNER_MASK) == self_id)
+            return;
+        while (true) {
+            if ((expected & HAS_WAITER) == 0) {
+                if (!state.compare_exchange_weak(expected, expected | HAS_WAITER, std::memory_order_relaxed, std::memory_order_relaxed)) {
+                    if (expected == 0) {
+                        if (state.compare_exchange_strong(expected, self_id, std::memory_order_acquire, std::memory_order_relaxed))
+                            return;
+                    }
+                    continue;
+                }
+                expected |= HAS_WAITER;
             }
-            values.current_task = loc->curr_task.get_id();
-        } else {
-            fast_task::native::condition_variable_any cd;
-            bool has_res = false;
-            node.task = nullptr;
-            node.awake_check = 0;
-            node.native_cv = &cd;
-            node.native_check = &has_res;
-            fast_task::unique_lock ul(values.no_race);
-
-            if (values.current_task == ((size_t)_thread_id() | native_thread_flag))
-                throw std::logic_error("Tried lock mutex twice");
-            while (values.current_task) {
-                has_res = false;
-                push_back(values, &node);
-                while (!has_res) //-V654
-                    cd.wait(ul);
-            }
-            values.current_task = (size_t)_thread_id() | native_thread_flag;
+            futex::wait_on_address(&state, [](void* addr) {
+                return *reinterpret_cast<size_t*>(addr) == UNLOCKED;
+            });
+            expected = state.load(std::memory_order_acquire);
+            if (expected == 0)
+                if (state.compare_exchange_strong(expected, self_id, std::memory_order_acquire, std::memory_order_relaxed))
+                    return;
         }
     }
 
     bool mutex::try_lock() {
-        if (!values.no_race.try_lock())
+        interrupt_unsafe_region region;
+        size_t expected = UNLOCKED;
+        size_t self_id = this_task::get_id();
+        if (is_own())
             return false;
-        fast_task::unique_lock ul(values.no_race, fast_task::adopt_lock);
-        auto& loc = get_loc();
-
-        if (values.current_task)
-            return false;
-        else if (loc.is_task_thread || loc.context_in_swap) {
-            if (values.current_task == loc.curr_task.get_id())
-                return false;
-            values.current_task = loc.curr_task.get_id();
-        } else {
-            if (values.current_task == ((size_t)_thread_id() | native_thread_flag))
-                return false;
-            values.current_task = (size_t)_thread_id() | native_thread_flag;
-        }
-        return true;
+        if (state.compare_exchange_strong(expected, self_id, std::memory_order_acquire, std::memory_order_relaxed))
+            return true;
+        else
+            return (expected & OWNER_MASK) == self_id;
     }
 
     bool mutex::try_lock_until(std::chrono::high_resolution_clock::time_point time_point) {
-        resume_task node;
-        fast_task::unique_lock ul(values.no_race);
-
-        if (get_loc().is_task_thread && !get_loc().context_in_swap) {
-            if (values.current_task == get_loc().curr_task.get_id())
-                return false;
-            node.task = get_loc().curr_task;
-            while (values.current_task) {
-                get_loc().pending_timer = time_point;
-                node.awake_check = get_data(get_loc().curr_task).awake_check;
-                push_back(values, &node);
-                swapCtxRelock(values.no_race);
-                auto awaked = get_data(get_loc().curr_task).get_awaked();
-                resetTimeWait();
-                if (!awaked) {
-                    erase(values, &node);
-                    return false;
-                }
-            }
-            values.current_task = get_loc().curr_task.get_id();
+        interrupt_unsafe_region region;
+        size_t expected = UNLOCKED;
+        size_t self_id = this_task::get_id();
+        if ((state.load(std::memory_order_relaxed) & OWNER_MASK) == self_id)
+            return false;
+        if (state.compare_exchange_strong(expected, self_id, std::memory_order_acquire, std::memory_order_relaxed))
             return true;
-        } else {
-            if (values.current_task == ((size_t)_thread_id() | native_thread_flag))
-                return false;
-            fast_task::native::condition_variable_any cd;
-            bool has_res = false;
-            node.task = nullptr;
-            node.awake_check = 0;
-            node.native_cv = &cd;
-            node.native_check = &has_res;
-            while (values.current_task) {
-                has_res = false;
-                while (!has_res) { //-V654
-                    if (cd.wait_until(ul, time_point) == cv_status::timeout) {
-                        node.native_cv = nullptr;
-                        return false;
+        if ((expected & OWNER_MASK) == self_id)
+            return true;
+        while (true) {
+            if ((expected & HAS_WAITER) == 0) {
+                if (!state.compare_exchange_weak(expected, expected | HAS_WAITER, std::memory_order_relaxed, std::memory_order_relaxed)) {
+                    if (expected == 0) {
+                        if (state.compare_exchange_strong(expected, self_id, std::memory_order_acquire, std::memory_order_relaxed))
+                            return true;
                     }
+                    continue;
                 }
+                expected |= HAS_WAITER;
             }
-            if (!get_loc().context_in_swap)
-                values.current_task = (size_t)_thread_id() | native_thread_flag;
-            else
-                values.current_task = get_loc().curr_task.get_id();
-            return true;
+            if (!futex::wait_on_address_until(&state, [](void* addr) { return *reinterpret_cast<size_t*>(addr) == UNLOCKED; }, time_point))
+                return false;
+            expected = state.load(std::memory_order_acquire);
+            if (expected == 0)
+                if (state.compare_exchange_strong(expected, self_id, std::memory_order_acquire, std::memory_order_relaxed))
+                    return true;
         }
     }
 
     void mutex::unlock() {
-        bool to_yield = false;
-        fast_task::unique_lock no_race_guard(values.no_race);
-        if (get_loc().is_task_thread) {
-            if (values.current_task != get_loc().curr_task.get_id())
-                throw std::logic_error("Tried unlock non owned mutex");
-        } else if (values.current_task != ((size_t)_thread_id() | native_thread_flag))
+        size_t self_id = this_task::get_id();
+        size_t cached_state = state.load(std::memory_order_relaxed);
+
+        if ((cached_state & OWNER_MASK) != self_id)
             throw std::logic_error("Tried unlock non owned mutex");
+        else if (cached_state == self_id)
+            if (state.compare_exchange_strong(self_id, 0, std::memory_order_release, std::memory_order_relaxed))
+                return;
 
-        resume_task* head = values.begin;
-        resume_task* end = values.end;
-        values.begin = nullptr;
-        values.end = nullptr;
-        values.current_task = 0;
-        if (!head)
-            return;
-        resume_task* curr = head;
-        while (curr) {
-            resume_task* next = curr->next;
-            if (curr->task == nullptr) {
-                if (curr->native_cv != nullptr) {
-                    *curr->native_check = true;
-                    curr->native_cv->notify_all();
-                }
-            } else {
-                fast_task::lock_guard guard_loc(get_data(curr->task));
-                if (get_data(curr->task).awake_check == curr->awake_check) {
-                    if (!get_data(curr->task).get_time_end()) {
-                        bool on_scheduler = get_data(curr->task).get_is_on_scheduler();
-                        if (on_scheduler) {
-                            values.current_task = curr->task.get_id();
-                            if (next) {
-                                next->prev = nullptr;
-                                values.begin = next;
-                                values.end = next->next ? end : next;
-                            }
-                        }
-                        get_data(curr->task).set_awaked(true);
-                        transfer_task(task(curr->task));
-
-                        if (on_scheduler)
-                            break;
-                    }
-                }
-            }
-            curr = next;
-        }
-        if (task::max_running_tasks && get_loc().is_task_thread)
-            if (can_be_scheduled_task_to_hot() && get_loc().curr_task && !get_data(get_loc().curr_task).is_ended())
-                to_yield = true;
-
-        no_race_guard.unlock();
-        if (to_yield)
-            this_task::yield();
+        futex::wake_on_address(&state, [](void* addr, size_t) { *reinterpret_cast<size_t*>(addr) = UNLOCKED; });
     }
 
     bool mutex::is_locked() {
-        if (try_lock()) {
-            unlock();
-            return false;
-        }
-        return true;
+        return state.load(std::memory_order_relaxed) != UNLOCKED;
     }
 
     bool mutex::is_own() {
-        fast_task::lock_guard lg0(values.no_race);
-        if (get_loc().is_task_thread) {
-            if (values.current_task != get_loc().curr_task.get_id())
-                return false;
-        } else if (values.current_task != ((size_t)_thread_id() | native_thread_flag))
-            return false;
-        return true;
+        return (state.load(std::memory_order_relaxed) & OWNER_MASK) == this_task::get_id();
     }
 
     void mutex::lifecycle_lock(task&& lock_task) {
@@ -246,32 +153,42 @@ namespace fast_task {
         });
     }
 
-    bool mutex::enter_wait(const task& task, enter_state& state) {
-        auto node = state.template use<resume_task>();
-        node->task = task;
-        node->awake_check = get_data(task).awake_check;
-        fast_task::lock_guard l(values.no_race);
-        if (values.current_task == 0) {
-            values.current_task = task.get_id();
+    bool mutex::enter_wait(const task& task, enter_state& es) {
+        interrupt_unsafe_region region;
+        size_t expected = UNLOCKED;
+        size_t self_id = task.get_id();
+        if ((state.load(std::memory_order_relaxed) & OWNER_MASK) == self_id)
+            throw std::logic_error("Tried lock mutex twice");
+        if (state.compare_exchange_strong(expected, self_id, std::memory_order_acquire, std::memory_order_relaxed))
             return true;
-        } else {
-            push_back(values, node);
-            return false;
-        }
+        if ((expected & OWNER_MASK) == self_id)
+            return true;
+        return futex::enter_wait_on_address_lock(
+            task,
+            &state,
+            [](void* addr) { return *reinterpret_cast<size_t*>(addr) == UNLOCKED; },
+            [](void* addr, auto& task) { *reinterpret_cast<size_t*>(addr) = task.get_id() | HAS_WAITER; },
+            es
+        );
     }
 
-    bool mutex::enter_wait_until(const task& task, enter_state& state, std::chrono::high_resolution_clock::time_point time_point) {
-        auto node = state.template use<resume_task>();
-        node->task = task;
-        node->awake_check = get_data(task).awake_check;
-        fast_task::lock_guard l(values.no_race);
-        if (values.current_task == 0) {
-            values.current_task = task.get_id();
+    bool mutex::enter_wait_until(const task& task, enter_state& es, std::chrono::high_resolution_clock::time_point time_point) {
+        interrupt_unsafe_region region;
+        size_t expected = UNLOCKED;
+        size_t self_id = task.get_id();
+        if ((state.load(std::memory_order_relaxed) & OWNER_MASK) == self_id)
+            throw std::logic_error("Tried lock mutex twice");
+        if (state.compare_exchange_strong(expected, self_id, std::memory_order_acquire, std::memory_order_relaxed))
             return true;
-        } else {
-            push_back(values, node);
-            fast_task::makeTimeWait_extern(task, time_point);
-            return false;
-        }
+        if ((expected & OWNER_MASK) == self_id)
+            return true;
+        return futex::enter_wait_on_address_lock_until(
+            task,
+            &state,
+            [](void* addr) { return *reinterpret_cast<size_t*>(addr) == UNLOCKED; },
+            [](void* addr, auto& task) { *reinterpret_cast<size_t*>(addr) = task.get_id() | HAS_WAITER; },
+            es,
+            time_point
+        );
     }
 }

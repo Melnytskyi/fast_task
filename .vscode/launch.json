@@ -8,10 +8,10 @@
             "name": "(gdb) Launch",
             "type": "cppdbg",
             "request": "launch",
-            "program": "/home/danyil/Projects/fast_task/out/build/Linux-Test/tests/benchmark/benchmark_runner",
+            "program": "/home/danyil/Projects/fast_task/out/build/Linux-Test/benchmark/benchmark_runner",
             "args": [
                 "--_run_child",
-                "memory_allocate_and_cleanup"
+                "sync_mutex_contention"
             ],
             "stopAtEntry": false,
             "cwd": "${fileDirname}",

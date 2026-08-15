@@ -10,6 +10,8 @@
 #include "../shared.hpp"
 #include "enter_state.hpp"
 #include <atomic>
+#include <chrono>
+#include <exception>
 
 namespace fast_task {
     enum class task_priority {

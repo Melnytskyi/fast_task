@@ -122,8 +122,7 @@ namespace fast_task::file {
             task old_awaiter;
             if (buffer && awaiter ? !get_data(awaiter).is_ended() : true) {
                 if (util::native_workers_singleton::await_cancel_fd_all(handle)) {
-                    mutex_unify unify(mut);
-                    fast_task::unique_lock<mutex_unify> lock(unify);
+                    fast_task::unique_lock lock(mut);
                     fullifed = true;
                     if (awaiter) {
                         if (is_read && !required_full)
@@ -138,8 +137,7 @@ namespace fast_task::file {
         }
 
         void await() {
-            mutex_unify unify(mut);
-            fast_task::unique_lock<mutex_unify> lock(unify);
+            fast_task::unique_lock lock(mut);
             while (!fullifed)
                 awaiters.wait(lock);
         }
@@ -147,8 +145,7 @@ namespace fast_task::file {
         void now_fullifed() {
             task old_awaiter;
             {
-                mutex_unify unify(mut);
-                fast_task::unique_lock<mutex_unify> lock(unify);
+                fast_task::unique_lock lock(mut);
                 fullifed = true;
                 if (awaiter) {
                     if (is_read)
@@ -164,8 +161,7 @@ namespace fast_task::file {
         void exception(io_errors e) {
             task old_awaiter;
             {
-                mutex_unify unify(mut);
-                fast_task::unique_lock<mutex_unify> lock(unify);
+                fast_task::unique_lock lock(mut);
                 fullifed = true;
                 if (awaiter) {
                     if (fullifed_bytes) {

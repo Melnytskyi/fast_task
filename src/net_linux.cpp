@@ -304,7 +304,7 @@ namespace fast_task::net {
             mutex_unify mut(get_data(get_loc().curr_task).get_self_unify());
             std::lock_guard guard(mut);
             if (!tcp_socket::enter_connect(get_loc().curr_task, state, res, ip_port, config))
-                swapCtxRelock(mut);
+                swapCtxUnlock(mut);
         } else {
             std::mutex mtx;
             std::condition_variable cv;
@@ -332,7 +332,7 @@ namespace fast_task::net {
             mutex_unify mut(get_data(get_loc().curr_task).get_self_unify());
             std::lock_guard guard(mut);
             if (!tcp_socket::enter_connect(get_loc().curr_task, state, res, ip_port, data, size, config))
-                swapCtxRelock(mut);
+                swapCtxUnlock(mut);
         } else {
             std::mutex mtx;
             std::condition_variable cv;
@@ -360,7 +360,7 @@ namespace fast_task::net {
             mutex_unify mut(get_data(get_loc().curr_task).get_self_unify());
             std::lock_guard guard(mut);
             if (!tcp_socket::enter_recv(get_loc().curr_task, state, bytes_read, data))
-                swapCtxRelock(mut);
+                swapCtxUnlock(mut);
         } else {
             std::mutex mtx;
             std::condition_variable cv;
@@ -388,7 +388,7 @@ namespace fast_task::net {
             mutex_unify mut(get_data(get_loc().curr_task).get_self_unify());
             std::lock_guard guard(mut);
             if (!tcp_socket::enter_recvv(get_loc().curr_task, state, bytes_read, data))
-                swapCtxRelock(mut);
+                swapCtxUnlock(mut);
         } else {
             std::mutex mtx;
             std::condition_variable cv;
@@ -416,7 +416,7 @@ namespace fast_task::net {
             mutex_unify mut(get_data(get_loc().curr_task).get_self_unify());
             std::lock_guard guard(mut);
             if (!tcp_socket::enter_send(get_loc().curr_task, state, res, data))
-                swapCtxRelock(mut);
+                swapCtxUnlock(mut);
         } else {
             std::mutex mtx;
             std::condition_variable cv;
@@ -444,7 +444,7 @@ namespace fast_task::net {
             mutex_unify mut(get_data(get_loc().curr_task).get_self_unify());
             std::lock_guard guard(mut);
             if (!tcp_socket::enter_sendv(get_loc().curr_task, state, res, data))
-                swapCtxRelock(mut);
+                swapCtxUnlock(mut);
         } else {
             std::mutex mtx;
             std::condition_variable cv;
@@ -471,7 +471,7 @@ namespace fast_task::net {
             mutex_unify mut(get_data(get_loc().curr_task).get_self_unify());
             std::lock_guard guard(mut);
             if (!tcp_socket::enter_send_file(get_loc().curr_task, state, res, file_path, file_path_len, data_len, offset, chunks_size))
-                swapCtxRelock(mut);
+                swapCtxUnlock(mut);
         } else {
             std::mutex mtx;
             std::condition_variable cv;
@@ -498,7 +498,7 @@ namespace fast_task::net {
             mutex_unify mut(get_data(get_loc().curr_task).get_self_unify());
             std::lock_guard guard(mut);
             if (!tcp_socket::enter_send_file(get_loc().curr_task, state, res, file, data_len, offset, chunks_size))
-                swapCtxRelock(mut);
+                swapCtxUnlock(mut);
         } else {
             std::mutex mtx;
             std::condition_variable cv;
@@ -525,7 +525,7 @@ namespace fast_task::net {
             mutex_unify mut(get_data(get_loc().curr_task).get_self_unify());
             std::lock_guard guard(mut);
             if (!tcp_socket::enter_sendv_file(get_loc().curr_task, state, res, prefix, postfix, file_path, file_path_len, data_len, offset, chunks_size))
-                swapCtxRelock(mut);
+                swapCtxUnlock(mut);
         } else {
             std::mutex mtx;
             std::condition_variable cv;
@@ -552,7 +552,7 @@ namespace fast_task::net {
             mutex_unify mut(get_data(get_loc().curr_task).get_self_unify());
             std::lock_guard guard(mut);
             if (!tcp_socket::enter_sendv_file(get_loc().curr_task, state, res, prefix, postfix, file, data_len, offset, chunks_size))
-                swapCtxRelock(mut);
+                swapCtxUnlock(mut);
         } else {
             std::mutex mtx;
             std::condition_variable cv;
@@ -578,7 +578,7 @@ namespace fast_task::net {
             mutex_unify mut(get_data(get_loc().curr_task).get_self_unify());
             std::lock_guard guard(mut);
             if (!tcp_socket::enter_shutdown(get_loc().curr_task, state, mode))
-                swapCtxRelock(mut);
+                swapCtxUnlock(mut);
         } else {
             std::mutex mtx;
             std::condition_variable cv;
@@ -603,7 +603,7 @@ namespace fast_task::net {
             mutex_unify mut(get_data(get_loc().curr_task).get_self_unify());
             std::lock_guard guard(mut);
             if (!tcp_socket::enter_reset(get_loc().curr_task, state))
-                swapCtxRelock(mut);
+                swapCtxUnlock(mut);
         } else {
             std::mutex mtx;
             std::condition_variable cv;
@@ -628,7 +628,7 @@ namespace fast_task::net {
             mutex_unify mut(get_data(get_loc().curr_task).get_self_unify());
             std::lock_guard guard(mut);
             if (!tcp_socket::enter_close(get_loc().curr_task, state))
-                swapCtxRelock(mut);
+                swapCtxUnlock(mut);
         } else {
             std::mutex mtx;
             std::condition_variable cv;
@@ -1193,7 +1193,7 @@ namespace fast_task::net {
             mutex_unify mut(get_data(get_loc().curr_task).get_self_unify());
             std::lock_guard guard(mut);
             if (!enter_accept(get_loc().curr_task, state, res))
-                swapCtxRelock(mut);
+                swapCtxUnlock(mut);
         } else {
             std::mutex mtx;
             std::condition_variable cv;
@@ -1218,7 +1218,7 @@ namespace fast_task::net {
             mutex_unify mut(get_data(get_loc().curr_task).get_self_unify());
             std::lock_guard guard(mut);
             if (!enter_close(get_loc().curr_task, state))
-                swapCtxRelock(mut);
+                swapCtxUnlock(mut);
         } else {
             std::mutex mtx;
             std::condition_variable cv;
@@ -1568,7 +1568,7 @@ namespace fast_task::net {
             mutex_unify mut(get_data(get_loc().curr_task).get_self_unify());
             std::lock_guard guard(mut);
             if (!enter_recv(get_loc().curr_task, state, bytes_read, data, sender))
-                swapCtxRelock(mut);
+                swapCtxUnlock(mut);
         } else {
             std::mutex mtx;
             std::condition_variable cv;
@@ -1594,7 +1594,7 @@ namespace fast_task::net {
             mutex_unify mut(get_data(get_loc().curr_task).get_self_unify());
             std::lock_guard guard(mut);
             if (!enter_send(get_loc().curr_task, state, bytes_sent, data, to))
-                swapCtxRelock(mut);
+                swapCtxUnlock(mut);
         } else {
             std::mutex mtx;
             std::condition_variable cv;
@@ -1621,7 +1621,7 @@ namespace fast_task::net {
             mutex_unify mut(get_data(get_loc().curr_task).get_self_unify());
             std::lock_guard guard(mut);
             if (!enter_recvv(get_loc().curr_task, state, bytes_read, mbufs, sender))
-                swapCtxRelock(mut);
+                swapCtxUnlock(mut);
         } else {
             std::mutex mtx;
             std::condition_variable cv;
@@ -1647,7 +1647,7 @@ namespace fast_task::net {
             mutex_unify mut(get_data(get_loc().curr_task).get_self_unify());
             std::lock_guard guard(mut);
             if (!enter_sendv(get_loc().curr_task, state, bytes_sent, data, to))
-                swapCtxRelock(mut);
+                swapCtxUnlock(mut);
         } else {
             std::mutex mtx;
             std::condition_variable cv;
@@ -1717,7 +1717,7 @@ namespace fast_task::net {
             mutex_unify mut(get_data(get_loc().curr_task).get_self_unify());
             std::lock_guard guard(mut);
             if (!enter_close(get_loc().curr_task, state))
-                swapCtxRelock(mut);
+                swapCtxUnlock(mut);
         } else {
             std::mutex mtx;
             std::condition_variable cv;
@@ -1842,7 +1842,7 @@ namespace fast_task::net {
             mutex_unify mut(get_data(get_loc().curr_task).get_self_unify());
             std::lock_guard guard(mut);
             if (!enter_recv(get_loc().curr_task, state, bytes_read, data))
-                swapCtxRelock(mut);
+                swapCtxUnlock(mut);
         } else {
             std::mutex mtx;
             std::condition_variable cv;
@@ -1863,7 +1863,7 @@ namespace fast_task::net {
             mutex_unify mut(get_data(get_loc().curr_task).get_self_unify());
             std::lock_guard guard(mut);
             if (!enter_send(get_loc().curr_task, state, bytes_sent, data))
-                swapCtxRelock(mut);
+                swapCtxUnlock(mut);
         } else {
             std::mutex mtx;
             std::condition_variable cv;
@@ -1885,7 +1885,7 @@ namespace fast_task::net {
             mutex_unify mut(get_data(get_loc().curr_task).get_self_unify());
             std::lock_guard guard(mut);
             if (!enter_recvv(get_loc().curr_task, state, bytes_read, mbufs))
-                swapCtxRelock(mut);
+                swapCtxUnlock(mut);
         } else {
             std::mutex mtx;
             std::condition_variable cv;
@@ -1906,7 +1906,7 @@ namespace fast_task::net {
             mutex_unify mut(get_data(get_loc().curr_task).get_self_unify());
             std::lock_guard guard(mut);
             if (!enter_sendv(get_loc().curr_task, state, bytes_sent, data))
-                swapCtxRelock(mut);
+                swapCtxUnlock(mut);
         } else {
             std::mutex mtx;
             std::condition_variable cv;
@@ -1938,7 +1938,7 @@ namespace fast_task::net {
             mutex_unify mut(get_data(get_loc().curr_task).get_self_unify());
             std::lock_guard guard(mut);
             if (!enter_close(get_loc().curr_task, state))
-                swapCtxRelock(mut);
+                swapCtxUnlock(mut);
         } else {
             std::mutex mtx;
             std::condition_variable cv;
@@ -2282,7 +2282,7 @@ namespace fast_task::net {
             mutex_unify mut(fast_task::get_data(get_loc().curr_task).get_self_unify());
             std::lock_guard guard(mut);
             if (!enter_resolve(get_loc().curr_task, state, res, host, service, preferred_family))
-                swapCtxRelock(mut);
+                swapCtxUnlock(mut);
         } else {
             std::mutex mtx;
             std::condition_variable cv;
@@ -2304,7 +2304,7 @@ namespace fast_task::net {
             mutex_unify mut(fast_task::get_data(get_loc().curr_task).get_self_unify());
             std::lock_guard guard(mut);
             if (!enter_resolve(get_loc().curr_task, state, res, host, service, port, preferred_family))
-                swapCtxRelock(mut);
+                swapCtxUnlock(mut);
         } else {
             std::mutex mtx;
             std::condition_variable cv;
@@ -2326,7 +2326,7 @@ namespace fast_task::net {
             mutex_unify mut(fast_task::get_data(get_loc().curr_task).get_self_unify());
             std::lock_guard guard(mut);
             if (!enter_resolve_multiple(get_loc().curr_task, state, res, host, service, preferred_family))
-                swapCtxRelock(mut);
+                swapCtxUnlock(mut);
         } else {
             std::mutex mtx;
             std::condition_variable cv;
@@ -2348,7 +2348,7 @@ namespace fast_task::net {
             mutex_unify mut(fast_task::get_data(get_loc().curr_task).get_self_unify());
             std::lock_guard guard(mut);
             if (!enter_resolve_multiple(get_loc().curr_task, state, res, host, service, port, preferred_family))
-                swapCtxRelock(mut);
+                swapCtxUnlock(mut);
         } else {
             std::mutex mtx;
             std::condition_variable cv;

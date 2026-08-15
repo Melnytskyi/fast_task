@@ -31,23 +31,59 @@ BENCHMARK(sync_mutex_lock_unlock, sync_mutex_scales) {
     t.await_task();
 }
 
+BENCHMARK(sync_mutex_lock_unlock_native, sync_mutex_scales) {
+    fast_task::mutex mtx;
+    for (uint64_t i = 0; i < scale; ++i) {
+        mtx.lock();
+        mtx.unlock();
+    }
+}
+
 BENCHMARK(sync_mutex_contention, sync_mutex_scales) {
     fast_task::mutex mtx;
-    std::atomic<uint64_t> counter{0};
+    uint64_t counter{0};
 
-    auto worker = [&] {
+    auto t1 = fast_task::task::run([&] {
         for (uint64_t i = 0; i < scale; ++i) {
             mtx.lock();
-            counter.fetch_add(1, std::memory_order_relaxed);
+            counter++;
             mtx.unlock();
         }
-    };
-
-    auto t1 = fast_task::task::run(worker);
-    auto t2 = fast_task::task::run(worker);
+    });
+    auto t2 = fast_task::task::run([&] {
+        for (uint64_t i = 0; i < scale; ++i) {
+            mtx.lock();
+            counter++;
+            mtx.unlock();
+        }
+    });
 
     t1.await_task();
     t2.await_task();
+    if (counter != scale * 2)
+        std::terminate(); //sanity check
+}
+
+BENCHMARK(sync_mutex_contention_with_native, sync_mutex_scales) {
+    fast_task::mutex mtx;
+    uint64_t counter{0};
+
+    auto t1 = fast_task::task::run([&] {
+        for (uint64_t i = 0; i < scale; ++i) {
+            mtx.lock();
+            counter++;
+            mtx.unlock();
+        }
+    });
+    for (uint64_t i = 0; i < scale; ++i) {
+        mtx.lock();
+        counter++;
+        mtx.unlock();
+    }
+
+    t1.await_task();
+    if (counter != scale * 2)
+        std::terminate(); //sanity check
 }
 
 BENCHMARK(sync_semaphore_lock_release, sync_mutex_scales) {

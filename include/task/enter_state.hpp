@@ -5,7 +5,7 @@
 
 namespace fast_task {
     struct FT_API enter_state {
-        char data[56];
+        char data[120];
         void(*destruct)(void*) = nullptr;
 
         template <class T>

@@ -19,6 +19,7 @@
 namespace fast_task {
 
     class FT_API mutex_unify {
+    public:
         friend class multiply_mutex;
         friend struct mutex_unify_relock_access;
         enum class mutex_unify_type : uint8_t {
@@ -42,6 +43,7 @@ namespace fast_task {
             task_obj // internal: routes to task_object::lock()/unlock(); pointer kept in the union's raw slot
         };
 
+    private:
         union FT_API_LOCAL {
             std::mutex* std_nmut = nullptr;
             std::timed_mutex* std_ntimed;
@@ -83,6 +85,14 @@ namespace fast_task {
         mutex_unify(std::nullptr_t);
 
         ~mutex_unify();
+
+        mutex_unify_type get_type() const noexcept {
+            return type;
+        }
+
+        void* get_mutex() const noexcept {
+            return std_nmut;
+        }
 
         mutex_unify& operator=(const mutex_unify&);
         mutex_unify& operator=(std::mutex&);
