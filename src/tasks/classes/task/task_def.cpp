@@ -4,6 +4,7 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
+#include <experimental/futex.hpp>
 #include <task.hpp>
 #include <tasks/_internal.hpp>
 
@@ -233,17 +234,38 @@ namespace fast_task {
             }
         }
 
-        auto* node = new task_object::wait_item();
-        node->waiter = cbtask;
-        node->awake_check = cd.awake_check;
-        node->heap_allocated = true;
-        node->next = obj->on_wait.load(std::memory_order_relaxed);
-        obj->on_wait.store(node, std::memory_order_relaxed);
+        struct redefine_start_callback : public to_start_override {
+            enter_state state;
+
+            redefine_start_callback() {}
+
+            virtual void callback(task_object* cb) {
+                cb->on_start_override = nullptr;
+                cb->vtable->on_start(cb->user_data());
+            }
+
+            virtual void on_destruct(to_start_override* self) {
+                delete self;
+            }
+
+            virtual ~redefine_start_callback() = default;
+        };
+
+        auto res = new redefine_start_callback();
+        cd.on_start_override = res;
 
         if (cd.is_created()) {
             ++glob.executing_tasks;
             cd.set_status(task_object::status_e::scheduled);
         }
+        futex::enter_wait_on_address(
+            cbtask,
+            obj,
+            [](void* self) {
+                return reinterpret_cast<task_object*>(self)->is_ended();
+            },
+            res->state
+        );
         obj->unlock();
     }
 

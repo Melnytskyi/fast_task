@@ -98,6 +98,7 @@ namespace fast_task::futex {
         while (curr && extracted < count) {
             wait_node_t* w = curr;
             wait_node_t* next_w = w->next_waiter;
+            w->in_bucket = false;
 
             if (next_w) {
                 next_w->next_addr = w->next_addr;
@@ -110,7 +111,7 @@ namespace fast_task::futex {
                 else
                     bucket.addresses = next_w;
 
-                next_w->tail_waiter = w->tail_waiter;
+                next_w->tail_waiter = (w->tail_waiter == w) ? next_w : w->tail_waiter;
                 next_w->prev_waiter = nullptr;
                 curr = next_w;
             } else {
@@ -127,7 +128,6 @@ namespace fast_task::futex {
             w->prev_addr = nullptr;
             w->next_waiter = nullptr;
             w->prev_waiter = nullptr;
-            w->wait_address = nullptr;
 
             if (!out_head)
                 out_head = w;
@@ -142,11 +142,13 @@ namespace fast_task::futex {
     }
 
     void make_wait(bucket_t& bucket, wait_node_t* item) {
+        item->in_bucket = true;
         item->next_addr = nullptr;
         item->prev_addr = nullptr;
         item->next_waiter = nullptr;
         item->prev_waiter = nullptr;
         item->tail_waiter = item;
+
         wait_node_t* curr = bucket.addresses;
         while (curr && curr->wait_address != item->wait_address)
             curr = curr->next_addr;
@@ -220,6 +222,9 @@ namespace fast_task::futex {
     }
 
     void remove_waiter(bucket_t& bucket, wait_node_t* w) {
+        if (!w->in_bucket)
+            return;
+        w->in_bucket = true;
         if (!w->prev_waiter) {
             wait_node_t* next_w = w->next_waiter;
             if (next_w) {
@@ -295,8 +300,6 @@ namespace fast_task::futex {
     }
 
     bool FT_API wait_on_address_until(void* address, bool (*check_callback)(void*), std::chrono::high_resolution_clock::time_point time_point) {
-        if (time_point <= std::chrono::high_resolution_clock::now())
-            return false;
         bucket_t& bucket = glob.futex_global.get_bucket(address);
         std::unique_lock guard(bucket.lock);
 
@@ -315,14 +318,14 @@ namespace fast_task::futex {
             me.awake_check = get_data(loc.curr_task).awake_check;
 
             loc.pending_timer = time_point;
-            swapCtxUnlock(bucket.lock);
+            swapCtxUnlock(*guard.release());
 
             if (get_loc().curr_task.has_wait_timed_out()) {
-                bucket.lock.lock();
-                remove_waiter(bucket, &me);
+                auto& my_bucket = glob.futex_global.get_bucket(me.wait_address);
+                std::unique_lock my_guard(my_bucket.lock);
+                remove_waiter(my_bucket, &me);
                 return false;
             }
-            guard.release();
             return true;
         } else {
             me.native_wake.store(0, std::memory_order_relaxed);
@@ -333,7 +336,7 @@ namespace fast_task::futex {
             while (me.native_wake.load(std::memory_order_acquire) == 0) {
                 if (!native_futex_wait_until(&me.native_wake, expected, time_point)) {
                     guard.lock();
-                    if (me.wait_address) {
+                    if (me.in_bucket) {
                         remove_waiter(bucket, &me);
                         return false;
                     }
@@ -378,8 +381,6 @@ namespace fast_task::futex {
     }
 
     bool FT_API unlock_and_wait_until(void* address, bool (*check_callback)(void*), void* lock_address, void (*make_unlock_callback)(void*), bool (*is_unlocked_callback)(void*, bool), std::chrono::high_resolution_clock::time_point time_point) {
-        if (time_point <= std::chrono::high_resolution_clock::now())
-            return false;
         bucket_t& bucket = glob.futex_global.get_bucket(address);
         std::unique_lock guard(bucket.lock);
         make_unlock_callback(lock_address);
@@ -401,14 +402,14 @@ namespace fast_task::futex {
             me.awake_check = get_data(loc.curr_task).awake_check;
 
             loc.pending_timer = time_point;
-            swapCtxUnlock(bucket.lock);
+            swapCtxUnlock(*guard.release());
 
             if (get_loc().curr_task.has_wait_timed_out()) {
-                bucket.lock.lock();
-                remove_waiter(bucket, &me);
+                auto& my_bucket = glob.futex_global.get_bucket(me.wait_address);
+                std::unique_lock my_guard(my_bucket.lock);
+                remove_waiter(my_bucket, &me);
                 return false;
             }
-            guard.release();
             return true;
         } else {
             me.native_wake.store(0, std::memory_order_relaxed);
@@ -418,12 +419,13 @@ namespace fast_task::futex {
             uint32_t expected = 0;
             while (me.native_wake.load(std::memory_order_acquire) == 0) {
                 if (!native_futex_wait_until(&me.native_wake, expected, time_point)) {
-                    guard.lock();
-                    if (me.wait_address) {
-                        remove_waiter(bucket, &me);
+                    auto& my_bucket = glob.futex_global.get_bucket(me.wait_address);
+                    std::unique_lock my_guard(my_bucket.lock);
+                    if (me.in_bucket) {
+                        remove_waiter(my_bucket, &me);
                         return false;
                     }
-                    guard.unlock();
+                    my_guard.unlock();
 
                     while (me.native_wake.load(std::memory_order_acquire) == 0)
                         native_futex_wait(&me.native_wake, 0);
@@ -450,10 +452,6 @@ namespace fast_task::futex {
     }
 
     bool FT_API enter_wait_on_address_until(const task& task_obj, void* address, bool (*check_callback)(void*), enter_state& state, std::chrono::high_resolution_clock::time_point time_point) {
-        if (time_point <= std::chrono::high_resolution_clock::now()) {
-            get_data(task_obj).set_time_end(true);
-            return true;
-        }
         bucket_t& bucket = glob.futex_global.get_bucket(address);
         std::lock_guard guard(bucket.lock);
 
@@ -492,10 +490,6 @@ namespace fast_task::futex {
     }
 
     bool FT_API enter_unlock_and_wait_until(const task& task_obj, void* address, bool (*check_callback)(void*), void* lock_address, void (*make_unlock_callback)(void*), bool (*is_unlocked_callback)(void*, bool mark_request), enter_state& state, std::chrono::high_resolution_clock::time_point time_point) {
-        if (time_point <= std::chrono::high_resolution_clock::now()) {
-            get_data(task_obj).set_time_end(true);
-            return true;
-        }
         bucket_t& bucket = glob.futex_global.get_bucket(address);
         std::lock_guard guard(bucket.lock);
 
@@ -535,10 +529,6 @@ namespace fast_task::futex {
     }
 
     bool FT_API enter_wait_on_address_lock_until(const task& task_obj, void* address, bool (*check_callback)(void*), void (*lock_callback)(void*, const task& task_obj), enter_state& state, std::chrono::high_resolution_clock::time_point time_point) {
-        if (time_point <= std::chrono::high_resolution_clock::now()) {
-            get_data(task_obj).set_time_end(true);
-            return true;
-        }
         bucket_t& bucket = glob.futex_global.get_bucket(address);
         std::unique_lock guard(bucket.lock);
 
@@ -597,8 +587,10 @@ namespace fast_task::futex {
 
 
         wait_node_t *to_wake_head, *to_wake_tail;
+        size_t extracted = extract_waiters(bucket, curr, process_count, to_wake_head, to_wake_tail);
+        bool has_remaining = (curr != nullptr);
 
-        pre_release(address, extract_waiters(bucket, curr, process_count, to_wake_head, to_wake_tail), curr != nullptr);
+        pre_release(address, extracted, has_remaining);
 
         guard.unlock();
 

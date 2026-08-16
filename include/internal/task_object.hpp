@@ -40,6 +40,7 @@ namespace fast_task {
                 invalid_switch_caught = 0x100,
                 completed = 0x200,
                 relock_action_as_unlock = 0x400,
+                //has_waiters = 0x800,
             };
         };
 
@@ -50,13 +51,13 @@ namespace fast_task {
             as_coroutine = 0x03,
         };
 
-        std::atomic<wait_item*> on_wait;     // 8[also re-used in allocator for linked list of free task_object items]
+        std::atomic<execution_data*> exdata; // 8[also re-used in allocator for linked list of free task_object items]
         std::atomic<uint32_t> link_counter;  // 4
         std::atomic<state_f::f> state;       // 2
         std::atomic<status_e> status;        // 1
         uint8_t relock_type;                 // 1
         std::atomic<void*> tls_data;         // 8
-        std::atomic<execution_data*> exdata; // 8
+        void* unused;                        //std::atomic<wait_item*> on_wait;     // 8 //TODO use this field to store the timeout pointer to enable automatic cancellations
         const task_vtable* vtable;           // 8
         void* relock;                        // 8
         uint16_t bind_to_worker_id;          // 2

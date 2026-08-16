@@ -22,7 +22,7 @@ namespace fast_task {
             enum {
                 in_overflow = 0x1,
                 is_cold = 0x2,
-                is_cancelled = 0x3
+                is_cancelled = 0x4
             };
 
             using t = uint8_t;
@@ -65,7 +65,7 @@ namespace fast_task {
         }
 
         void set_is_canceled(bool value) noexcept {
-            set_flag<flags_f::is_cold>(flags, value);
+            set_flag<flags_f::is_cancelled>(flags, value);
         }
 
         template <flags_f::t flag>

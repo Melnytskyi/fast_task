@@ -35,7 +35,7 @@ namespace fast_task {
     struct FT_API_LOCAL executor_registry {
         static constexpr uint32_t max_slots = MaxSlots;
 
-        alignas(hardware_destructive_interference_size) std::atomic<work_stealing_deque<task_object*>*> slots[MaxSlots]{};
+        std::atomic<work_stealing_deque<task_object*>*> slots[MaxSlots]{};
         alignas(hardware_destructive_interference_size) std::atomic<uint32_t> count{0};
         alignas(hardware_destructive_interference_size) std::atomic<uint32_t> next_free_hint{0};
 
@@ -229,7 +229,8 @@ namespace fast_task {
             wait_node* tail_waiter = nullptr;
             void* wait_address;
             node_type type;
-            bool needs_awake_check = false;
+            bool needs_awake_check : 1 = false;
+            bool in_bucket : 1 = false;
             uint16_t awake_check = 0;
             std::atomic_uint32_t native_wake;
             task waiter;
@@ -241,7 +242,7 @@ namespace fast_task {
             };
         };
 
-        struct bucket {
+        struct alignas(hardware_destructive_interference_size) bucket {
             fast_task::native::spin_lock lock;
             wait_node* addresses = nullptr;
         };

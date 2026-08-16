@@ -54,22 +54,19 @@ namespace fast_task {
         if ((expected & OWNER_MASK) == self_id)
             return;
         while (true) {
-            if ((expected & HAS_WAITER) == 0) {
-                if (!state.compare_exchange_weak(expected, expected | HAS_WAITER, std::memory_order_relaxed, std::memory_order_relaxed)) {
-                    if (expected == 0) {
-                        if (state.compare_exchange_strong(expected, self_id, std::memory_order_acquire, std::memory_order_relaxed))
-                            return;
-                    }
-                    continue;
-                }
-                expected |= HAS_WAITER;
-            }
             futex::wait_on_address(&state, [](void* addr) {
-                return (*reinterpret_cast<size_t*>(addr) & OWNER_MASK) == UNLOCKED;
+                auto& state = *reinterpret_cast<std::atomic_size_t*>(addr);
+                size_t cur = state.load(std::memory_order_relaxed);
+                while (true) {
+                    if ((cur & OWNER_MASK) == UNLOCKED)
+                        return true;
+                    if (state.compare_exchange_weak(cur, cur | HAS_WAITER, std::memory_order_release, std::memory_order_relaxed))
+                        return false;
+                }
             });
-            expected = state.load(std::memory_order_acquire);
-            if ((expected & OWNER_MASK) == UNLOCKED)
-                if (state.compare_exchange_strong(expected, self_id | (expected & HAS_WAITER), std::memory_order_acquire, std::memory_order_relaxed))
+            expected = state.load(std::memory_order_relaxed);
+            while ((expected & OWNER_MASK) == UNLOCKED)
+                if (state.compare_exchange_weak(expected, self_id | (expected & HAS_WAITER), std::memory_order_acquire, std::memory_order_relaxed))
                     return;
         }
     }
@@ -100,20 +97,17 @@ namespace fast_task {
         if ((expected & OWNER_MASK) == self_id)
             return true;
         while (true) {
-            if ((expected & HAS_WAITER) == 0) {
-                if (!state.compare_exchange_weak(expected, expected | HAS_WAITER, std::memory_order_relaxed, std::memory_order_relaxed)) {
-                    if (expected == 0) {
-                        if (state.compare_exchange_strong(expected, self_id, std::memory_order_acquire, std::memory_order_relaxed))
-                            return true;
-                    }
-                    continue;
-                }
-                expected |= HAS_WAITER;
-            }
             if (!futex::wait_on_address_until(
                     &state,
                     [](void* addr) {
-                        return (*reinterpret_cast<size_t*>(addr) & OWNER_MASK) == UNLOCKED;
+                        auto& state = *reinterpret_cast<std::atomic_size_t*>(addr);
+                        size_t cur = state.load(std::memory_order_relaxed);
+                        while (true) {
+                            if ((cur & OWNER_MASK) == UNLOCKED)
+                                return true;
+                            if (state.compare_exchange_weak(cur, cur | HAS_WAITER, std::memory_order_release, std::memory_order_relaxed))
+                                return false;
+                        }
                     },
                     time_point
                 ))
@@ -131,12 +125,13 @@ namespace fast_task {
 
         if ((cached_state & OWNER_MASK) != self_id)
             throw std::logic_error("Tried unlock non owned mutex");
-        else if (cached_state == self_id)
-            if (state.compare_exchange_strong(self_id, 0, std::memory_order_release, std::memory_order_relaxed))
+
+        if (cached_state == self_id)
+            if (state.compare_exchange_strong(self_id, UNLOCKED, std::memory_order_release, std::memory_order_relaxed))
                 return;
 
         futex::wake_on_address(&state, [](void* addr, size_t, bool has_remaining) {
-            *reinterpret_cast<size_t*>(addr) = has_remaining ? HAS_WAITER : UNLOCKED;
+            reinterpret_cast<std::atomic_size_t*>(addr)->store(has_remaining ? HAS_WAITER : UNLOCKED, std::memory_order_release);
         });
     }
 

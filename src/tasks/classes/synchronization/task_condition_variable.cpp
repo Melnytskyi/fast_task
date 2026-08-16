@@ -105,21 +105,19 @@ namespace fast_task {
     void condition_variable::notify_all() {
         if (address.load(std::memory_order_acquire) == HAS_WAITERS)
             futex::wake_and_requeue_on_address(&address, [](void* address, size_t, bool has_remaining) {
-                if (has_remaining)
-                    reinterpret_cast<std::atomic_uint8_t*>(address)->store(NO_WAITERS, std::memory_order_release);
+                reinterpret_cast<std::atomic_uint8_t*>(address)->store(has_remaining ? HAS_WAITERS : NO_WAITERS, std::memory_order_release);
             });
     }
 
     void condition_variable::notify_one() {
         if (address.load(std::memory_order_acquire) == HAS_WAITERS)
             futex::wake_on_address(&address, [](void* address, size_t, bool has_remaining) {
-                if (has_remaining)
-                    reinterpret_cast<std::atomic_uint8_t*>(address)->store(NO_WAITERS, std::memory_order_release);
+                reinterpret_cast<std::atomic_uint8_t*>(address)->store(has_remaining ? HAS_WAITERS : NO_WAITERS, std::memory_order_release);
             });
     }
 
     bool condition_variable::has_waiters() {
-        if (address.load(std::memory_order_relaxed))
+        if (address.load(std::memory_order_relaxed) == HAS_WAITERS)
             return futex::has_waiters_callback(
                 &address,
                 [](void* address, void*, bool result) {
@@ -242,7 +240,8 @@ namespace fast_task {
     bool condition_variable::enter_wait_until(mutex& mut, const task& task, enter_state& st, std::chrono::high_resolution_clock::time_point time_point) {
         if (std::chrono::high_resolution_clock::now() >= time_point)
             return true;
-        auto res = futex::enter_unlock_and_wait_until(
+        get_data(task).set_relock(mut);
+        return futex::enter_unlock_and_wait_until(
             task,
             &address,
             [](void* address) { reinterpret_cast<std::atomic_uint8_t*>(address)->store(HAS_WAITERS, std::memory_order_release); return false; },
@@ -258,8 +257,5 @@ namespace fast_task {
             st,
             time_point
         );
-        if (!res)
-            get_data(task).set_relock(mut);
-        return res;
     }
 }

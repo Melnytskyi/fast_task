@@ -4,6 +4,7 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
+#include <experimental/futex.hpp>
 #include <tasks/_internal.hpp>
 
 #if PLATFORM_WINDOWS
@@ -387,102 +388,27 @@ namespace fast_task {
     void task_object::end_of_life_notify() {
         lock();
         status.store(task_object::status_e::ended, std::memory_order_release);
-        task_object::wait_item* head = on_wait.exchange(nullptr, std::memory_order_acq_rel);
+        futex::wake_on_address(this, SIZE_MAX);
         unlock();
-        if (!head)
-            return;
-
-        size_t to_wake = 0;
-        while (head) {
-            auto* next = head->next;
-            bool heap_allocated = head->heap_allocated;
-            if (head->waiter) {
-                auto& wd = get_data(head->waiter);
-                fast_task::lock_guard guard_loc(wd);
-                if (wd.awake_check == head->awake_check && !wd.get_time_end()) {
-                    wd.set_awaked(true);
-                    transfer_task(std::move(head->waiter));
-                    ++to_wake;
-                }
-            } else if (head->native_cv) {
-                fast_task::lock_guard re_lock(*this);
-                *head->native_check = true;
-                head->native_cv->notify_all();
-            }
-            if (heap_allocated)
-                delete head;
-            head = next;
-        }
-        to_wake = std::min<size_t>(to_wake, glob.executors);
-        for (size_t i = 0; i < to_wake; i++)
-            glob.tasks_notifier.notify_one();
     }
 
     void task_object::wait() {
-        mutex_unify self = mutex_unify_relock_access::from_task_object(*this);
-        if (get_loc().is_task_thread) {
-            fast_task::lock_guard guard(*this);
-            if (is_ended()) {
-                return;
+        futex::wait_on_address(
+            this,
+            [](void* self) {
+                return reinterpret_cast<task_object*>(self)->is_ended();
             }
-            wait_item node;
-            node.waiter = get_loc().curr_task;
-            node.awake_check = get_data(get_loc().curr_task).awake_check;
-            node.next = on_wait.load(std::memory_order_relaxed);
-            on_wait.store(&node, std::memory_order_relaxed);
-            swapCtxRelock(self);
-        } else {
-            fast_task::native::condition_variable_any cd;
-            bool done = false;
-            fast_task::unique_lock<mutex_unify> g(self);
-            if (is_ended())
-                return;
-            wait_item node;
-            node.native_cv = &cd;
-            node.native_check = &done;
-            node.next = on_wait.load(std::memory_order_relaxed);
-            on_wait.store(&node, std::memory_order_relaxed);
-            while (!done) //-V654
-                cd.wait(g);
-        }
+        );
     }
 
     void task_object::wait_until(std::chrono::high_resolution_clock::time_point time_point) {
-        mutex_unify self = mutex_unify_relock_access::from_task_object(*this);
-        if (get_loc().is_task_thread) {
-            fast_task::lock_guard guard(*this);
-            if (is_ended()) {
-                return;
-            }
-            wait_item node;
-            node.waiter = get_loc().curr_task;
-            node.awake_check = get_data(get_loc().curr_task).awake_check;
-            node.next = on_wait.load(std::memory_order_relaxed);
-            on_wait.store(&node, std::memory_order_relaxed);
-            get_loc().pending_timer = time_point;
-            swapCtxRelock(self);
-            bool timed = get_data(get_loc().curr_task).get_time_end();
-            resetTimeWait();
-            if (timed)
-                mutex_unify_relock_access::unlink_wait(on_wait, &node);
-        } else {
-            fast_task::native::condition_variable_any cd;
-            bool done = false;
-            fast_task::unique_lock<mutex_unify> g(self);
-            if (is_ended())
-                return;
-            wait_item node;
-            node.native_cv = &cd;
-            node.native_check = &done;
-            node.next = on_wait.load(std::memory_order_relaxed);
-            on_wait.store(&node, std::memory_order_relaxed);
-            while (!done) { //-V654
-                if (cd.wait_until(g, time_point) == cv_status::timeout) {
-                    mutex_unify_relock_access::unlink_wait(on_wait, &node);
-                    return;
-                }
-            }
-        }
+        futex::wait_on_address_until(
+            this,
+            [](void* self) {
+                return reinterpret_cast<task_object*>(self)->is_ended();
+            },
+            time_point
+        );
     }
 
     void task_object::cancel() {
@@ -490,36 +416,26 @@ namespace fast_task {
     }
 
     bool task_object::enter_wait(const task& waiter, enter_state& st) {
-        lock();
-        if (is_ended()) {
-            unlock();
-            return true;
-        }
-        auto node = st.template use<wait_item>();
-        node->waiter = waiter;
-        node->awake_check = get_data(waiter).awake_check;
-        node->next = on_wait.load(std::memory_order_relaxed);
-        on_wait.store(node, std::memory_order_relaxed);
-        unlock();
-        return false;
+        return futex::enter_wait_on_address(
+            waiter,
+            this,
+            [](void* self) {
+                return reinterpret_cast<task_object*>(self)->is_ended();
+            },
+            st
+        );
     }
 
     bool task_object::enter_wait_until(const task& waiter, enter_state& st, std::chrono::high_resolution_clock::time_point time_point) {
-        if (std::chrono::high_resolution_clock::now() >= time_point)
-            return true;
-        lock();
-        if (is_ended()) {
-            unlock();
-            return true;
-        }
-        auto node = st.template use<wait_item>();
-        node->waiter = waiter;
-        node->awake_check = get_data(waiter).awake_check;
-        node->next = on_wait.load(std::memory_order_relaxed);
-        on_wait.store(node, std::memory_order_relaxed);
-        unlock();
-        fast_task::makeTimeWait_extern(waiter, time_point);
-        return false;
+        return futex::enter_wait_on_address_until(
+            waiter,
+            this,
+            [](void* self) {
+                return reinterpret_cast<task_object*>(self)->is_ended();
+            },
+            st,
+            time_point
+        );
     }
 
     bool task_object::enter_cancel(const task& waiter, enter_state& st) {
@@ -546,12 +462,10 @@ namespace fast_task {
         set_flag<state_f::relock_action_as_unlock>(state, true);
     }
 
-
     task_object* task_object::alloc() {
         auto obj = static_cast<task_object*>(get_loc().task_alloc_cache.allocate());
 
         obj->tls_data.store(nullptr, std::memory_order_relaxed);
-        obj->on_wait.store(nullptr, std::memory_order_relaxed);
         obj->exdata.store(nullptr, std::memory_order_relaxed);
         obj->vtable = nullptr;
         obj->relock = nullptr;
