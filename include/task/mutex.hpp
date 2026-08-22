@@ -23,6 +23,7 @@ namespace fast_task {
 
         void transfer_ownership(size_t to_owner);
         void mark_has_wait();
+        void set_unlocked(bool has_remaining);
 
     public:
         mutex();

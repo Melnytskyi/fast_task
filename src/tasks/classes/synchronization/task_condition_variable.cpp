@@ -30,9 +30,10 @@ namespace fast_task {
         auto* mut = guard.release();
         futex::unlock_and_wait(
             &address,
-            [](void* address) { reinterpret_cast<std::atomic_uint8_t*>(address)->store(HAS_WAITERS, std::memory_order_release); return false; },
+            [](void* address) { reinterpret_cast<std::atomic_uint8_t*>(address)->store(HAS_WAITERS, std::memory_order_release); },
+            [](void*) { return false; },
             mut,
-            [](void* mut_) { reinterpret_cast<fast_task::mutex*>(mut_)->unlock(); },
+            [](void* mut_, bool more_present) { reinterpret_cast<fast_task::mutex*>(mut_)->set_unlocked(more_present);return true; },
             [](void* mut_, bool mark_request) {
                 if (mark_request) {
                     reinterpret_cast<fast_task::mutex*>(mut_)->mark_has_wait();
@@ -48,9 +49,10 @@ namespace fast_task {
         auto* mut = guard.release();
         auto res = futex::unlock_and_wait_until(
             &address,
-            [](void* address) { reinterpret_cast<std::atomic_uint8_t*>(address)->store(HAS_WAITERS, std::memory_order_release); return false; },
+            [](void* address) { reinterpret_cast<std::atomic_uint8_t*>(address)->store(HAS_WAITERS, std::memory_order_release); },
+            [](void*) { return false; },
             mut,
-            [](void* mut_) { reinterpret_cast<fast_task::mutex*>(mut_)->unlock(); },
+            [](void* mut_, bool more_present) { reinterpret_cast<fast_task::mutex*>(mut_)->set_unlocked(more_present); return true; },
             [](void* mut_, bool mark_request) {
                 if (mark_request) {
                     reinterpret_cast<fast_task::mutex*>(mut_)->mark_has_wait();
@@ -68,9 +70,10 @@ namespace fast_task {
         auto* mut = guard.release();
         futex::unlock_and_wait(
             &address,
-            [](void* address) { reinterpret_cast<std::atomic_uint8_t*>(address)->store(HAS_WAITERS, std::memory_order_release); return false; },
+            [](void* address) { reinterpret_cast<std::atomic_uint8_t*>(address)->store(HAS_WAITERS, std::memory_order_release); },
+            [](void*) { return false; },
             mut,
-            [](void* mut_) { reinterpret_cast<fast_task::mutex*>(mut_)->unlock(); },
+            [](void* mut_, bool more_present) { reinterpret_cast<fast_task::mutex*>(mut_)->set_unlocked(more_present);return true; },
             [](void* mut_, bool mark_request) {
                 if (mark_request) {
                     reinterpret_cast<fast_task::mutex*>(mut_)->mark_has_wait();
@@ -86,9 +89,10 @@ namespace fast_task {
         auto* mut = guard.release();
         auto res = futex::unlock_and_wait_until(
             &address,
-            [](void* address) { reinterpret_cast<std::atomic_uint8_t*>(address)->store(HAS_WAITERS, std::memory_order_release); return false; },
+            [](void* address) { reinterpret_cast<std::atomic_uint8_t*>(address)->store(HAS_WAITERS, std::memory_order_release); },
+            [](void*) { return false; },
             mut,
-            [](void* mut_) { reinterpret_cast<fast_task::mutex*>(mut_)->unlock(); },
+            [](void* mut_, bool more_present) { reinterpret_cast<fast_task::mutex*>(mut_)->set_unlocked(more_present); return true; },
             [](void* mut_, bool mark_request) {
                 if (mark_request) {
                     reinterpret_cast<fast_task::mutex*>(mut_)->mark_has_wait();
@@ -118,7 +122,7 @@ namespace fast_task {
 
     bool condition_variable::has_waiters() {
         if (address.load(std::memory_order_relaxed) == HAS_WAITERS)
-            return futex::has_waiters_callback(
+            return futex::has_waiters(
                 &address,
                 [](void* address, void*, bool result) {
                     if (result == false)
@@ -222,9 +226,10 @@ namespace fast_task {
         futex::enter_unlock_and_wait(
             task,
             &address,
-            [](void* address) { reinterpret_cast<std::atomic_uint8_t*>(address)->store(HAS_WAITERS, std::memory_order_release); return false; },
+            [](void* address) { reinterpret_cast<std::atomic_uint8_t*>(address)->store(HAS_WAITERS, std::memory_order_release); },
+            [](void*) { return false; },
             &mut,
-            [](void*) {},
+            [](void*, bool) { return false; },
             [](void* mut_, bool mark_request) {
                 if (mark_request) {
                     reinterpret_cast<fast_task::mutex*>(mut_)->mark_has_wait();
@@ -244,9 +249,10 @@ namespace fast_task {
         return futex::enter_unlock_and_wait_until(
             task,
             &address,
-            [](void* address) { reinterpret_cast<std::atomic_uint8_t*>(address)->store(HAS_WAITERS, std::memory_order_release); return false; },
+            [](void* address) { reinterpret_cast<std::atomic_uint8_t*>(address)->store(HAS_WAITERS, std::memory_order_release); },
+            [](void*) { return false; },
             &mut,
-            [](void*) {},
+            [](void*, bool) { return false; },
             [](void* mut_, bool mark_request) {
                 if (mark_request) {
                     reinterpret_cast<fast_task::mutex*>(mut_)->mark_has_wait();

@@ -31,6 +31,10 @@ namespace fast_task {
         }
     }
 
+    void mutex::set_unlocked(bool has_remaining) {
+        state.store(has_remaining ? HAS_WAITER : UNLOCKED, std::memory_order_release);
+    }
+
     mutex::mutex() : state(UNLOCKED) {
         FT_DEBUG_ONLY(register_object(this));
     }
