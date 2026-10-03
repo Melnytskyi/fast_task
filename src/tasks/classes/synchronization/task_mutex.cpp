@@ -178,7 +178,7 @@ namespace fast_task {
             task,
             &state,
             [](void* addr) { return *reinterpret_cast<size_t*>(addr) == UNLOCKED; },
-            [](void* addr, auto& task) { *reinterpret_cast<size_t*>(addr) = task.get_id() | HAS_WAITER; },
+            [](void* addr, auto& task, auto) { *reinterpret_cast<size_t*>(addr) = task.get_id() | HAS_WAITER; },
             es
         );
     }
@@ -199,7 +199,7 @@ namespace fast_task {
             task,
             &state,
             [](void* addr) { return *reinterpret_cast<size_t*>(addr) == UNLOCKED; },
-            [](void* addr, auto& task) { *reinterpret_cast<size_t*>(addr) = task.get_id() | HAS_WAITER; },
+            [](void* addr, auto& task, auto) { *reinterpret_cast<size_t*>(addr) = task.get_id() | HAS_WAITER; },
             es,
             time_point
         );

@@ -238,6 +238,91 @@ namespace fast_task::futex {
         return extracted;
     }
 
+    size_t extract_waiters_selected(bucket_t& bucket, wait_node_t*& curr, size_t max_count, bool (*select_callback)(void* address, node_data data, bool first), wait_node_t*& out_head, wait_node_t*& out_tail) {
+        size_t extracted = 0;
+        out_head = nullptr;
+        out_tail = nullptr;
+        bool first = true;
+
+        while (curr && extracted < max_count) {
+            wait_node_t* w = curr;
+            wait_node_t* next_w = w->next_waiter;
+
+            if (!select_callback(w->wait_address, {w->node_data}, first)) {
+                curr = next_w;
+                continue;
+            }
+
+            first = false;
+            w->in_bucket = false;
+
+            if (!w->prev_waiter) {
+                if (next_w) {
+                    next_w->next_addr = w->next_addr;
+                    next_w->prev_addr = w->prev_addr;
+
+                    if (w->next_addr)
+                        w->next_addr->prev_addr = next_w;
+                    if (w->prev_addr)
+                        w->prev_addr->next_addr = next_w;
+                    else
+                        bucket.addresses = next_w;
+
+                    next_w->tail_waiter = (w->tail_waiter == w) ? next_w : w->tail_waiter;
+                    next_w->prev_waiter = nullptr;
+                } else {
+                    if (w->next_addr)
+                        w->next_addr->prev_addr = w->prev_addr;
+                    if (w->prev_addr)
+                        w->prev_addr->next_addr = w->next_addr;
+                    else
+                        bucket.addresses = w->next_addr;
+                }
+            } else {
+                wait_node_t* p = w->prev_waiter;
+                p->next_waiter = next_w;
+                if (next_w) {
+                    next_w->prev_waiter = p;
+                } else {
+                    wait_node_t* head = p;
+                    while (head->prev_waiter)
+                        head = head->prev_waiter;
+                    head->tail_waiter = p;
+                }
+            }
+
+            curr = next_w;
+
+            w->next_addr = nullptr;
+            w->prev_addr = nullptr;
+            w->next_waiter = nullptr;
+            w->prev_waiter = nullptr;
+
+            if (!out_head)
+                out_head = w;
+            else {
+                out_tail->next_waiter = w;
+                w->prev_waiter = out_tail;
+            }
+            out_tail = w;
+            extracted++;
+        }
+        return extracted;
+    }
+
+    bool more_than_selector(wait_node_t* curr, size_t max_count, node_data key) {
+        size_t found = 0;
+
+        while (curr && found < max_count) {
+            wait_node_t* w = curr;
+            curr = w->next_waiter;
+
+            if (w->node_data == key.data)
+                found++;
+        }
+        return found == max_count;
+    }
+
     void make_wait(bucket_t& bucket, wait_node_t* item) {
         item->in_bucket = true;
         item->next_addr = nullptr;
@@ -268,16 +353,16 @@ namespace fast_task::futex {
             fast_task::lock_guard guard(wd);
             if (item->needs_awake_check) {
                 if (wd.awake_check == item->awake_check && !wd.get_time_end()) {
-                    item->lock_callback(item->wait_address, item->waiter);
+                    item->lock_callback(item->wait_address, item->waiter, {item->node_data});
                     wd.set_awaked(true);
-                    transfer_task(std::move(item->waiter), reinterpret_cast<enter_state*>(item)); //enter_state used only for coroutines in transfer_task, so by enter_* functions contract, wait_node_t is always in enter_state so I could re-use it
+                    transfer_task(std::move(item->waiter), reinterpret_cast<enter_state*>(item));
                 }
             } else {
-                item->lock_callback(item->wait_address, item->waiter);
+                item->lock_callback(item->wait_address, item->waiter, {item->node_data});
                 transfer_task(std::move(item->waiter), reinterpret_cast<enter_state*>(item));
             }
         } else {
-            item->lock_callback(item->wait_address, item->waiter);
+            item->lock_callback(item->wait_address, item->waiter, {item->node_data});
             item->native_wake.store(1, std::memory_order_release);
             native_futex_wake(&item->native_wake, 1);
         }
@@ -294,7 +379,7 @@ namespace fast_task::futex {
             if (item->needs_awake_check) {
                 if (wd.awake_check == item->awake_check && !wd.get_time_end()) {
                     wd.set_awaked(true);
-                    transfer_task(std::move(item->waiter), reinterpret_cast<enter_state*>(item)); //enter_state used only for coroutines in transfer_task, so by enter_* functions contract, wait_node_t is always in enter_state so I could re-use it
+                    transfer_task(std::move(item->waiter), reinterpret_cast<enter_state*>(item));
                 }
             } else
                 transfer_task(std::move(item->waiter), reinterpret_cast<enter_state*>(item));
@@ -436,7 +521,7 @@ namespace fast_task::futex {
         }
     };
 
-    void FT_API wait_on_address(void* address, bool (*check_callback)(void*)) {
+    void FT_API wait_on_address(void* address, bool (*check_callback)(void*), node_data data) {
         bucket_t& bucket = glob.futex_global.get_bucket(address);
         std::unique_lock guard(bucket.lock);
 
@@ -447,6 +532,7 @@ namespace fast_task::futex {
         me.wait_address = address;
         me.type = node_type::wait;
         me.native_wake.store(0, std::memory_order_relaxed);
+        me.node_data = data.data;
         make_wait(bucket, &me);
         auto& loc = get_loc();
         if (loc.is_task_thread && loc.curr_task) {
@@ -461,7 +547,7 @@ namespace fast_task::futex {
         }
     }
 
-    bool FT_API wait_on_address_until(void* address, bool (*check_callback)(void*), std::chrono::high_resolution_clock::time_point time_point) {
+    bool FT_API wait_on_address_until(void* address, bool (*check_callback)(void*), std::chrono::high_resolution_clock::time_point time_point, node_data data) {
         bucket_t& bucket = glob.futex_global.get_bucket(address);
         std::unique_lock guard(bucket.lock);
 
@@ -472,6 +558,7 @@ namespace fast_task::futex {
         me.wait_address = address;
         me.type = node_type::wait;
         me.native_wake.store(0, std::memory_order_relaxed);
+        me.node_data = data.data;
         make_wait(bucket, &me);
 
         auto& loc = get_loc();
@@ -519,7 +606,8 @@ namespace fast_task::futex {
         bool (*check_callback)(void*),
         void* lock_address,
         bool (*make_unlock_callback)(void*, bool more_waiters_present),
-        bool (*is_unlocked_callback)(void*, bool)
+        bool (*is_unlocked_callback)(void*, bool),
+        node_data data
     ) {
         bucket_t& bucket = glob.futex_global.get_bucket(address);
         bucket_t& lock_bucket = glob.futex_global.get_bucket(lock_address);
@@ -541,6 +629,7 @@ namespace fast_task::futex {
         me.next_wait_addr_check_callback = is_unlocked_callback;
         me.type = node_type::unlock_and_wait;
         me.native_wake.store(0, std::memory_order_relaxed);
+        me.node_data = data.data;
         make_wait(bucket, &me);
 
         auto& loc = get_loc();
@@ -563,7 +652,8 @@ namespace fast_task::futex {
         void* lock_address,
         bool (*make_unlock_callback)(void*, bool more_waiters_present),
         bool (*is_unlocked_callback)(void*, bool),
-        std::chrono::high_resolution_clock::time_point time_point
+        std::chrono::high_resolution_clock::time_point time_point,
+        node_data data
     ) {
         bucket_t& bucket = glob.futex_global.get_bucket(address);
         bucket_t& lock_bucket = glob.futex_global.get_bucket(lock_address);
@@ -585,6 +675,7 @@ namespace fast_task::futex {
         me.next_wait_addr_check_callback = is_unlocked_callback;
         me.type = node_type::unlock_and_wait;
         me.native_wake.store(0, std::memory_order_relaxed);
+        me.node_data = data.data;
         make_wait(bucket, &me);
 
         auto& loc = get_loc();
@@ -626,7 +717,13 @@ namespace fast_task::futex {
         }
     }
 
-    bool FT_API enter_wait_on_address(const task& task_obj, void* address, bool (*check_callback)(void*), enter_state& state) {
+    bool FT_API enter_wait_on_address(
+        const task& task_obj,
+        void* address,
+        bool (*check_callback)(void*),
+        enter_state& state,
+        node_data data
+    ) {
         bucket_t& bucket = glob.futex_global.get_bucket(address);
         std::lock_guard guard(bucket.lock);
 
@@ -637,11 +734,19 @@ namespace fast_task::futex {
         me->wait_address = address;
         me->waiter = task_obj;
         me->type = node_type::wait;
+        me->node_data = data.data;
         make_wait(bucket, me);
         return false;
     }
 
-    bool FT_API enter_wait_on_address_until(const task& task_obj, void* address, bool (*check_callback)(void*), enter_state& state, std::chrono::high_resolution_clock::time_point time_point) {
+    bool FT_API enter_wait_on_address_until(
+        const task& task_obj,
+        void* address,
+        bool (*check_callback)(void*),
+        enter_state& state,
+        std::chrono::high_resolution_clock::time_point time_point,
+        node_data data
+    ) {
         bucket_t& bucket = glob.futex_global.get_bucket(address);
         std::lock_guard guard(bucket.lock);
 
@@ -654,6 +759,7 @@ namespace fast_task::futex {
         me->needs_awake_check = true;
         me->awake_check = get_data(task_obj).awake_check;
         me->type = node_type::wait;
+        me->node_data = data.data;
         make_wait(bucket, me);
 
         fast_task::makeTimeWait_extern(task_obj, time_point);
@@ -669,7 +775,8 @@ namespace fast_task::futex {
         void* lock_address,
         bool (*make_unlock_callback)(void*, bool more_waiters_present),
         bool (*is_unlocked_callback)(void*, bool),
-        enter_state& state
+        enter_state& state,
+        node_data data
     ) {
         bucket_t& bucket = glob.futex_global.get_bucket(address);
         bucket_t& lock_bucket = glob.futex_global.get_bucket(lock_address);
@@ -691,6 +798,7 @@ namespace fast_task::futex {
         me->next_wait_addr_check_callback = is_unlocked_callback;
         me->waiter = task_obj;
         me->type = node_type::unlock_and_wait;
+        me->node_data = data.data;
         make_wait(bucket, me);
         return false;
     }
@@ -704,7 +812,8 @@ namespace fast_task::futex {
         bool (*make_unlock_callback)(void*, bool more_waiters_present),
         bool (*is_unlocked_callback)(void*, bool mark_request),
         enter_state& state,
-        std::chrono::high_resolution_clock::time_point time_point
+        std::chrono::high_resolution_clock::time_point time_point,
+        node_data data
     ) {
         bucket_t& bucket = glob.futex_global.get_bucket(address);
         bucket_t& lock_bucket = glob.futex_global.get_bucket(lock_address);
@@ -727,6 +836,7 @@ namespace fast_task::futex {
         me->needs_awake_check = true;
         me->awake_check = get_data(task_obj).awake_check;
         me->type = node_type::unlock_and_wait;
+        me->node_data = data.data;
         make_wait(bucket, me);
 
         fast_task::makeTimeWait_extern(task_obj, time_point);
@@ -734,12 +844,19 @@ namespace fast_task::futex {
         return false;
     }
 
-    bool FT_API enter_wait_on_address_lock(const task& task_obj, void* address, bool (*check_callback)(void*), void (*lock_callback)(void*, const task& task_obj), enter_state& state) {
+    bool FT_API enter_wait_on_address_lock(
+        const task& task_obj,
+        void* address,
+        bool (*check_callback)(void*),
+        void (*lock_callback)(void*, const task& task_obj, node_data),
+        enter_state& state,
+        node_data data
+    ) {
         bucket_t& bucket = glob.futex_global.get_bucket(address);
         std::unique_lock guard(bucket.lock);
 
         if (check_callback(address)) {
-            lock_callback(address, task_obj);
+            lock_callback(address, task_obj, data);
             return true;
         }
 
@@ -748,16 +865,25 @@ namespace fast_task::futex {
         me->lock_callback = lock_callback;
         me->waiter = task_obj;
         me->type = node_type::enter_wait_and_lock;
+        me->node_data = data.data;
         make_wait(bucket, me);
         return false;
     }
 
-    bool FT_API enter_wait_on_address_lock_until(const task& task_obj, void* address, bool (*check_callback)(void*), void (*lock_callback)(void*, const task& task_obj), enter_state& state, std::chrono::high_resolution_clock::time_point time_point) {
+    bool FT_API enter_wait_on_address_lock_until(
+        const task& task_obj,
+        void* address,
+        bool (*check_callback)(void*),
+        void (*lock_callback)(void*, const task& task_obj, node_data),
+        enter_state& state,
+        std::chrono::high_resolution_clock::time_point time_point,
+        node_data data
+    ) {
         bucket_t& bucket = glob.futex_global.get_bucket(address);
         std::unique_lock guard(bucket.lock);
 
         if (check_callback(address)) {
-            lock_callback(address, task_obj);
+            lock_callback(address, task_obj, data);
             return true;
         }
 
@@ -768,6 +894,7 @@ namespace fast_task::futex {
         me->needs_awake_check = true;
         me->awake_check = get_data(task_obj).awake_check;
         me->type = node_type::enter_wait_and_lock;
+        me->node_data = data.data;
         make_wait(bucket, me);
 
         fast_task::makeTimeWait_extern(task_obj, time_point);
@@ -823,6 +950,158 @@ namespace fast_task::futex {
         return process_wakeups(to_wake_head, wake_count);
     }
 
+    size_t FT_API wake_and_requeue_on_address_select(void* address, void (*pre_release)(void*, size_t, bool has_remaining), bool (*select_callback)(void* address, node_data data, bool first), size_t process_count, size_t wake_count) {
+        bucket_t& bucket = glob.futex_global.get_bucket(address);
+        fast_task::unique_lock guard(bucket.lock);
+
+        wait_node_t* curr = bucket.addresses;
+        while (curr && curr->wait_address != address)
+            curr = curr->next_addr;
+
+        if (!curr) {
+            pre_release(address, 0, false);
+            return 0;
+        }
+
+        wait_node_t *to_wake_head, *to_wake_tail;
+        size_t extracted = extract_waiters_selected(bucket, curr, process_count, select_callback, to_wake_head, to_wake_tail);
+
+        bool has_remaining = false;
+        for (wait_node_t* it = bucket.addresses; it; it = it->next_addr) {
+            if (it->wait_address != address)
+                continue;
+            for (wait_node_t* w = it; w; w = w->next_waiter) {
+                if (select_callback(w->wait_address, {w->node_data}, false)) {
+                    has_remaining = true;
+                    break;
+                }
+            }
+            break;
+        }
+
+        pre_release(address, extracted, has_remaining);
+
+        guard.unlock();
+        return process_wakeups(to_wake_head, wake_count);
+    }
+
+    size_t FT_API wait_items_on(void* address, node_data key) {
+        bucket_t& bucket = glob.futex_global.get_bucket(address);
+        fast_task::lock_guard guard(bucket.lock);
+
+        wait_node_t* curr = bucket.addresses;
+        while (curr && curr->wait_address != address)
+            curr = curr->next_addr;
+
+        if (!curr)
+            return 0;
+
+        size_t count = 0;
+
+        while (curr) {
+            if (curr->node_data == key.data)
+                count++;
+            curr = curr->next_waiter;
+        }
+        return count;
+    }
+
+    bool FT_API more_wait_items_on(void* address, size_t check_count, node_data key) {
+        bucket_t& bucket = glob.futex_global.get_bucket(address);
+        fast_task::lock_guard guard(bucket.lock);
+        wait_node_t* curr = bucket.addresses;
+        while (curr && curr->wait_address != address)
+            curr = curr->next_addr;
+        return more_than_selector(curr, check_count, key);
+    }
+
+    size_t FT_API wait_items_on(void* address, void (*callback)(void* address, void* data, size_t result), void* data, node_data key) {
+        bucket_t& bucket = glob.futex_global.get_bucket(address);
+        fast_task::lock_guard guard(bucket.lock);
+
+        wait_node_t* curr = bucket.addresses;
+        while (curr && curr->wait_address != address)
+            curr = curr->next_addr;
+
+        if (!curr) {
+            callback(address, data, 0);
+            return false;
+        }
+
+        size_t count = 0;
+
+        while (curr) {
+            if (curr->node_data == key.data)
+                count++;
+            curr = curr->next_waiter;
+        }
+        callback(address, data, count);
+        return count;
+    }
+
+    bool FT_API more_wait_items_on(void* address, size_t check_count, void (*callback)(void* address, void* data, bool result), void* data, node_data key) {
+        bucket_t& bucket = glob.futex_global.get_bucket(address);
+        fast_task::lock_guard guard(bucket.lock);
+
+        wait_node_t* curr = bucket.addresses;
+        while (curr && curr->wait_address != address)
+            curr = curr->next_addr;
+
+        if (!curr) {
+            callback(address, data, false);
+            return false;
+        }
+
+        size_t count = 0;
+
+        while (curr) {
+            if (curr->node_data == key.data) {
+                count++;
+                if (count > check_count) {
+                    callback(address, data, true);
+                    return true;
+                }
+            }
+            curr = curr->next_waiter;
+        }
+        callback(address, data, false);
+        return false;
+    }
+
+    bool FT_API has_waiters(void* address) {
+        bucket_t& bucket = glob.futex_global.get_bucket(address);
+        fast_task::lock_guard guard(bucket.lock);
+
+        wait_node_t* curr = bucket.addresses;
+        while (curr && curr->wait_address != address)
+            curr = curr->next_addr;
+
+        return curr != nullptr;
+    }
+
+    bool FT_API has_waiters(void* address, node_data key) {
+        bucket_t& bucket = glob.futex_global.get_bucket(address);
+        fast_task::lock_guard guard(bucket.lock);
+
+        wait_node_t* curr = bucket.addresses;
+        while (curr && curr->wait_address != address)
+            curr = curr->next_addr;
+
+        return more_than_selector(curr, 1, key);
+    }
+
+    bool FT_API has_waiters(void* address, void (*callback)(void* address, void* data, bool result), void* data, node_data key) {
+        bucket_t& bucket = glob.futex_global.get_bucket(address);
+        fast_task::lock_guard guard(bucket.lock);
+
+        wait_node_t* curr = bucket.addresses;
+        while (curr && curr->wait_address != address)
+            curr = curr->next_addr;
+        auto res = more_than_selector(curr, 1, key);
+        callback(address, data, res);
+        return res;
+    }
+
     size_t FT_API wait_items_on(void* address) {
         bucket_t& bucket = glob.futex_global.get_bucket(address);
         fast_task::lock_guard guard(bucket.lock);
@@ -846,6 +1125,9 @@ namespace fast_task::futex {
     bool FT_API more_wait_items_on(void* address, size_t check_count) {
         bucket_t& bucket = glob.futex_global.get_bucket(address);
         fast_task::lock_guard guard(bucket.lock);
+        wait_node_t* curr = bucket.addresses;
+        while (curr && curr->wait_address != address)
+            curr = curr->next_addr;
         return ___more_wait_items_on(bucket, address, check_count);
     }
 
@@ -888,26 +1170,15 @@ namespace fast_task::futex {
         size_t count = 0;
 
         while (curr) {
-            curr = curr->next_waiter;
             count++;
             if (count > check_count) {
                 callback(address, data, true);
                 return true;
             }
+            curr = curr->next_waiter;
         }
         callback(address, data, false);
         return false;
-    }
-
-    bool FT_API has_waiters(void* address) {
-        bucket_t& bucket = glob.futex_global.get_bucket(address);
-        fast_task::lock_guard guard(bucket.lock);
-
-        wait_node_t* curr = bucket.addresses;
-        while (curr && curr->wait_address != address)
-            curr = curr->next_addr;
-
-        return curr != nullptr;
     }
 
     bool FT_API has_waiters(void* address, void (*callback)(void* address, void* data, bool result), void* data) {
@@ -920,5 +1191,59 @@ namespace fast_task::futex {
         auto res = curr != nullptr;
         callback(address, data, res);
         return res;
+    }
+
+    size_t FT_API iterate_waiters(void* address, void (*callback)(void* address, void* data, const waiter_info& info), void* data) {
+        bucket_t& bucket = glob.futex_global.get_bucket(address);
+        fast_task::lock_guard guard(bucket.lock);
+
+        wait_node_t* curr = bucket.addresses;
+        while (curr && curr->wait_address != address)
+            curr = curr->next_addr;
+
+        if (!curr)
+            return 0;
+
+        size_t count = 0;
+        while (curr) {
+            size_t id = curr->waiter ? curr->waiter.get_id() : 0;
+            waiter_info info{
+                .task_id = id,
+                .key = node_data{curr->node_data},
+                .is_native = (id & native_thread_flag) != 0
+            };
+            callback(address, data, info);
+            ++count;
+            curr = curr->next_waiter;
+        }
+        return count;
+    }
+
+    size_t FT_API iterate_waiters(void* address, void (*callback)(void* address, void* data, const waiter_info& info), void* data, node_data key) {
+        bucket_t& bucket = glob.futex_global.get_bucket(address);
+        fast_task::lock_guard guard(bucket.lock);
+
+        wait_node_t* curr = bucket.addresses;
+        while (curr && curr->wait_address != address)
+            curr = curr->next_addr;
+
+        if (!curr)
+            return 0;
+
+        size_t count = 0;
+        while (curr) {
+            if (curr->node_data == key.data) {
+                size_t id = curr->waiter ? curr->waiter.get_id() : 0;
+                waiter_info info{
+                    .task_id = id,
+                    .key = node_data{curr->node_data},
+                    .is_native = (id & native_thread_flag) != 0
+                };
+                callback(address, data, info);
+                ++count;
+            }
+            curr = curr->next_waiter;
+        }
+        return count;
     }
 }

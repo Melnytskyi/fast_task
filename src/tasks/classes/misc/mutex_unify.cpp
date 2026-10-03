@@ -492,12 +492,19 @@ namespace fast_task {
             urmut->mut.transfer_ownership(target_owner->get_id());
             break;
         case mutex_unify_type::urwmut_r:
-            urwmut->values.readers.remove(get_loc().curr_task.get_id());
-            urwmut->values.readers.push_back(target_owner->get_id());
             break;
-        case mutex_unify_type::urwmut_w:
-            urwmut->values.current_writer_task = target_owner->get_id();
+        case mutex_unify_type::urwmut_w: {
+            auto& values = urwmut->values;
+            uint64_t expected = values.state.load(std::memory_order_relaxed);
+            while (!values.state.compare_exchange_weak(
+                expected,
+                target_owner->get_id(),
+                std::memory_order_release,
+                std::memory_order_relaxed
+            )) {
+            }
             break;
+        }
         case mutex_unify_type::mmut:
             mmut->donate_ownership(target_owner);
             break;

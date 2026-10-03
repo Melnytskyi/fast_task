@@ -19,6 +19,7 @@
     #include <unordered_set>
 
     #include <exceptions.hpp>
+    #include <experimental/futex.hpp>
     #include <internal/task_object.hpp>
     #include <shared.hpp>
     #include <task.hpp>
@@ -84,31 +85,6 @@ namespace fast_task {
     #endif
     };
 
-    struct FT_API_LOCAL task_object::wait_item {
-        wait_item* next = nullptr;
-        task waiter;
-        fast_task::native::condition_variable_any* native_cv = nullptr;
-        bool* native_check = nullptr;
-        uint16_t awake_check = 0;
-        bool heap_allocated = false;
-    };
-
-    struct limiter::resume_task {
-        class task task;
-        uint16_t awake_check;
-        resume_task* next = nullptr;
-        resume_task* prev = nullptr;
-    };
-
-    struct mutex::resume_task {
-        class task task;
-        uint16_t awake_check = 0;
-        fast_task::native::condition_variable_any* native_cv = nullptr;
-        bool* native_check = nullptr;
-        resume_task* next = nullptr;
-        resume_task* prev = nullptr;
-    };
-
     struct queue_handle {                     //96 [sizeof]
         std::list<task> tasks;                //24
         condition_variable_any end_of_queue;  //16
@@ -119,23 +95,6 @@ namespace fast_task {
         bool destructed = false;              //1
         bool is_running = false;              //1
                                               //6 [padding]
-    };
-
-    struct rw_mutex::resume_task {
-        class task task;
-        fast_task::native::condition_variable_any* native_cv = nullptr;
-        bool* native_check = nullptr;
-        resume_task* next = nullptr;
-        resume_task* prev = nullptr;
-        uint16_t awake_check = 0;
-        std::optional<bool> lock_read;
-    };
-
-    struct semaphore::resume_task {
-        class task task;
-        uint16_t awake_check;
-        resume_task* next = nullptr;
-        resume_task* prev = nullptr;
     };
 
     struct deadline_timer::handle {
@@ -231,6 +190,7 @@ namespace fast_task {
             node_type type;
             bool needs_awake_check : 1 = false;
             bool in_bucket : 1 = false;
+            uint8_t node_data : 6;
             uint16_t awake_check = 0;
             std::atomic_uint32_t native_wake;
             task waiter;
@@ -238,7 +198,7 @@ namespace fast_task {
 
             union {
                 bool (*next_wait_addr_check_callback)(void*, bool mark_request);
-                void (*lock_callback)(void*, const task& task_obj);
+                void (*lock_callback)(void*, const task& task_obj, futex::node_data);
             };
         };
 

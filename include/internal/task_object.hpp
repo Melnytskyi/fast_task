@@ -15,7 +15,6 @@ namespace fast_task {
     };
 
     struct alignas(64) FT_API_LOCAL task_object {
-        struct FT_API_LOCAL wait_item;
         struct FT_API_LOCAL execution_data;
         enum class status_e : uint8_t {
             released, //internal, used for allocation

@@ -15,7 +15,6 @@ namespace fast_task {
     class FT_API mutex {
         friend class recursive_mutex;
         friend struct debug::_debug_collect;
-        struct FT_API_LOCAL resume_task;
         friend class mutex_unify;
         friend class condition_variable;
 
@@ -79,20 +78,41 @@ namespace fast_task {
 
     class FT_API rw_mutex {
         friend struct debug::_debug_collect;
-        struct FT_API_LOCAL resume_task;
         friend class mutex_unify;
 
         struct FT_API_LOCAL private_values {
-            friend class recursive_mutex;
-            struct resume_task* begin = nullptr;
-            struct resume_task* end = nullptr;
-            std::list<size_t> readers;
-            fast_task::native::spin_lock no_race;
-            size_t current_writer_task = 0;
-        } values;
+            static constexpr inline uint32_t HAS_READER_WAITERS = 1 << 0;
+            static constexpr inline uint32_t HAS_WRITER_WAITERS = 1 << 1;
 
-        static void push_back(private_values& values, resume_task* node);
-        static void erase(private_values& values, resume_task* node);
+            static constexpr inline uint8_t READER_KEY = 1;
+            static constexpr inline uint8_t WRITER_KEY = 0;
+
+            std::atomic<uint64_t> state{0};
+            std::atomic<uint32_t> readers{0};
+            std::atomic<uint32_t> waiters{0};
+        };
+
+        private_values values;
+
+        inline size_t debug_writer_owner() const noexcept {
+            return size_t(values.state.load(std::memory_order_relaxed));
+        }
+
+        inline size_t debug_reader_count() const noexcept {
+            return values.readers.load(std::memory_order_relaxed);
+        }
+
+        static rw_mutex::private_values& values_of(void* state_address) {
+            return *reinterpret_cast<rw_mutex::private_values*>(reinterpret_cast<char*>(state_address) - offsetof(rw_mutex::private_values, state));
+        }
+
+        static bool reader_can_acquire(uint64_t writer, uint32_t waiters) {
+            return writer == 0 && (waiters & rw_mutex::private_values::HAS_WRITER_WAITERS) == 0;
+        }
+
+        template <uint8_t Key, uint8_t Transition>
+        static size_t wake_waiters(rw_mutex::private_values& values, size_t count);
+
 
     public:
         using read_write_mutex = void;

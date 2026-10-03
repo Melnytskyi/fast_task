@@ -49,25 +49,9 @@ namespace fast_task {
             m.nmut = reinterpret_cast<fast_task::native::mutex*>(&obj);
             return m;
         }
-
-        static void unlink_wait(std::atomic<task_object::wait_item*>& head, task_object::wait_item* node) noexcept {
-            auto* cur = head.load(std::memory_order_relaxed);
-            task_object::wait_item* prev = nullptr;
-            while (cur) {
-                if (cur == node) {
-                    if (prev)
-                        prev->next = cur->next;
-                    else
-                        head.store(cur->next, std::memory_order_relaxed);
-                    return;
-                }
-                prev = cur;
-                cur = cur->next;
-            }
-        }
-
-        static_assert(sizeof(task_object::sbo_buffer) == task::sbo_size, "task::sbo_size must match task_object::sbo_buffer");
     };
+
+    static_assert(sizeof(task_object::sbo_buffer) == task::sbo_size, "task::sbo_size must match task_object::sbo_buffer");
 
     inline static constexpr std::chrono::nanoseconds priority_quantum_basic[] = {
         std::chrono::nanoseconds(FT_PREEMPT_BACKGROUND_BASIC_QUANTUM_NS),

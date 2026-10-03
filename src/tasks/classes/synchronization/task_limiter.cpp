@@ -4,249 +4,221 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
+#include <experimental/futex.hpp>
 #include <task.hpp>
 #include <tasks/_internal.hpp>
 
 namespace fast_task {
-    void limiter::push_back(private_values& values, resume_task* node) {
-        node->next = nullptr;
-        node->prev = values.end;
-        if (values.end) {
-            values.end->next = node;
-        } else
-            values.begin = node;
+    constexpr size_t LIM_COUNT_MASK = ~native_thread_data;
+    constexpr size_t LIM_HAS_WAITER = native_thread_data;
 
-        values.end = node;
-    }
-
-    void limiter::erase(private_values& values, resume_task* node) {
-        if (node->prev) {
-            node->prev->next = node->next;
-        } else
-            values.begin = node->next;
-
-        if (node->next) {
-            node->next->prev = node->prev;
-        } else
-            values.end = node->prev;
-
-        node->next = nullptr;
-        node->prev = nullptr;
-    }
-
-    limiter::limiter() {
+    limiter::limiter() : values{.lock_check = {}, .lock_check_lock = {}, .state = 1, .max_threshold = 1} {
         FT_DEBUG_ONLY(register_object(this));
     }
 
     limiter::~limiter() {
         FT_DEBUG_ONLY(unregister_object(this));
-        if (values.locked) {
+        if ((values.state.load(std::memory_order_relaxed) & LIM_COUNT_MASK) == 0) {
             assert(false && "Tried to destroy locked limiter");
             std::terminate();
         }
     }
 
+    void limiter::check_deadlock(size_t lock_id) {
+        fast_task::lock_guard guard(values.lock_check_lock);
+        if (std::find(values.lock_check.begin(), values.lock_check.end(), lock_id) != values.lock_check.end()) {
+            values.state.fetch_add(1, std::memory_order_release);
+            throw std::logic_error("Dead lock. task try lock already locked task limiter");
+        }
+        values.lock_check.push_back(lock_id);
+    }
+
     void limiter::set_max_threshold(size_t val) {
-        fast_task::lock_guard guard(values.no_race);
         if (val < 1)
             val = 1;
-        if (values.max_threshold == val)
+        size_t old_max = values.max_threshold.load(std::memory_order_relaxed);
+        if (old_max == val)
             return;
-        if (values.max_threshold > val) {
-            if (values.allow_threshold > values.max_threshold - val)
-                values.allow_threshold -= values.max_threshold - val;
-            else {
-                values.locked = true;
-                values.allow_threshold = 0;
+        values.max_threshold.store(val, std::memory_order_release);
+
+        if (val > old_max) {
+            size_t added = val - old_max;
+            size_t expected = values.state.load(std::memory_order_relaxed);
+            while (true) {
+                size_t cur_count = expected & LIM_COUNT_MASK;
+                size_t new_count = cur_count + added;
+                if (new_count > val)
+                    new_count = val;
+                if (values.state.compare_exchange_weak(expected, (expected & LIM_HAS_WAITER) | new_count, std::memory_order_release, std::memory_order_relaxed))
+                    break;
             }
-            values.max_threshold = val;
-            return;
+            size_t waiters = futex::wait_items_on(&values.state);
+            size_t to_wake = std::min(added, waiters);
+            futex::wake_on_address(&values.state, [](void* addr, size_t, bool has_remaining) {
+                auto& state = *reinterpret_cast<std::atomic_size_t*>(addr);
+                size_t cur = state.load(std::memory_order_relaxed);
+                state.store(has_remaining ? (cur | LIM_HAS_WAITER) : (cur & LIM_COUNT_MASK), std::memory_order_release); }, to_wake);
         } else {
-            if (!values.allow_threshold) {
-                size_t unlocks = values.max_threshold;
-                values.max_threshold = val;
-                while (unlocks-- >= 1)
-                    unchecked_unlock();
-            } else {
-                values.allow_threshold += val - values.max_threshold;
-                values.max_threshold = val;
+            size_t remove = old_max - val;
+            size_t expected = values.state.load(std::memory_order_relaxed);
+            while (true) {
+                size_t cur_count = expected & LIM_COUNT_MASK;
+                size_t new_count = cur_count > remove ? cur_count - remove : 0;
+                if (values.state.compare_exchange_weak(expected, (expected & LIM_HAS_WAITER) | new_count, std::memory_order_release, std::memory_order_relaxed))
+                    break;
             }
         }
     }
 
     void limiter::lock() {
-        resume_task node;
-        if (get_loc().is_task_thread)
-            node.task = get_loc().curr_task;
-        fast_task::unique_lock guard(values.no_race);
-        while (values.locked) {
-            if (get_loc().is_task_thread) {
-                get_data(get_loc().curr_task).set_awaked(false);
-                get_data(get_loc().curr_task).set_time_end(false);
-                node.awake_check = get_data(get_loc().curr_task).awake_check;
-                push_back(values, &node);
-                swapCtxRelock(*guard.mutex());
-            } else
-                values.native_notify.wait(guard);
+        interrupt_unsafe_region region;
+        size_t expected = values.state.load(std::memory_order_relaxed);
+        while (true) {
+            while ((expected & LIM_COUNT_MASK) > 0) {
+                if (values.state.compare_exchange_weak(expected, expected - 1, std::memory_order_acquire, std::memory_order_relaxed)) {
+                    check_deadlock(this_task::get_id());
+                    return;
+                }
+            }
+            futex::wait_on_address(&values.state, [](void* addr) {
+                auto& state = *reinterpret_cast<std::atomic_size_t*>(addr);
+                size_t cur = state.load(std::memory_order_relaxed);
+                while (true) {
+                    if ((cur & LIM_COUNT_MASK) > 0)
+                        return true;
+                    if (state.compare_exchange_weak(cur, cur | LIM_HAS_WAITER, std::memory_order_release, std::memory_order_relaxed))
+                        return false;
+                }
+            });
+            expected = values.state.load(std::memory_order_relaxed);
         }
-        if (--values.allow_threshold == 0)
-            values.locked = true;
-        size_t lock_id = this_task::get_id();
-        if (std::find(values.lock_check.begin(), values.lock_check.end(), lock_id) != values.lock_check.end()) {
-            if (++values.allow_threshold != 0)
-                values.locked = false;
-            values.no_race.unlock();
-            throw std::logic_error("Dead lock. task try lock already locked task limiter");
-        } else
-            values.lock_check.push_back(lock_id);
-        values.no_race.unlock();
-        return;
     }
 
     bool limiter::try_lock() {
-        if (!values.no_race.try_lock())
-            return false;
-        if (values.locked) {
-            values.no_race.unlock();
-            return false;
-        } else if (--values.allow_threshold <= 0)
-            values.locked = true;
-
-        size_t lock_id = this_task::get_id();
-        if (std::find(values.lock_check.begin(), values.lock_check.end(), lock_id) != values.lock_check.end()) {
-            if (++values.allow_threshold != 0)
-                values.locked = false;
-            values.no_race.unlock();
-            throw std::logic_error("Dead lock. task try lock already locked task limiter");
-        } else
-            values.lock_check.push_back(lock_id);
-        values.no_race.unlock();
-        return true;
+        size_t expected = values.state.load(std::memory_order_relaxed);
+        while ((expected & LIM_COUNT_MASK) > 0) {
+            if (values.state.compare_exchange_weak(expected, expected - 1, std::memory_order_acquire, std::memory_order_relaxed)) {
+                check_deadlock(this_task::get_id());
+                return true;
+            }
+        }
+        return false;
     }
 
     bool limiter::try_lock_until(std::chrono::high_resolution_clock::time_point time_point) {
-        resume_task node;
-        if (get_loc().is_task_thread)
-            node.task = get_loc().curr_task;
-        fast_task::unique_lock guard(values.no_race);
-        while (values.locked) {
-            if (get_loc().is_task_thread) {
-                get_data(get_loc().curr_task).set_awaked(false);
-                get_data(get_loc().curr_task).set_time_end(false);
-                makeTimeWait(time_point);
-                node.awake_check = get_data(get_loc().curr_task).awake_check;
-                push_back(values, &node);
-                swapCtxRelock(values.no_race);
-                auto awaked = get_data(get_loc().curr_task).get_awaked();
-                resetTimeWait();
-                if (!awaked)
-                    return false;
-            } else if (values.native_notify.wait_until(guard, time_point) == fast_task::cv_status::timeout)
+        interrupt_unsafe_region region;
+        size_t expected = values.state.load(std::memory_order_relaxed);
+        while (true) {
+            while ((expected & LIM_COUNT_MASK) > 0) {
+                if (values.state.compare_exchange_weak(expected, expected - 1, std::memory_order_acquire, std::memory_order_relaxed)) {
+                    check_deadlock(this_task::get_id());
+                    return true;
+                }
+            }
+            if (!futex::wait_on_address_until(&values.state, [](void* addr) {
+                    auto& state = *reinterpret_cast<std::atomic_size_t*>(addr);
+                    size_t cur = state.load(std::memory_order_relaxed);
+                    while (true) {
+                        if ((cur & LIM_COUNT_MASK) > 0)
+                            return true;
+                        if (state.compare_exchange_weak(cur, cur | LIM_HAS_WAITER, std::memory_order_release, std::memory_order_relaxed))
+                            return false;
+                    } }, time_point))
                 return false;
+            expected = values.state.load(std::memory_order_relaxed);
         }
-        if (--values.allow_threshold <= 0)
-            values.locked = true;
-        size_t lock_id = this_task::get_id();
-
-        if (std::find(values.lock_check.begin(), values.lock_check.end(), lock_id) != values.lock_check.end()) {
-            if (++values.allow_threshold != 0)
-                values.locked = false;
-            values.no_race.unlock();
-            throw std::logic_error("Dead lock. task try lock already locked task limiter");
-        } else
-            values.lock_check.push_back(lock_id);
-        values.no_race.unlock();
-        return true;
     }
 
     void limiter::unlock() {
         size_t lock_id = this_task::get_id();
-        fast_task::lock_guard lg0(values.no_race);
-        auto item = std::find(values.lock_check.begin(), values.lock_check.end(), lock_id);
-        if (item == values.lock_check.end())
-            throw std::logic_error("Invalid unlock. task try unlock already unlocked task limiter");
-        else
+        {
+            fast_task::lock_guard guard(values.lock_check_lock);
+            auto item = std::find(values.lock_check.begin(), values.lock_check.end(), lock_id);
+            if (item == values.lock_check.end())
+                throw std::logic_error("Invalid unlock. task try unlock already unlocked task limiter");
             values.lock_check.erase(item);
+        }
         unchecked_unlock();
     }
 
     void limiter::unchecked_unlock() {
-        if (values.allow_threshold >= values.max_threshold)
-            return;
-        values.allow_threshold++;
-        values.locked = false;
-        values.native_notify.notify_one();
-        while (values.begin) {
-            auto& it = *values.begin;
-            fast_task::lock_guard lg2(get_data(it.task));
-            if (!get_data(it.task).get_time_end()) {
-                if (get_data(it.task).awake_check != it.awake_check) {
-                    values.begin = it.next;
-                    continue;
-                }
-                get_data(it.task).set_awaked(true);
-                auto task = values.begin->task;
-                erase(values, values.begin);
-                if (get_data(task).get_is_on_scheduler())
-                    if (--values.allow_threshold <= 0)
-                        values.locked = true;
-                transfer_task(std::move(task));
+        size_t max = values.max_threshold.load(std::memory_order_relaxed);
+        size_t cached = values.state.load(std::memory_order_relaxed);
+        while (true) {
+            if ((cached & LIM_COUNT_MASK) == max)
                 return;
-            } else
-                erase(values, values.begin);
+            if (values.state.compare_exchange_weak(cached, cached + 1, std::memory_order_release, std::memory_order_relaxed))
+                break;
         }
+        futex::wake_on_address(&values.state, [](void* addr, size_t, bool has_remaining) {
+            auto& state = *reinterpret_cast<std::atomic_size_t*>(addr);
+            size_t cur = state.load(std::memory_order_relaxed);
+            state.store(has_remaining ? (cur | LIM_HAS_WAITER) : (cur & LIM_COUNT_MASK), std::memory_order_release);
+        });
     }
 
     bool limiter::is_locked() {
-        return values.locked;
+        return (values.state.load(std::memory_order_relaxed) & LIM_COUNT_MASK) == 0;
     }
 
     bool limiter::enter_wait(const task& task, enter_state& state) {
-        auto node = state.template use<resume_task>();
-        node->task = task;
-        node->awake_check = get_data(task).awake_check;
-        fast_task::lock_guard guard(values.no_race);
-
-        if (!values.locked) {
-            if (--values.allow_threshold == 0)
-                values.locked = true;
-
-            if (std::find(values.lock_check.begin(), values.lock_check.end(), task.get_id()) != values.lock_check.end()) {
-                if (++values.allow_threshold != 0)
-                    values.locked = false;
-
-                throw std::logic_error("Dead lock. task try lock already locked task limiter");
-            } else
-                values.lock_check.push_back(task.get_id());
-            return true;
-        } else {
-            push_back(values, node);
-            return false;
+        interrupt_unsafe_region region;
+        size_t expected = values.state.load(std::memory_order_relaxed);
+        while ((expected & LIM_COUNT_MASK) > 0) {
+            if (values.state.compare_exchange_weak(expected, expected - 1, std::memory_order_acquire, std::memory_order_relaxed)) {
+                check_deadlock(task.get_id());
+                return true;
+            }
         }
+        return futex::enter_wait_on_address_lock(
+            task,
+            &values.state,
+            [](void* addr) {
+                auto& state = *reinterpret_cast<std::atomic_size_t*>(addr);
+                size_t cur = state.load(std::memory_order_relaxed);
+                while (true) {
+                    if ((cur & LIM_COUNT_MASK) > 0)
+                        return true;
+                    if (state.compare_exchange_weak(cur, cur | LIM_HAS_WAITER, std::memory_order_release, std::memory_order_relaxed))
+                        return false;
+                }
+            },
+            [](void* addr, auto&, auto) {
+                auto& state = *reinterpret_cast<std::atomic_size_t*>(addr);
+                state.fetch_sub(1, std::memory_order_acquire);
+            },
+            state
+        );
     }
 
     bool limiter::enter_wait_until(const task& task, enter_state& state, std::chrono::high_resolution_clock::time_point time_point) {
-        auto node = state.template use<resume_task>();
-        node->task = task;
-        node->awake_check = get_data(task).awake_check;
-        fast_task::lock_guard guard(values.no_race);
-
-        if (!values.locked) {
-            if (--values.allow_threshold == 0)
-                values.locked = true;
-
-            if (std::find(values.lock_check.begin(), values.lock_check.end(), task.get_id()) != values.lock_check.end()) {
-                if (++values.allow_threshold != 0)
-                    values.locked = false;
-
-                throw std::logic_error("Dead lock. task try lock already locked task limiter");
-            } else
-                values.lock_check.push_back(task.get_id());
-            return true;
-        } else {
-            push_back(values, node);
-            fast_task::makeTimeWait_extern(task, time_point);
-            return false;
+        interrupt_unsafe_region region;
+        size_t expected = values.state.load(std::memory_order_relaxed);
+        while ((expected & LIM_COUNT_MASK) > 0) {
+            if (values.state.compare_exchange_weak(expected, expected - 1, std::memory_order_acquire, std::memory_order_relaxed)) {
+                check_deadlock(task.get_id());
+                return true;
+            }
         }
+        return futex::enter_wait_on_address_lock_until(
+            task,
+            &values.state,
+            [](void* addr) {
+                auto& state = *reinterpret_cast<std::atomic_size_t*>(addr);
+                size_t cur = state.load(std::memory_order_relaxed);
+                while (true) {
+                    if ((cur & LIM_COUNT_MASK) > 0)
+                        return true;
+                    if (state.compare_exchange_weak(cur, cur | LIM_HAS_WAITER, std::memory_order_release, std::memory_order_relaxed))
+                        return false;
+                }
+            },
+            [](void* addr, auto&, auto) {
+                auto& state = *reinterpret_cast<std::atomic_size_t*>(addr);
+                state.fetch_sub(1, std::memory_order_acquire);
+            },
+            state,
+            time_point
+        );
     }
 }

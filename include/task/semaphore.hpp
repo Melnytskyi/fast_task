@@ -10,24 +10,17 @@
 #include "../native.hpp"
 #include "enter_state.hpp"
 #include "fwd.hpp"
+#include <atomic>
 #include <list>
 
 namespace fast_task {
     class FT_API semaphore {
         friend struct debug::_debug_collect;
-        struct FT_API_LOCAL resume_task;
 
         struct private_values {
-            struct resume_task* begin = nullptr;
-            struct resume_task* end = nullptr;
-            fast_task::native::spin_lock no_race;
-            fast_task::native::condition_variable_any native_notify;
-            size_t allow_threshold = 0;
-            size_t max_threshold = 0;
+            std::atomic_size_t state;
+            std::atomic_size_t max_threshold;
         } values;
-
-        static void push_back(private_values& values, resume_task* node);
-        static void erase(private_values& values, resume_task* node);
 
     public:
         semaphore();
@@ -53,24 +46,17 @@ namespace fast_task {
     //same as semaphore but with checks
     class FT_API limiter {
         friend struct debug::_debug_collect;
-        struct FT_API_LOCAL resume_task;
         friend class mutex_unify;
 
         struct private_values {
             std::list<size_t> lock_check;
-            struct resume_task* begin = nullptr;
-            struct resume_task* end = nullptr;
-            fast_task::native::spin_lock no_race;
-            fast_task::native::condition_variable_any native_notify;
-            size_t allow_threshold = 1;
-            size_t max_threshold = 1;
-            bool locked = false;
+            fast_task::native::spin_lock lock_check_lock;
+            std::atomic_size_t state;
+            std::atomic_size_t max_threshold;
         } values;
 
         void unchecked_unlock();
-
-        static void push_back(private_values& values, resume_task* node);
-        static void erase(private_values& values, resume_task* node);
+        void check_deadlock(size_t lock_id);
 
     public:
         limiter();

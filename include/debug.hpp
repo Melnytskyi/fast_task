@@ -297,6 +297,10 @@ namespace fast_task::debug {
         bool writer_is_native;
         array<uintptr_t> reader_tasks_ids; //if this defined and `writer_task_id` defined the readers locking the writer
         array<awake_item> wait_tasks_ids;
+        // For each entry in `wait_tasks_ids`, the futex waiter key that the
+        // waiter registered with. For an rw_mutex this distinguishes readers
+        // (key 1) from writers (key 0). Same length as `wait_tasks_ids`.
+        array<uint8_t> wait_tasks_keys;
         raw_stack_trace* init_call_stack = nullptr;
 
         uintptr_t created_by_id;

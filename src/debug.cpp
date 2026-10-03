@@ -5,6 +5,7 @@
 // http://www.boost.org/LICENSE_1_0.txt)
 
 #include <debug.hpp>
+#include <experimental/futex.hpp>
 #include <file.hpp>
 
 #include <atomic>
@@ -151,6 +152,30 @@ namespace fast_task::debug {
             }
         }
 
+        struct rw_waiter_fill {
+            raw_rw_mutex_info* info;
+            debug_registry* reg;
+            size_t index;
+        };
+
+        static void fill_rw_waiter(void* address, void* data, const futex::waiter_info& waiter) {
+            auto* fill = reinterpret_cast<rw_waiter_fill*>(data);
+            raw_rw_mutex_info& info = *fill->info;
+            debug_registry& reg = *fill->reg;
+
+            awake_item& item = info.wait_tasks_ids[fill->index];
+            item.awake_check = 0;
+            if (waiter.is_native) {
+                item.native_awake = true;
+                item.id = waiter.task_id ^ native_thread_flag;
+            } else {
+                item.native_awake = false;
+                item.id = waiter.task_id ? reg.task_instances.at(waiter.task_id).virtual_id : FT_DEBUG_OPTIONAL;
+            }
+            info.wait_tasks_keys[fill->index] = waiter.key.data;
+            ++fill->index;
+        }
+
         static void collect_rw_mut_inst(program_state_dump& dump, debug_registry& reg) {
             size_t i = 0;
             dump.rw_mutexes = array<raw_rw_mutex_info>(reg.rw_mutex_instances.size());
@@ -158,37 +183,24 @@ namespace fast_task::debug {
                 auto& [id, trace, created_by_id, created_by_is_native] = ddata;
                 raw_rw_mutex_info& info = dump.rw_mutexes[i++];
                 info.mutex_id = id;
-                if (size_t(mutd->values.current_writer_task) & native_thread_flag) {
+
+                size_t writer = mutd->debug_writer_owner();
+                if (writer & native_thread_flag) {
                     info.writer_is_native = true;
-                    info.writer_id = size_t(mutd->values.current_writer_task) ^ native_thread_flag;
+                    info.writer_id = writer ^ native_thread_flag;
                 } else {
-                    info.writer_id = mutd->values.current_writer_task ? reg.task_instances.at(mutd->values.current_writer_task).virtual_id : FT_DEBUG_OPTIONAL;
+                    info.writer_id = writer ? reg.task_instances.at(writer).virtual_id : FT_DEBUG_OPTIONAL;
                     info.writer_is_native = false;
                 }
 
-                size_t coll = 0;
-                info.reader_tasks_ids = array<uintptr_t>(mutd->values.readers.size());
-                for (auto& it : mutd->values.readers)
-                    info.reader_tasks_ids[coll++] = reg.task_instances.at(it).virtual_id;
+                info.reader_tasks_ids = array<uintptr_t>(mutd->debug_reader_count());
 
-                coll = 0;
-                size_t count = 0;
-                auto iter = mutd->values.begin;
-                while (iter) {
-                    ++count;
-                    iter = iter->next;
-                }
-
+                size_t count = futex::iterate_waiters(&mutd->values.state, [](void*, void*, const futex::waiter_info&) {}, nullptr);
                 info.wait_tasks_ids = array<awake_item>(count);
-                iter = mutd->values.begin;
-                while (iter) {
-                    auto& it = *iter;
-                    info.wait_tasks_ids[coll++] = {
-                        .id = it.task ? reg.task_instances.at(it.task.get_id()).virtual_id : FT_DEBUG_OPTIONAL,
-                        .awake_check = it.awake_check,
-                        .native_awake = (bool)it.native_check
-                    };
-                    iter = iter->next;
+                info.wait_tasks_keys = array<uint8_t>(count);
+                if (count) {
+                    rw_waiter_fill fill{&info, &reg, 0};
+                    futex::iterate_waiters(&mutd->values.state, fill_rw_waiter, &fill);
                 }
                 info.created_by_id = created_by_id;
                 info.created_by_is_native = created_by_is_native;
@@ -808,6 +820,23 @@ namespace fast_task::debug {
                 ii << space << "id-" << it.id << ", awake_check-" << it.awake_check << std::endl;
     }
 
+    void FT_API dump_rw_await_(file::async_iofstream& ii, array<awake_item>& items, array<uint8_t>& keys, size_t t_count) {
+        std::string space(t_count, '\t');
+        ii << space << "Await items: " << std::endl;
+        space += '\t';
+        auto key_it = keys.begin();
+        auto key_end = keys.end();
+        for (auto& it : items) {
+            const char* role = (key_it != key_end && *key_it == 1) ? "reader" : "writer";
+            if (key_it != key_end)
+                ++key_it;
+            if (it.native_awake)
+                ii << space << role << " (native thread)" << std::endl;
+            else
+                ii << space << role << ", id-" << it.id << ", awake_check-" << it.awake_check << std::endl;
+        }
+    }
+
     void FT_API dump_task_ids_(file::async_iofstream& ii, array<uintptr_t>& items, size_t t_count) {
         std::string space(t_count + 1, '\t');
         for (auto& id : items)
@@ -891,7 +920,7 @@ namespace fast_task::debug {
                 ii << (it.writer_is_native ? " thread" : " task") << std::endl;
             ii << "\t\tReader tasks: " << std::endl;
             dump_task_ids_(ii, it.reader_tasks_ids, 2);
-            dump_await_(ii, it.wait_tasks_ids, 2);
+            dump_rw_await_(ii, it.wait_tasks_ids, it.wait_tasks_keys, 2);
         }
         for (auto& it : dump.semaphores) {
             ii << "\tSemaphore: " << it.semaphore_id << std::endl;
