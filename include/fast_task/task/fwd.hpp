@@ -26,7 +26,7 @@ namespace fast_task {
     class queue;
 
     struct task_promise_base;
-    struct task_base_coro_handle;
+    struct base_coro_handle;
 
     namespace debug {
         struct _debug_collect;

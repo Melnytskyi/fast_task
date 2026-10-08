@@ -123,10 +123,10 @@ TEST_F(TaskCvTest, AsyncWait) {
 
     run_task([&] {
         auto coro = [](auto& m, auto& cv, auto& ready, auto& completed) -> fast_task::task_coro<void> {
-            co_await async_lock(m);
+            co_await m.async_lock();
             fast_task::unique_lock lock(m, fast_task::adopt_lock);
             while (!ready)
-                co_await async_wait(cv, lock);
+                co_await cv.async_wait(lock);
             completed = true;
             co_return;
         }(m, cv, ready, completed);

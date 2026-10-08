@@ -12,6 +12,11 @@
 #include <functional>
 #include <mutex>
 
+#if __cplusplus >= 202002
+    #include "../coroutine/core.hpp"
+    #include "task.hpp"
+#endif
+
 namespace fast_task {
     class FT_API deadline_timer {
         friend struct debug::_debug_collect;
@@ -59,6 +64,88 @@ namespace fast_task {
         size_t expires_from_now(const std::chrono::duration<Rep, Period>& duration) {
             return expires_at(std::chrono::high_resolution_clock::now() + duration);
         }
+
+#if __cplusplus >= 202002
+        [[nodiscard]] auto async_wait() {
+            struct awaiter {
+                enter_state state;
+                deadline_timer& timer;
+                std::chrono::high_resolution_clock::time_point timeout_time;
+                task task_obj;
+
+                bool await_ready() noexcept {
+                    return timer.timed_out();
+                }
+
+                bool await_suspend(const base_coro_handle& h) {
+                    task_obj = h.promise->task_object;
+                    return !timer.enter_wait(task_obj, state, timeout_time);
+                }
+
+                deadline_timer::status await_resume() noexcept {
+                    if (!task_obj)
+                        return deadline_timer::status::timeouted;
+                    return timer.get_status(task_obj, timeout_time);
+                }
+            };
+
+            return awaiter{{}, *this, {}, {}};
+        }
+
+        [[nodiscard]] auto async_wait(fast_task::unique_lock<mutex_unify>& lock) {
+            struct awaiter {
+                enter_state state;
+                mutex_unify& mut;
+                deadline_timer& timer;
+                std::chrono::high_resolution_clock::time_point timeout_time;
+                task task_obj;
+
+                bool await_ready() noexcept {
+                    return timer.timed_out();
+                }
+
+                bool await_suspend(const base_coro_handle& h) {
+                    task_obj = h.promise->task_object;
+                    return !timer.enter_wait(mut, task_obj, state, timeout_time);
+                }
+
+                deadline_timer::status await_resume() noexcept {
+                    if (!task_obj)
+                        return deadline_timer::status::timeouted;
+                    return timer.get_status(task_obj, timeout_time);
+                }
+            };
+
+            return awaiter{{}, *lock.mutex(), *this, {}, {}};
+        }
+
+        [[nodiscard]] auto async_wait(std::unique_lock<mutex_unify>& lock) {
+            struct awaiter {
+                enter_state state;
+                mutex_unify& mut;
+                deadline_timer& timer;
+                std::chrono::high_resolution_clock::time_point timeout_time;
+                task task_obj;
+
+                bool await_ready() noexcept {
+                    return timer.timed_out();
+                }
+
+                bool await_suspend(const base_coro_handle& h) {
+                    task_obj = h.promise->task_object;
+                    return !timer.enter_wait(mut, task_obj, state, timeout_time);
+                }
+
+                deadline_timer::status await_resume() noexcept {
+                    if (!task_obj)
+                        return deadline_timer::status::timeouted;
+                    return timer.get_status(task_obj, timeout_time);
+                }
+            };
+
+            return awaiter{{}, *lock.mutex(), *this, {}, {}};
+        }
+#endif
     };
 }
 #endif /* FAST_TASK_INCLUDE_TASK_DEADLINE_TIMER */

@@ -13,6 +13,9 @@
     #include "scheduler.hpp"
     #include "task.hpp"
 
+    #if __cplusplus >= 202002
+        #include "../coroutine/core.hpp"
+    #endif
 namespace fast_task {
     template <class T>
     class future : public std::enable_shared_from_this<future<T>> {
@@ -666,5 +669,103 @@ namespace fast_task {
     auto make_ready_future(T&& value) {
         return future<std::remove_reference_t<std::remove_cv_t<T>>>::make_ready(std::forward<T>(value));
     }
+
+    #if __cplusplus >= 202002
+    namespace detail {
+        template <class T>
+        struct future_mov_result_awaiter {
+            enter_state state;
+            future_ptr<T> t;
+
+            bool await_ready() noexcept {
+                return t->is_ready();
+            }
+
+            template <class Promise>
+            bool await_suspend(std::coroutine_handle<Promise> h) {
+                if constexpr (std::derived_from<Promise, task_promise_base>) {
+                    return !t->enter_wait(h.promise().task_object, state);
+                } else {
+                    static task_vtable vt = {
+                        nullptr, //no special treatment for the on_await
+                        nullptr, //no special treatment for the on_cancel, the flag set automatically
+                        [](void* handle_addr) {
+                            std::coroutine_handle<>::from_address(handle_addr).resume();
+                        },
+                        nullptr,
+                        nullptr,
+                        false
+                    };
+                    auto bridge_task = fast_task::task(
+                        h.address(),
+                        &vt,
+                        false,
+                        true
+                    );
+                    if (t->is_ready())
+                        return false;
+                    t->callback(bridge_task);
+                    return true;
+                }
+            }
+
+            auto await_resume() {
+                return t->take();
+            }
+        };
+
+        template <class T>
+        struct future_cop_result_awaiter {
+            enter_state state;
+            future_ptr<T> t;
+
+            bool await_ready() noexcept {
+                return t->is_ready();
+            }
+
+            template <class Promise>
+            bool await_suspend(std::coroutine_handle<Promise> h) {
+                if constexpr (std::derived_from<Promise, task_promise_base>) {
+                    return !t->enter_wait(h.promise().task_object, state);
+                } else {
+                    static task_vtable vt = {
+                        nullptr, //no special treatment for the on_await
+                        nullptr, //no special treatment for the on_cancel, the flag set automatically
+                        [](void* handle_addr) {
+                            std::coroutine_handle<>::from_address(handle_addr).resume();
+                        },
+                        nullptr,
+                        nullptr,
+                        false
+                    };
+                    auto bridge_task = fast_task::task(
+                        h.address(),
+                        &vt,
+                        false,
+                        true
+                    );
+                    if (t->is_ready())
+                        return false;
+                    t->callback(bridge_task);
+                    return true;
+                }
+            }
+
+            auto await_resume() {
+                return t->get();
+            }
+        };
+    }
+
+    template <class T>
+    inline auto operator co_await(future_ptr<T>&& t) noexcept {
+        return detail::future_mov_result_awaiter{{}, std::move(t)};
+    }
+
+    template <class T>
+    inline auto operator co_await(const future_ptr<T>& t) noexcept {
+        return detail::future_cop_result_awaiter{{}, std::move(t)};
+    }
+    #endif
 }
 #endif

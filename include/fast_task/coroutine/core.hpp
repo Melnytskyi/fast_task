@@ -374,7 +374,7 @@ namespace fast_task {
     class task_auto_start_coro : public task_coro<T> {
     public:
         task_auto_start_coro(task t) : task_coro<T>(std::move(t)) {
-            scheduler::start(task_coro<T>::task_handle);
+            task_coro<T>::task_handle.start();
         }
 
         task_auto_start_coro(task_auto_start_coro&&) noexcept = default;

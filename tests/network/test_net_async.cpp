@@ -4,7 +4,7 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
-#include <fast_task/coroutine/net.hpp>
+#include <fast_task/net.hpp>
 #include <helpers.hpp>
 
 #include <array>
@@ -37,27 +37,27 @@ TEST_F(NetAsyncTest, TcpAsyncConnectSendRecv) {
         const std::string msg = "hello async tcp";
 
         auto server = [&]() -> ft::task_coro<std::string> {
-            auto conn = co_await async_accept(*listener);
+            auto conn = co_await listener->async_accept();
             if (!conn.has_value())
                 co_return std::string{};
 
             std::vector<uint8_t> buf(64, 0);
-            int32_t n = co_await async_recv(*conn, std::span(buf));
+            int32_t n = co_await conn->async_recv(std::span(buf));
             std::string out;
             if (n > 0)
                 out.assign(buf.begin(), buf.begin() + n);
 
-            co_await async_close(*conn);
+            co_await conn->async_close();
             co_return out;
         };
 
         auto client = [&]() -> ft::task_coro<bool> {
-            auto sock = co_await async_connect(address("127.0.0.1", port));
+            auto sock = co_await tcp_socket::async_connect(address("127.0.0.1", port));
             if (!sock.has_value())
                 co_return false;
 
-            int32_t sent = co_await async_send(*sock, as_bytes(msg));
-            co_await async_close(*sock);
+            int32_t sent = co_await sock->async_send(as_bytes(msg));
+            co_await sock->async_close();
             co_return sent == static_cast<int32_t>(msg.size());
         };
 
@@ -87,7 +87,7 @@ TEST_F(NetAsyncTest, TcpAsyncVectored) {
         uint16_t port = listener->local_address().port();
 
         auto server = [&]() -> ft::task_coro<std::vector<uint8_t>> {
-            auto conn = co_await async_accept(*listener);
+            auto conn = co_await listener->async_accept();
             if (!conn.has_value())
                 co_return std::vector<uint8_t>{};
 
@@ -98,7 +98,7 @@ TEST_F(NetAsyncTest, TcpAsyncVectored) {
             std::vector<uint8_t> out;
             int32_t received = 0;
             while (received < 5) {
-                int32_t n = co_await async_recvv(*conn, std::span(rbufs));
+                int32_t n = co_await conn->async_recvv(std::span(rbufs));
                 if (n <= 0)
                     break;
                 received += n;
@@ -106,19 +106,19 @@ TEST_F(NetAsyncTest, TcpAsyncVectored) {
             out.insert(out.end(), r1.begin(), r1.end());
             out.insert(out.end(), r2.begin(), r2.end());
 
-            co_await async_close(*conn);
+            co_await conn->async_close();
             co_return out;
         };
 
         auto client = [&]() -> ft::task_coro<void> {
-            auto sock = co_await async_connect(address("127.0.0.1", port));
+            auto sock = co_await tcp_socket::async_connect(address("127.0.0.1", port));
             if (sock.has_value()) {
                 const uint8_t a[] = {1, 2, 3};
                 const uint8_t b[] = {4, 5};
                 std::array<std::span<const uint8_t>, 2> sbufs{std::span<const uint8_t>(a, 3),
                                                               std::span<const uint8_t>(b, 2)};
-                co_await async_sendv(*sock, std::span(sbufs));
-                co_await async_close(*sock);
+                co_await sock->async_sendv(std::span(sbufs));
+                co_await sock->async_close();
             }
             co_return;
         };
@@ -156,27 +156,27 @@ TEST_F(NetAsyncTest, TcpSafeSendRecv) {
         const std::string msg = "safe payload";
 
         auto server = [&]() -> ft::task_coro<std::string> {
-            auto conn = co_await async_accept(*listener);
+            auto conn = co_await listener->async_accept();
             if (!conn.has_value())
                 co_return std::string{};
 
             std::vector<uint8_t> buf(64, 0);
-            auto res = co_await safe_async_recv(*conn, std::span(buf));
+            auto res = co_await conn->safe_async_recv(std::span(buf));
             std::string out;
             if (res.has_value() && *res > 0)
                 out.assign(buf.begin(), buf.begin() + *res);
 
-            co_await async_close(*conn);
+            co_await conn->async_close();
             co_return out;
         };
 
         auto client = [&]() -> ft::task_coro<bool> {
-            auto sock = co_await async_connect(address("127.0.0.1", port));
+            auto sock = co_await tcp_socket::async_connect(address("127.0.0.1", port));
             if (!sock.has_value())
                 co_return false;
 
-            auto res = co_await safe_async_send(*sock, as_bytes(msg));
-            co_await async_close(*sock);
+            auto res = co_await sock->safe_async_send(as_bytes(msg));
+            co_await sock->async_close();
             co_return res.has_value() && *res == static_cast<int32_t>(msg.size());
         };
 
@@ -214,14 +214,14 @@ TEST_F(NetAsyncTest, UdpAsyncSendRecv) {
         auto recv_side = [&]() -> ft::task_coro<std::string> {
             std::array<uint8_t, 64> buf{};
             address from;
-            uint32_t n = co_await async_recv(*server, std::span(buf), from);
+            uint32_t n = co_await server->async_recv(std::span(buf), from);
             std::string out(reinterpret_cast<char*>(buf.data()), static_cast<size_t>(n));
             EXPECT_EQ(from.port(), client_port);
             co_return out;
         };
 
         auto send_side = [&]() -> ft::task_coro<uint32_t> {
-            co_return co_await async_send(*client, as_bytes(msg), address("127.0.0.1", server_port));
+            co_return co_await client->async_send(as_bytes(msg), address("127.0.0.1", server_port));
         };
 
         auto recv_coro = recv_side();
@@ -258,12 +258,12 @@ TEST_F(NetAsyncTest, UdpPeerAsyncSendRecv) {
         auto recv_side = [&]() -> ft::task_coro<std::string> {
             std::array<uint8_t, 64> buf{};
             address from;
-            uint32_t n = co_await async_recv(*server, std::span(buf), from);
+            uint32_t n = co_await server->async_recv(std::span(buf), from);
             co_return std::string(reinterpret_cast<char*>(buf.data()), static_cast<size_t>(n));
         };
 
         auto send_side = [&]() -> ft::task_coro<uint32_t> {
-            co_return co_await async_send(*peer, as_bytes(msg));
+            co_return co_await peer->async_send(as_bytes(msg));
         };
 
         auto recv_coro = recv_side();
@@ -288,7 +288,7 @@ TEST_F(NetAsyncTest, UdpPeerAsyncSendRecv) {
 
 TEST_F(NetAsyncTest, AsyncResolveLoopback) {
     auto resolver = [&]() -> ft::task_coro<bool> {
-        auto addr = co_await async_resolve("127.0.0.1", "0");
+        auto addr = co_await address::async_resolve("127.0.0.1", "0");
         co_return addr.is_loopback();
     };
 
@@ -301,7 +301,7 @@ TEST_F(NetAsyncTest, AsyncResolveLoopback) {
 
 TEST_F(NetAsyncTest, SafeAsyncResolveLoopback) {
     auto resolver = [&]() -> ft::task_coro<bool> {
-        auto res = co_await safe_async_resolve("127.0.0.1", "0");
+        auto res = co_await address::safe_async_resolve("127.0.0.1", "0");
         co_return res.has_value() && res->is_loopback();
     };
 

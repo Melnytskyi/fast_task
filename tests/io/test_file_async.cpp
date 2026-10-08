@@ -4,7 +4,6 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
-#include <fast_task/coroutine/file.hpp>
 #include <fast_task/file.hpp>
 #include <helpers.hpp>
 
@@ -110,10 +109,10 @@ TEST_F(FileAsyncTest, AsyncWriteAndRead) {
     auto test = [&] -> fast_task::task_coro<std::string> {
         auto f = ff::file_handle::open(tmp_path, ff::open_mode::read_write, ff::on_open_action::always_new);
 
-        co_await async_write(f, reinterpret_cast<const uint8_t*>(expected.data()), static_cast<uint32_t>(expected.size()));
+        co_await f.async_write(reinterpret_cast<const uint8_t*>(expected.data()), static_cast<uint32_t>(expected.size()));
         f.seek_pos(0, ff::pointer_offset::begin);
 
-        auto data = co_await async_read(f, expected.size());
+        auto data = co_await f.async_read(expected.size());
         co_return std::string(data.begin(), data.end());
     };
 
@@ -128,12 +127,12 @@ TEST_F(FileAsyncTest, AsyncWriteAt) {
         auto f = ff::file_handle::open(tmp_path, ff::open_mode::read_write, ff::on_open_action::always_new);
 
         const uint8_t zeros[8]{};
-        co_await async_write(f, zeros, 8);
+        co_await f.async_write(zeros, 8);
 
         const uint8_t val[] = {0xDE, 0xAD};
-        co_await async_write_at(f, 3, val, 2);
+        co_await f.async_write_at(3, val, 2);
 
-        co_return co_await async_read_at(f, 3, 2);
+        co_return co_await f.async_read_at(3, 2);
     };
 
     auto data = test().sync_get();

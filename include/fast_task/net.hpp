@@ -11,66 +11,16 @@
 #include <functional>
 #include <span>
 
+#if __cplusplus >= 202002
+    #include "coroutine/core.hpp"
+    #include "polyfill/expected.hpp"
+#endif
+
 namespace fast_task::file {
     class file_handle;
 }
 
 namespace fast_task::net {
-    struct opaque_network_state;
-
-    class FT_API address {
-        char data[128]{0};
-
-        friend address to_address(void* addr);
-        address(void* ip);
-
-    public:
-        static address any();
-        static address any(uint16_t port);
-        address();
-        address(std::string_view ip_port);
-        address(std::string_view ip, uint16_t port);
-        address(const address& ip);
-        address(address&& ip) noexcept;
-        ~address();
-
-        address& operator=(const address& ip);
-        address& operator=(address&& ip) noexcept;
-
-
-        enum class family : uint8_t {
-            none,
-            ipv4,
-            ipv6,
-            other
-        };
-
-        static address resolve(std::string_view host, std::string_view service, address::family preferred_family = address::family::none);
-        static address resolve(std::string_view host, std::string_view service, uint16_t port, address::family preferred_family = address::family::none);
-        static std::vector<address> resolve_multiple(std::string_view host, std::string_view service, address::family preferred_family = address::family::none);
-        static std::vector<address> resolve_multiple(std::string_view host, std::string_view service, uint16_t port, address::family preferred_family = address::family::none);
-
-        family get_family() const noexcept;
-        uint16_t port() const noexcept;
-
-        std::string to_string() const;
-
-        bool operator==(const address& other) const noexcept;
-        bool operator!=(const address& other) const noexcept;
-
-        void* get_data() const noexcept {
-            return (void*)data;
-        }
-
-        bool is_loopback() const noexcept;
-        static size_t data_size() noexcept;
-
-        static bool enter_resolve(const task& t, opaque_network_state& state, address& res, std::string_view host, std::string_view service, address::family preferred_family = address::family::none);
-        static bool enter_resolve(const task& t, opaque_network_state& state, address& res, std::string_view host, std::string_view service, uint16_t port, address::family preferred_family = address::family::none);
-        static bool enter_resolve_multiple(const task& t, opaque_network_state& state, std::vector<address>& res, std::string_view host, std::string_view service, address::family preferred_family = address::family::none);
-        static bool enter_resolve_multiple(const task& t, opaque_network_state& state, std::vector<address>& res, std::string_view host, std::string_view service, uint16_t port, address::family preferred_family = address::family::none);
-    };
-
     struct FT_API tcp_configuration {
         uint32_t recv_timeout_ms = 2000;
         uint32_t send_timeout_ms = 2000;
@@ -138,6 +88,201 @@ namespace fast_task::net {
         std::error_code get_error_code() const noexcept;
     };
 
+    namespace detail {
+        // Awaiter that drives a network "enter_*" operation which produces a value.
+        // The operation is started lazily on suspension, so an unawaited awaiter is a no-op.
+        template <class Result, class Starter>
+        struct [[nodiscard("network operations must be awaited")]] value_awaiter {
+            Starter start;
+            opaque_network_state state{};
+            Result result{};
+
+            bool await_ready() const noexcept {
+                return false;
+            }
+
+            bool await_suspend(const base_coro_handle& h) {
+                return !start(h.promise->task_object, state, result);
+            }
+
+            Result await_resume() {
+                return std::move(result);
+            }
+        };
+
+        template <class Result, class Starter>
+        struct [[nodiscard("network operations must be awaited")]] safe_value_awaiter {
+            Starter start;
+            opaque_network_state state{};
+            Result result{};
+
+            bool await_ready() const noexcept {
+                return false;
+            }
+
+            bool await_suspend(const base_coro_handle& h) {
+                return !start(h.promise->task_object, state, result);
+            }
+
+            polyfill::expected<Result, std::error_code> await_resume() {
+                if (auto ec = state.get_error_code())
+                    return polyfill::unexpected(ec);
+                return std::move(result);
+            }
+        };
+
+        // Awaiter for "enter_*" operations without a meaningful return value.
+        template <class Starter>
+        struct [[nodiscard("network operations must be awaited")]] void_awaiter {
+            Starter start;
+            opaque_network_state state{};
+
+            bool await_ready() const noexcept {
+                return false;
+            }
+
+            bool await_suspend(const base_coro_handle& h) {
+                return !start(h.promise->task_object, state);
+            }
+
+            void await_resume() {}
+        };
+
+        template <class Result, class Starter>
+        value_awaiter<Result, std::decay_t<Starter>> make_value_awaiter(Starter&& s) {
+            return value_awaiter<Result, std::decay_t<Starter>>{std::forward<Starter>(s)};
+        }
+
+        template <class Result, class Starter>
+        safe_value_awaiter<Result, std::decay_t<Starter>> make_safe_value_awaiter(Starter&& s) {
+            return safe_value_awaiter<Result, std::decay_t<Starter>>{std::forward<Starter>(s)};
+        }
+
+        template <class Starter>
+        void_awaiter<std::decay_t<Starter>> make_void_awaiter(Starter&& s) {
+            return void_awaiter<std::decay_t<Starter>>{std::forward<Starter>(s)};
+        }
+    }
+
+    class FT_API address {
+        char data[128]{0};
+
+        friend address to_address(void* addr);
+        address(void* ip);
+
+    public:
+        static address any();
+        static address any(uint16_t port);
+        address();
+        address(std::string_view ip_port);
+        address(std::string_view ip, uint16_t port);
+        address(const address& ip);
+        address(address&& ip) noexcept;
+        ~address();
+
+        address& operator=(const address& ip);
+        address& operator=(address&& ip) noexcept;
+
+
+        enum class family : uint8_t {
+            none,
+            ipv4,
+            ipv6,
+            other
+        };
+
+        static address resolve(std::string_view host, std::string_view service, address::family preferred_family = address::family::none);
+        static address resolve(std::string_view host, std::string_view service, uint16_t port, address::family preferred_family = address::family::none);
+        static std::vector<address> resolve_multiple(std::string_view host, std::string_view service, address::family preferred_family = address::family::none);
+        static std::vector<address> resolve_multiple(std::string_view host, std::string_view service, uint16_t port, address::family preferred_family = address::family::none);
+
+        family get_family() const noexcept;
+        uint16_t port() const noexcept;
+
+        std::string to_string() const;
+
+        bool operator==(const address& other) const noexcept;
+        bool operator!=(const address& other) const noexcept;
+
+        void* get_data() const noexcept {
+            return (void*)data;
+        }
+
+        bool is_loopback() const noexcept;
+        static size_t data_size() noexcept;
+
+        static bool enter_resolve(const task& t, opaque_network_state& state, address& res, std::string_view host, std::string_view service, address::family preferred_family = address::family::none);
+        static bool enter_resolve(const task& t, opaque_network_state& state, address& res, std::string_view host, std::string_view service, uint16_t port, address::family preferred_family = address::family::none);
+        static bool enter_resolve_multiple(const task& t, opaque_network_state& state, std::vector<address>& res, std::string_view host, std::string_view service, address::family preferred_family = address::family::none);
+        static bool enter_resolve_multiple(const task& t, opaque_network_state& state, std::vector<address>& res, std::string_view host, std::string_view service, uint16_t port, address::family preferred_family = address::family::none);
+
+#if __cplusplus >= 202002
+        static auto async_resolve(std::string_view host, std::string_view service, address::family preferred_family = address::family::none) {
+            return detail::make_value_awaiter<address>(
+                [host, service, preferred_family](const task& t, opaque_network_state& st, address& r) {
+                    return address::enter_resolve(t, st, r, host, service, preferred_family);
+                }
+            );
+        }
+
+        static auto async_resolve(std::string_view host, std::string_view service, uint16_t port, address::family preferred_family = address::family::none) {
+            return detail::make_value_awaiter<address>(
+                [host, service, port, preferred_family](const task& t, opaque_network_state& st, address& r) {
+                    return address::enter_resolve(t, st, r, host, service, port, preferred_family);
+                }
+            );
+        }
+
+        static auto async_resolve_multiple(std::string_view host, std::string_view service, address::family preferred_family = address::family::none) {
+            return detail::make_value_awaiter<std::vector<address>>(
+                [host, service, preferred_family](const task& t, opaque_network_state& st, std::vector<address>& r) {
+                    return address::enter_resolve_multiple(t, st, r, host, service, preferred_family);
+                }
+            );
+        }
+
+        static auto async_resolve_multiple(std::string_view host, std::string_view service, uint16_t port, address::family preferred_family = address::family::none) {
+            return detail::make_value_awaiter<std::vector<address>>(
+                [host, service, port, preferred_family](const task& t, opaque_network_state& st, std::vector<address>& r) {
+                    return address::enter_resolve_multiple(t, st, r, host, service, port, preferred_family);
+                }
+            );
+        }
+
+        static auto safe_async_resolve(std::string_view host, std::string_view service, address::family preferred_family = address::family::none) {
+            return detail::make_safe_value_awaiter<address>(
+                [host, service, preferred_family](const task& t, opaque_network_state& st, address& r) {
+                    return address::enter_resolve(t, st, r, host, service, preferred_family);
+                }
+            );
+        }
+
+        static auto safe_async_resolve(std::string_view host, std::string_view service, uint16_t port, address::family preferred_family = address::family::none) {
+            return detail::make_safe_value_awaiter<address>(
+                [host, service, port, preferred_family](const task& t, opaque_network_state& st, address& r) {
+                    return address::enter_resolve(t, st, r, host, service, port, preferred_family);
+                }
+            );
+        }
+
+        static auto safe_async_resolve_multiple(std::string_view host, std::string_view service, address::family preferred_family = address::family::none) {
+            return detail::make_safe_value_awaiter<std::vector<address>>(
+                [host, service, preferred_family](const task& t, opaque_network_state& st, std::vector<address>& r) {
+                    return address::enter_resolve_multiple(t, st, r, host, service, preferred_family);
+                }
+            );
+        }
+
+        static auto safe_async_resolve_multiple(std::string_view host, std::string_view service, uint16_t port, address::family preferred_family = address::family::none) {
+            return detail::make_safe_value_awaiter<std::vector<address>>(
+                [host, service, port, preferred_family](const task& t, opaque_network_state& st, std::vector<address>& r) {
+                    return address::enter_resolve_multiple(t, st, r, host, service, port, preferred_family);
+                }
+            );
+        }
+#endif
+    };
+
     class FT_API tcp_socket {
         class manager;
         std::unique_ptr<manager> handle;
@@ -189,6 +334,144 @@ namespace fast_task::net {
         bool enter_shutdown(const task& t, opaque_network_state& state, shutdown_mode mode);
         bool enter_reset(const task& t, opaque_network_state& state); //TCP RST
         bool enter_close(const task& t, opaque_network_state& state); //shutdown + reset
+
+#if __cplusplus >= 202002
+        static auto async_connect(const address& ip_port, const tcp_configuration& config = {}) {
+            return detail::make_value_awaiter<std::optional<tcp_socket>>(
+                [ip_port, config](const task& t, opaque_network_state& st, std::optional<tcp_socket>& r) {
+                    return tcp_socket::enter_connect(t, st, r, ip_port, config);
+                }
+            );
+        }
+
+        static auto async_connect(const address& ip_port, uint8_t* data, int32_t& size, const tcp_configuration& config = {}) {
+            return detail::make_value_awaiter<std::optional<tcp_socket>>(
+                [ip_port, data, &size, config](const task& t, opaque_network_state& st, std::optional<tcp_socket>& r) {
+                    return tcp_socket::enter_connect(t, st, r, ip_port, data, size, config);
+                }
+            );
+        }
+
+        inline auto async_recv(std::span<uint8_t> data) {
+            return detail::make_value_awaiter<int32_t>(
+                [this, data](const task& t, opaque_network_state& st, int32_t& r) {
+                    return enter_recv(t, st, r, data);
+                }
+            );
+        }
+
+        inline auto async_recvv(std::span<std::span<uint8_t>> data) {
+            return detail::make_value_awaiter<int32_t>(
+                [this, data](const task& t, opaque_network_state& st, int32_t& r) {
+                    return enter_recvv(t, st, r, data);
+                }
+            );
+        }
+
+        inline auto async_send(std::span<const uint8_t> data) {
+            return detail::make_value_awaiter<int32_t>(
+                [this, data](const task& t, opaque_network_state& st, int32_t& r) {
+                    return enter_send(t, st, r, data);
+                }
+            );
+        }
+
+        inline auto async_sendv(std::span<const std::span<const uint8_t>> data) {
+            return detail::make_value_awaiter<int32_t>(
+                [this, data](const task& t, opaque_network_state& st, int32_t& r) {
+                    return enter_sendv(t, st, r, data);
+                }
+            );
+        }
+
+        inline auto async_send_file(const char* file_path, size_t file_path_len, uint32_t data_len, uint64_t offset, uint32_t chunks_size) {
+            return detail::make_value_awaiter<int32_t>(
+                [this, file_path, file_path_len, data_len, offset, chunks_size](const task& t, opaque_network_state& st, int32_t& r) {
+                    return enter_send_file(t, st, r, file_path, file_path_len, data_len, offset, chunks_size);
+                }
+            );
+        }
+
+        inline auto async_send_file(file::file_handle& file, uint32_t data_len, uint64_t offset, uint32_t chunks_size) {
+            return detail::make_value_awaiter<int32_t>(
+                [this, &file, data_len, offset, chunks_size](const task& t, opaque_network_state& st, int32_t& r) {
+                    return enter_send_file(t, st, r, file, data_len, offset, chunks_size);
+                }
+            );
+        }
+
+        inline auto async_sendv_file(std::span<const uint8_t> prefix, std::span<const uint8_t> postfix, const char* file_path, size_t file_path_len, uint32_t data_len, uint64_t offset, uint32_t chunks_size) {
+            return detail::make_value_awaiter<int32_t>(
+                [this, prefix, postfix, file_path, file_path_len, data_len, offset, chunks_size](const task& t, opaque_network_state& st, int32_t& r) {
+                    return enter_sendv_file(t, st, r, prefix, postfix, file_path, file_path_len, data_len, offset, chunks_size);
+                }
+            );
+        }
+
+        inline auto async_sendv_file(std::span<const uint8_t> prefix, std::span<const uint8_t> postfix, file::file_handle& file, uint32_t data_len, uint64_t offset, uint32_t chunks_size) {
+            return detail::make_value_awaiter<int32_t>(
+                [this, prefix, postfix, &file, data_len, offset, chunks_size](const task& t, opaque_network_state& st, int32_t& r) {
+                    return enter_sendv_file(t, st, r, prefix, postfix, file, data_len, offset, chunks_size);
+                }
+            );
+        }
+
+        inline auto async_shutdown(shutdown_mode mode) {
+            return detail::make_void_awaiter(
+                [this, mode](const task& t, opaque_network_state& st) {
+                    return enter_shutdown(t, st, mode);
+                }
+            );
+        }
+
+        inline auto async_reset() {
+            return detail::make_void_awaiter(
+                [this](const task& t, opaque_network_state& st) {
+                    return enter_reset(t, st);
+                }
+            );
+        }
+
+        inline auto async_close() {
+            return detail::make_void_awaiter(
+                [this](const task& t, opaque_network_state& st) {
+                    return enter_close(t, st);
+                }
+            );
+        }
+
+        inline auto safe_async_recv(std::span<uint8_t> data) {
+            return detail::make_safe_value_awaiter<int32_t>(
+                [this, data](const task& t, opaque_network_state& st, int32_t& r) {
+                    return enter_recv(t, st, r, data);
+                }
+            );
+        }
+
+        inline auto safe_async_recvv(std::span<std::span<uint8_t>> data) {
+            return detail::make_safe_value_awaiter<int32_t>(
+                [this, data](const task& t, opaque_network_state& st, int32_t& r) {
+                    return enter_recvv(t, st, r, data);
+                }
+            );
+        }
+
+        inline auto safe_async_send(std::span<const uint8_t> data) {
+            return detail::make_safe_value_awaiter<int32_t>(
+                [this, data](const task& t, opaque_network_state& st, int32_t& r) {
+                    return enter_send(t, st, r, data);
+                }
+            );
+        }
+
+        inline auto safe_async_sendv(std::span<const std::span<const uint8_t>> data) {
+            return detail::make_safe_value_awaiter<int32_t>(
+                [this, data](const task& t, opaque_network_state& st, int32_t& r) {
+                    return enter_sendv(t, st, r, data);
+                }
+            );
+        }
+#endif
     };
 
     class FT_API tcp_listener {
@@ -212,6 +495,24 @@ namespace fast_task::net {
 
         bool enter_accept(const task& t, opaque_network_state& state, std::optional<tcp_socket>& res);
         bool enter_close(const task& t, opaque_network_state& state);
+
+#if __cplusplus >= 202002
+        inline auto async_accept() {
+            return detail::make_value_awaiter<std::optional<tcp_socket>>(
+                [this](const task& t, opaque_network_state& st, std::optional<tcp_socket>& r) {
+                    return enter_accept(t, st, r);
+                }
+            );
+        }
+
+        inline auto async_close() {
+            return detail::make_void_awaiter(
+                [this](const task& t, opaque_network_state& st) {
+                    return enter_close(t, st);
+                }
+            );
+        }
+#endif
     };
 
     struct FT_API udp_configuration {
@@ -260,6 +561,80 @@ namespace fast_task::net {
         bool enter_recvv(const task& t, opaque_network_state& state, uint32_t& bytes_read, std::span<std::span<uint8_t>> buffers, address& sender);
         bool enter_sendv(const task& t, opaque_network_state& state, uint32_t& bytes_sent, std::span<const std::span<const uint8_t>> data, const address& to);
         bool enter_close(const task& t, opaque_network_state& state);
+
+#if __cplusplus >= 202002
+        inline auto async_recv(std::span<uint8_t> data, address& sender) {
+            return detail::make_value_awaiter<uint32_t>(
+                [this, data, &sender](const task& t, opaque_network_state& st, uint32_t& r) {
+                    return enter_recv(t, st, r, data, sender);
+                }
+            );
+        }
+
+        inline auto async_send(std::span<const uint8_t> data, const address& to) {
+            return detail::make_value_awaiter<uint32_t>(
+                [this, data, to](const task& t, opaque_network_state& st, uint32_t& r) {
+                    return enter_send(t, st, r, data, to);
+                }
+            );
+        }
+
+        inline auto async_recvv(std::span<std::span<uint8_t>> buffers, address& sender) {
+            return detail::make_value_awaiter<uint32_t>(
+                [this, buffers, &sender](const task& t, opaque_network_state& st, uint32_t& r) {
+                    return enter_recvv(t, st, r, buffers, sender);
+                }
+            );
+        }
+
+        inline auto async_sendv(std::span<const std::span<const uint8_t>> data, const address& to) {
+            return detail::make_value_awaiter<uint32_t>(
+                [this, data, to](const task& t, opaque_network_state& st, uint32_t& r) {
+                    return enter_sendv(t, st, r, data, to);
+                }
+            );
+        }
+
+        inline auto async_close() {
+            return detail::make_void_awaiter(
+                [this](const task& t, opaque_network_state& st) {
+                    return enter_close(t, st);
+                }
+            );
+        }
+
+        inline auto safe_async_recv(std::span<uint8_t> data, address& sender) {
+            return detail::make_safe_value_awaiter<uint32_t>(
+                [this, data, &sender](const task& t, opaque_network_state& st, uint32_t& r) {
+                    return enter_recv(t, st, r, data, sender);
+                }
+            );
+        }
+
+        inline auto safe_async_send(std::span<const uint8_t> data, const address& to) {
+            return detail::make_safe_value_awaiter<uint32_t>(
+                [this, data, to](const task& t, opaque_network_state& st, uint32_t& r) {
+                    return enter_send(t, st, r, data, to);
+                }
+            );
+        }
+
+        inline auto safe_async_recvv(std::span<std::span<uint8_t>> buffers, address& sender) {
+            return detail::make_safe_value_awaiter<uint32_t>(
+                [this, buffers, &sender](const task& t, opaque_network_state& st, uint32_t& r) {
+                    return enter_recvv(t, st, r, buffers, sender);
+                }
+            );
+        }
+
+        inline auto safe_async_sendv(std::span<const std::span<const uint8_t>> data, const address& to) {
+            return detail::make_safe_value_awaiter<uint32_t>(
+                [this, data, to](const task& t, opaque_network_state& st, uint32_t& r) {
+                    return enter_sendv(t, st, r, data, to);
+                }
+            );
+        }
+#endif
     };
 
     //Slightly faster than regular udp socket for connected UDP communication,
@@ -290,6 +665,80 @@ namespace fast_task::net {
         bool enter_recvv(const task& t, opaque_network_state& state, uint32_t& bytes_read, std::span<std::span<uint8_t>> buffers);
         bool enter_sendv(const task& t, opaque_network_state& state, uint32_t& bytes_sent, std::span<const std::span<const uint8_t>> data);
         bool enter_close(const task& t, opaque_network_state& state);
+
+#if __cplusplus >= 202002
+        inline auto async_recv(std::span<uint8_t> data) {
+            return detail::make_value_awaiter<uint32_t>(
+                [this, data](const task& t, opaque_network_state& st, uint32_t& r) {
+                    return enter_recv(t, st, r, data);
+                }
+            );
+        }
+
+        inline auto async_send(std::span<const uint8_t> data) {
+            return detail::make_value_awaiter<uint32_t>(
+                [this, data](const task& t, opaque_network_state& st, uint32_t& r) {
+                    return enter_send(t, st, r, data);
+                }
+            );
+        }
+
+        inline auto async_recvv(std::span<std::span<uint8_t>> buffers) {
+            return detail::make_value_awaiter<uint32_t>(
+                [this, buffers](const task& t, opaque_network_state& st, uint32_t& r) {
+                    return enter_recvv(t, st, r, buffers);
+                }
+            );
+        }
+
+        inline auto async_sendv(std::span<const std::span<const uint8_t>> data) {
+            return detail::make_value_awaiter<uint32_t>(
+                [this, data](const task& t, opaque_network_state& st, uint32_t& r) {
+                    return enter_sendv(t, st, r, data);
+                }
+            );
+        }
+
+        inline auto async_close() {
+            return detail::make_void_awaiter(
+                [this](const task& t, opaque_network_state& st) {
+                    return enter_close(t, st);
+                }
+            );
+        }
+
+        inline auto safe_async_recv(std::span<uint8_t> data) {
+            return detail::make_safe_value_awaiter<uint32_t>(
+                [this, data](const task& t, opaque_network_state& st, uint32_t& r) {
+                    return enter_recv(t, st, r, data);
+                }
+            );
+        }
+
+        inline auto safe_async_send(std::span<const uint8_t> data) {
+            return detail::make_safe_value_awaiter<uint32_t>(
+                [this, data](const task& t, opaque_network_state& st, uint32_t& r) {
+                    return enter_send(t, st, r, data);
+                }
+            );
+        }
+
+        inline auto safe_async_recvv(std::span<std::span<uint8_t>> buffers) {
+            return detail::make_safe_value_awaiter<uint32_t>(
+                [this, buffers](const task& t, opaque_network_state& st, uint32_t& r) {
+                    return enter_recvv(t, st, r, buffers);
+                }
+            );
+        }
+
+        inline auto safe_async_sendv(std::span<const std::span<const uint8_t>> data) {
+            return detail::make_safe_value_awaiter<uint32_t>(
+                [this, data](const task& t, opaque_network_state& st, uint32_t& r) {
+                    return enter_sendv(t, st, r, data);
+                }
+            );
+        }
+#endif
     };
 
     uint8_t FT_API init_networking();

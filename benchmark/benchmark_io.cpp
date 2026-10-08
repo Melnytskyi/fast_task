@@ -6,7 +6,7 @@
 
 #include "benchmark_helpers.hpp"
 #include <cstring>
-#include <fast_task/coroutine/file.hpp>
+#include <fast_task/file.hpp>
 #include <fast_task/task.hpp>
 #include <fast_task/task/future.hpp>
 #include <filesystem>

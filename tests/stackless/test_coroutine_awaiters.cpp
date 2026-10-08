@@ -13,7 +13,7 @@ class CoroutineAwaitersTest : public SchedulerFixture {};
 // ---- async_lock on mutex ----
 
 fast_task::task_coro<void> coro_lock(fast_task::mutex& mtx, std::atomic<int>& val) {
-    co_await async_lock(mtx);
+    co_await mtx.async_lock();
     int v = val.load();
     // make yield
     val = v + 1;
@@ -43,7 +43,7 @@ TEST_F(CoroutineAwaitersTest, AsyncLockMutex) {
 // ---- async_try_lock_for on mutex ----
 
 fast_task::task_coro<bool> coro_try_lock_for_timeout(fast_task::mutex& mtx) {
-    bool result = co_await async_try_lock_for(mtx, std::chrono::milliseconds(20));
+    bool result = co_await mtx.async_try_lock_for(std::chrono::milliseconds(20));
     if (result) {
         mtx.unlock();
     }
@@ -69,10 +69,10 @@ fast_task::task_coro<void> coro_cv_wait(
     fast_task::condition_variable& cv,
     bool& ready
 ) {
-    co_await async_lock(mtx);
+    co_await mtx.async_lock();
     fast_task::unique_lock lk(mtx, fast_task::adopt_lock);
     while (!ready)
-        co_await async_wait(cv, lk);
+        co_await cv.async_wait(lk);
     co_return;
 }
 
@@ -100,7 +100,7 @@ TEST_F(CoroutineAwaitersTest, AsyncWaitCV) {
 // ---- async_read_lock / async_write_lock on rw_mutex ----
 
 fast_task::task_coro<void> coro_rw_read(fast_task::rw_mutex& mtx, std::atomic<int>& reads) {
-    co_await async_read_lock(mtx);
+    co_await mtx.async_read_lock();
     ++reads;
 
     --reads;
@@ -109,7 +109,7 @@ fast_task::task_coro<void> coro_rw_read(fast_task::rw_mutex& mtx, std::atomic<in
 }
 
 fast_task::task_coro<void> coro_rw_write(fast_task::rw_mutex& mtx, int& value, int newval) {
-    co_await async_write_lock(mtx);
+    co_await mtx.async_write_lock();
     value = newval;
     mtx.write_unlock();
     co_return;

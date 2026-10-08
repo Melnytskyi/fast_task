@@ -13,6 +13,11 @@
 #include <atomic>
 #include <list>
 
+#if __cplusplus >= 202002
+    #include "../coroutine/core.hpp"
+    #include "../coroutine/detail/lock_misc.hpp"
+#endif
+
 namespace fast_task {
     class FT_API semaphore {
         friend struct debug::_debug_collect;
@@ -41,6 +46,21 @@ namespace fast_task {
         bool try_lock_for(const std::chrono::duration<Rep, Period>& duration) {
             return try_lock_until(std::chrono::high_resolution_clock::now() + duration);
         }
+
+#if __cplusplus >= 202002
+        [[nodiscard]] inline auto async_lock() {
+            return detail::async_lock(*this);
+        }
+
+        [[nodiscard]] inline auto async_try_lock_until(std::chrono::high_resolution_clock::time_point time_point) {
+            return detail::async_try_lock_until(*this, time_point);
+        }
+
+        template <class Rep, class Period>
+        [[nodiscard]] inline auto async_try_lock_for(const std::chrono::duration<Rep, Period>& duration) {
+            return detail::async_try_lock_until(*this, std::chrono::high_resolution_clock::now() + duration);
+        }
+#endif
     };
 
     //same as semaphore but with checks
@@ -76,6 +96,20 @@ namespace fast_task {
         bool try_lock_for(const std::chrono::duration<Rep, Period>& duration) {
             return try_lock_until(std::chrono::high_resolution_clock::now() + duration);
         }
+#if __cplusplus >= 202002
+        [[nodiscard]] inline auto async_lock() {
+            return detail::async_lock(*this);
+        }
+
+        [[nodiscard]] inline auto async_try_lock_until(std::chrono::high_resolution_clock::time_point time_point) {
+            return detail::async_try_lock_until(*this, time_point);
+        }
+
+        template <class Rep, class Period>
+        [[nodiscard]] inline auto async_try_lock_for(const std::chrono::duration<Rep, Period>& duration) {
+            return detail::async_try_lock_until(*this, std::chrono::high_resolution_clock::now() + duration);
+        }
+#endif
     };
 }
 

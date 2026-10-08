@@ -20,7 +20,7 @@ namespace fast_task::detail {
                 return mutex.try_lock();
             }
 
-            bool await_suspend(base_coro_handle h) {
+            bool await_suspend(const base_coro_handle& h) {
                 return !mutex.enter_wait(h.promise->task_object, state);
             }
 
@@ -44,7 +44,7 @@ namespace fast_task::detail {
                 return successful;
             }
 
-            bool await_suspend(base_coro_handle h) {
+            bool await_suspend(const base_coro_handle& h) {
                 task_obj = h.promise->task_object;
                 return !mutex.enter_wait_until(h.promise->task_object, state, time_point);
             }
@@ -57,7 +57,7 @@ namespace fast_task::detail {
             }
         };
 
-        return awaiter{{}, mut, time_point};
+        return awaiter{{}, mut, time_point, {}};
     }
 }
 

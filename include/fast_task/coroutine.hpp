@@ -7,15 +7,7 @@
 #pragma once
 #ifndef FAST_TASK_COROUTINE
     #define FAST_TASK_COROUTINE
-    #include "coroutine/condition_variable.hpp"
     #include "coroutine/core.hpp"
-    #include "coroutine/deadline_timer.hpp"
-    #include "coroutine/future.hpp"
     #include "coroutine/helpers.hpp"
-    #include "coroutine/mutex.hpp"
-    #include "coroutine/mutex_unify.hpp"
     #include "coroutine/promise.hpp"
-    #include "coroutine/queue.hpp"
-    #include "coroutine/semaphore.hpp"
-    #include "coroutine/this_task.hpp"
 #endif

@@ -11,6 +11,12 @@
 #include "fwd.hpp"
 #include <list>
 
+
+#if __cplusplus >= 202002
+    #include "../coroutine/core.hpp"
+    #include "../coroutine/detail/lock_misc.hpp"
+#endif
+
 namespace fast_task {
     class FT_API mutex {
         friend class recursive_mutex;
@@ -44,6 +50,21 @@ namespace fast_task {
         bool try_lock_for(const std::chrono::duration<Rep, Period>& duration) {
             return try_lock_until(std::chrono::high_resolution_clock::now() + duration);
         }
+
+#if __cplusplus >= 202002
+        [[nodiscard]] auto async_lock() {
+            return detail::async_lock(*this);
+        }
+
+        [[nodiscard]] auto async_try_lock_until(std::chrono::high_resolution_clock::time_point time_point) {
+            return detail::async_try_lock_until(*this, time_point);
+        }
+
+        template <class Rep, class Period>
+        [[nodiscard]] auto async_try_lock_for(const std::chrono::duration<Rep, Period>& duration) {
+            return detail::async_try_lock_until(*this, std::chrono::high_resolution_clock::now() + duration);
+        }
+#endif
     };
 
     using timed_mutex = mutex;
@@ -74,6 +95,21 @@ namespace fast_task {
         bool try_lock_for(const std::chrono::duration<Rep, Period>& duration) {
             return try_lock_until(std::chrono::high_resolution_clock::now() + duration);
         }
+
+#if __cplusplus >= 202002
+        [[nodiscard]] auto async_lock() {
+            return detail::async_lock(*this);
+        }
+
+        [[nodiscard]] auto async_try_lock_until(std::chrono::high_resolution_clock::time_point time_point) {
+            return detail::async_try_lock_until(*this, time_point);
+        }
+
+        template <class Rep, class Period>
+        [[nodiscard]] auto async_try_lock_for(const std::chrono::duration<Rep, Period>& duration) {
+            return detail::async_try_lock_until(*this, std::chrono::high_resolution_clock::now() + duration);
+        }
+#endif
     };
 
     class FT_API rw_mutex {
@@ -174,6 +210,120 @@ namespace fast_task {
         bool try_write_lock_for(const std::chrono::duration<Rep, Period>& duration) {
             return try_write_lock_until(std::chrono::high_resolution_clock::now() + duration);
         }
+#if __cplusplus >= 202002
+
+        [[nodiscard]] auto async_read_lock() {
+            struct awaiter {
+                enter_state state;
+                rw_mutex& mutex;
+
+                bool await_ready() noexcept {
+                    return mutex.try_read_lock();
+                }
+
+                bool await_suspend(const base_coro_handle& h) {
+                    return !mutex.enter_read_wait(h.promise->task_object, state);
+                }
+
+                void await_resume() noexcept {}
+            };
+
+            return awaiter{{}, *this};
+        }
+
+        [[nodiscard]] auto async_write_lock() {
+            struct awaiter {
+                enter_state state;
+                rw_mutex& mutex;
+
+                bool await_ready() noexcept {
+                    return mutex.try_write_lock();
+                }
+
+                bool await_suspend(const base_coro_handle& h) {
+                    return !mutex.enter_write_wait(h.promise->task_object, state);
+                }
+
+                void await_resume() noexcept {}
+            };
+
+            return awaiter{{}, *this};
+        }
+
+        [[nodiscard]] auto async_try_read_lock_until(std::chrono::high_resolution_clock::time_point time_point) {
+            struct awaiter {
+                enter_state state;
+                rw_mutex& mutex;
+                std::chrono::high_resolution_clock::time_point time_point;
+                fast_task::task task_obj;
+                bool successful = false;
+
+                bool await_ready() noexcept {
+                    if (mutex.try_read_lock()) {
+                        successful = true;
+                        return true;
+                    }
+                    return false;
+                }
+
+                bool await_suspend(const base_coro_handle& h) {
+                    task_obj = h.promise->task_object;
+                    return !mutex.enter_read_wait_until(h.promise->task_object, state, time_point);
+                }
+
+                bool await_resume() noexcept {
+                    if (successful)
+                        return true;
+                    successful = !task_obj.has_wait_timed_out();
+                    return successful;
+                }
+            };
+
+            return awaiter{{}, *this, time_point, {}};
+        }
+
+        template <class Rep, class Period>
+        [[nodiscard]] auto async_try_read_lock_for(const std::chrono::duration<Rep, Period>& duration) {
+            return async_try_read_lock_until(*this, std::chrono::high_resolution_clock::now() + duration);
+        }
+
+        [[nodiscard]] auto async_try_write_lock_until(std::chrono::high_resolution_clock::time_point time_point) {
+            struct awaiter {
+                enter_state state;
+                rw_mutex& mutex;
+                std::chrono::high_resolution_clock::time_point time_point;
+                fast_task::task task_obj;
+                bool successful = false;
+
+                bool await_ready() noexcept {
+                    if (mutex.try_write_lock()) {
+                        successful = true;
+                        return true;
+                    }
+                    return false;
+                }
+
+                bool await_suspend(const base_coro_handle& h) {
+                    task_obj = h.promise->task_object;
+                    return !mutex.enter_write_wait_until(h.promise->task_object, state, time_point);
+                }
+
+                bool await_resume() noexcept {
+                    if (successful)
+                        return true;
+                    successful = !task_obj.has_wait_timed_out();
+                    return successful;
+                }
+            };
+
+            return awaiter{{}, *this, time_point, {}};
+        }
+
+        template <class Rep, class Period>
+        [[nodiscard]] auto async_try_write_lock_for(const std::chrono::duration<Rep, Period>& duration) {
+            return async_try_write_lock_until(*this, std::chrono::high_resolution_clock::now() + duration);
+        }
+#endif
     };
 
     class FT_API read_lock {
