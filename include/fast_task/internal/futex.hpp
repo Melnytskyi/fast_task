@@ -4,8 +4,8 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
-#ifndef FAST_TASK_INCLUDE_FUTEX
-#define FAST_TASK_INCLUDE_FUTEX
+#ifndef FAST_TASK_INCLUDE_INTERNAL_FUTEX
+#define FAST_TASK_INCLUDE_INTERNAL_FUTEX
 
 #include "../task/task.hpp"
 #include <chrono>
@@ -141,4 +141,4 @@ namespace fast_task::futex {
     );
 }
 
-#endif /* FAST_TASK_INCLUDE_TASK_FUTEX */
+#endif /* FAST_TASK_INCLUDE_INTERNAL_FUTEX */

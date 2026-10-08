@@ -5,8 +5,8 @@
 // http://www.boost.org/LICENSE_1_0.txt)
 
 #include <fast_task/debug.hpp>
-#include <fast_task/experimental/futex.hpp>
 #include <fast_task/file.hpp>
+#include <fast_task/internal/futex.hpp>
 
 #include <atomic>
 #include <barrier>

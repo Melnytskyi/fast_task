@@ -19,7 +19,7 @@
     #include <unordered_set>
 
     #include <fast_task/exceptions.hpp>
-    #include <fast_task/experimental/futex.hpp>
+    #include <fast_task/internal/futex.hpp>
     #include <fast_task/internal/task_object.hpp>
     #include <fast_task/shared.hpp>
     #include <fast_task/task.hpp>
