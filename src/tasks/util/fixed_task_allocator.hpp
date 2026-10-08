@@ -14,10 +14,10 @@
     #include <cstdlib>
     #include <new>
 
-    #include <internal/task_object.hpp>
-    #include <interrupt.hpp>
-    #include <native/spin_lock.hpp>
-    #include <shared.hpp>
+    #include <fast_task/internal/task_object.hpp>
+    #include <fast_task/interrupt.hpp>
+    #include <fast_task/native/spin_lock.hpp>
+    #include <fast_task/shared.hpp>
 
 namespace fast_task {
     class FT_API_LOCAL global_task_allocator {

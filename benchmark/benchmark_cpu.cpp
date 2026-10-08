@@ -7,7 +7,7 @@
 #include "benchmark_helpers.hpp"
 #include <algorithm>
 #include <cmath>
-#include <task.hpp>
+#include <fast_task/task.hpp>
 #include <thread>
 #include <vector>
 

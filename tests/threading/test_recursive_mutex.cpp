@@ -5,8 +5,8 @@
 // http://www.boost.org/LICENSE_1_0.txt)
 
 #include <atomic>
+#include <fast_task/native/mutex.hpp>
 #include <helpers.hpp>
-#include <native/mutex.hpp>
 
 TEST(RecursiveMutex, BasicLockUnlock) {
     fast_task::native::recursive_mutex m;

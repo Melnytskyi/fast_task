@@ -4,8 +4,8 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
-#include <experimental/futex.hpp>
-#include <task.hpp>
+#include <fast_task/experimental/futex.hpp>
+#include <fast_task/task.hpp>
 #include <tasks/_internal.hpp>
 
 namespace fast_task {

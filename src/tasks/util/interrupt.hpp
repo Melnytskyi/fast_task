@@ -6,8 +6,8 @@
 
 #ifndef FAST_TASK_INTERRUPT
 #define FAST_TASK_INTERRUPT
-#include <interrupt.hpp>
-#include <shared.hpp>
+#include <fast_task/interrupt.hpp>
+#include <fast_task/shared.hpp>
 //Virtualized signals for windows and proxy for posix signals
 //  implements only timer signals
 namespace fast_task::interrupt {

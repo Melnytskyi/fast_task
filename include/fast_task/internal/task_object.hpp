@@ -1,9 +1,9 @@
 #ifndef FAST_TASK_INCLUDE_INTERNAL_TASK_OBJECT
 #define FAST_TASK_INCLUDE_INTERNAL_TASK_OBJECT
 #include "../shared.hpp"
+#include "../task/mutex_unify.hpp"
+#include "../task/task.hpp"
 #include <atomic>
-#include <task/mutex_unify.hpp>
-#include <task/task.hpp>
 
 namespace fast_task {
     class to_start_override {

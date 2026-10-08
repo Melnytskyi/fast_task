@@ -10,7 +10,7 @@
     #include <boost/context/fiber.hpp>
     #include <boost/context/stack_context.hpp>
     #include <boost/context/stack_traits.hpp>
-    #include <shared.hpp>
+    #include <fast_task/shared.hpp>
 
 namespace fast_task {
     struct FT_API_LOCAL light_stack {

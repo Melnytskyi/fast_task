@@ -6,10 +6,10 @@
 
 #include "benchmark_helpers.hpp"
 #include <atomic>
-#include <debug.hpp>
-#include <task.hpp>
-#include <task/mutex.hpp>
-#include <task/semaphore.hpp>
+#include <fast_task/debug.hpp>
+#include <fast_task/task.hpp>
+#include <fast_task/task/mutex.hpp>
+#include <fast_task/task/semaphore.hpp>
 #include <thread>
 #include <vector>
 

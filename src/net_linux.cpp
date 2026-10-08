@@ -12,10 +12,10 @@
 
     #include "tasks/_internal.hpp"
     #include "tasks/util/native_workers_singleton.hpp"
-    #include <fcntl.h>
-    #include <file.hpp>
-    #include <net.hpp>
     #include <ares.h>
+    #include <fast_task/file.hpp>
+    #include <fast_task/net.hpp>
+    #include <fcntl.h>
 
 namespace fast_task::net {
     bool inited = false;

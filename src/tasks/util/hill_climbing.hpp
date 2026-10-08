@@ -9,7 +9,7 @@
 #include <tuple>
 #include <vector>
 
-#include <shared.hpp>
+#include <fast_task/shared.hpp>
 #include <tasks/util/cpu_usage.hpp>
 
 namespace fast_task::util {

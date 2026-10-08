@@ -4,8 +4,8 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
-#include <coroutine/file.hpp>
-#include <file.hpp>
+#include <fast_task/coroutine/file.hpp>
+#include <fast_task/file.hpp>
 #include <helpers.hpp>
 
 #include <filesystem>

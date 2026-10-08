@@ -4,8 +4,8 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
-#include <exceptions.hpp>
-#include <task.hpp>
+#include <fast_task/exceptions.hpp>
+#include <fast_task/task.hpp>
 #include <tasks/_internal.hpp>
 
 namespace fast_task::this_task {

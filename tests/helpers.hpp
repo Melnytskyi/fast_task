@@ -8,11 +8,11 @@
 // http://www.boost.org/LICENSE_1_0.txt)
 
 #include <atomic>
-#include <coroutine.hpp>
+#include <fast_task/coroutine.hpp>
+#include <fast_task/task.hpp>
 #include <gtest/gtest.h>
 #include <memory>
 #include <stdexcept>
-#include <task.hpp>
 #include <thread>
 
 // ---------------------------------------------------------------------------

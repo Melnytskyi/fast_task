@@ -7,7 +7,7 @@
  *   details, see the Creative Commons Zero 1.0 Universal license at
  *   https://creativecommons.org/publicdomain/zero/1.0/
  */
-#include <shared.hpp>
+#include <fast_task/shared.hpp>
 #if !defined(PSNIP_CPU__H)
     #define PSNIP_CPU__H
 

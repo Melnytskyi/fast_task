@@ -5,9 +5,9 @@
 // http://www.boost.org/LICENSE_1_0.txt)
 
 #include <atomic>
+#include <fast_task/task/future.hpp>
 #include <helpers.hpp>
 #include <stdexcept>
-#include <task/future.hpp>
 
 class CancelableFutureTest : public SchedulerFixture {};
 

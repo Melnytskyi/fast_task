@@ -5,9 +5,9 @@
 // http://www.boost.org/LICENSE_1_0.txt)
 
 #include <atomic>
+#include <fast_task/native/spin_lock.hpp>
+#include <fast_task/native/thread.hpp>
 #include <helpers.hpp>
-#include <native/spin_lock.hpp>
-#include <native/thread.hpp>
 
 TEST(SpinLock, BasicLockUnlock) {
     fast_task::native::spin_lock sl;

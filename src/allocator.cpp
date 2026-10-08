@@ -1,6 +1,6 @@
-#include <allocator.hpp>
 #include <exception>
-#include <interrupt.hpp>
+#include <fast_task/allocator.hpp>
+#include <fast_task/interrupt.hpp>
 #include <malloc.h>
 #include <tasks/util/interrupt.hpp>
 

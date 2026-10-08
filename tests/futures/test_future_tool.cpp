@@ -6,9 +6,9 @@
 
 #include <algorithm>
 #include <atomic>
+#include <fast_task/task/future.hpp>
 #include <helpers.hpp>
 #include <numeric>
-#include <task/future.hpp>
 #include <vector>
 
 class FutureToolTest : public SchedulerFixture {};

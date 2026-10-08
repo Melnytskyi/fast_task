@@ -10,7 +10,7 @@
 #include <concurrentqueue/moodycamel/concurrentqueue.h>
 #include <cstddef>
 #include <cstdint>
-#include <task.hpp>
+#include <fast_task/task.hpp>
 #include <tasks/util/macro.hpp>
 #include <tasks/util/os_alloc.hpp>
 

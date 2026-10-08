@@ -4,8 +4,8 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
+#include <fast_task/coroutine.hpp>
 #include <helpers.hpp>
-#include <coroutine.hpp>
 #include <stdexcept>
 
 class CoroutineBasicTest : public SchedulerFixture {};

@@ -4,8 +4,8 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
-#include <native/condition_variable.hpp>
-#include <native/mutex.hpp>
+#include <fast_task/native/condition_variable.hpp>
+#include <fast_task/native/mutex.hpp>
 #include <tasks/util/interrupt.hpp>
 
 #include <cassert>

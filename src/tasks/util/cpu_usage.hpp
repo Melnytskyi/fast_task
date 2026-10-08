@@ -7,7 +7,7 @@
 #ifndef FAST_TASK_CPU_USAGE
 #define FAST_TASK_CPU_USAGE
 #include <cstdint>
-#include <shared.hpp>
+#include <fast_task/shared.hpp>
 
 
 namespace fast_task::util::cpu {

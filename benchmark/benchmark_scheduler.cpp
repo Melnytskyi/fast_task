@@ -5,8 +5,8 @@
 // http://www.boost.org/LICENSE_1_0.txt)
 
 #include "benchmark_helpers.hpp"
-#include <coroutine.hpp>
-#include <task.hpp>
+#include <fast_task/coroutine.hpp>
+#include <fast_task/task.hpp>
 #include <thread>
 #include <vector>
 

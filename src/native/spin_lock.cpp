@@ -5,8 +5,8 @@
 // http://www.boost.org/LICENSE_1_0.txt)
 
 #include <cassert>
-#include <native/spin_lock.hpp>
-#include <interrupt.hpp>
+#include <fast_task/interrupt.hpp>
+#include <fast_task/native/spin_lock.hpp>
 
 #if defined(__x86_64__) || defined(__i386__) || defined(_M_IX86) || defined(_M_X64)
     #define __IS_X86_OR_X64

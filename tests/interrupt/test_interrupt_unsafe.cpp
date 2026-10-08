@@ -5,8 +5,8 @@
 // http://www.boost.org/LICENSE_1_0.txt)
 
 #include <atomic>
+#include <fast_task/interrupt.hpp>
 #include <helpers.hpp>
-#include <interrupt.hpp>
 
 class InterruptUnsafeTest : public SchedulerFixture {};
 

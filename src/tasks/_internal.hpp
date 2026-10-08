@@ -18,11 +18,11 @@
     #include <queue>
     #include <unordered_set>
 
-    #include <exceptions.hpp>
-    #include <experimental/futex.hpp>
-    #include <internal/task_object.hpp>
-    #include <shared.hpp>
-    #include <task.hpp>
+    #include <fast_task/exceptions.hpp>
+    #include <fast_task/experimental/futex.hpp>
+    #include <fast_task/internal/task_object.hpp>
+    #include <fast_task/shared.hpp>
+    #include <fast_task/task.hpp>
     #include <tasks/classes/synchronization/futex_waiter.hpp>
     #include <tasks/util/_dbg_macro.hpp>
     #include <tasks/util/fixed_task_allocator.hpp>

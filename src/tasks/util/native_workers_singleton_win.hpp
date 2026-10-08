@@ -8,9 +8,9 @@
 #define SRC_TASKS_UTIL_NATIVE_WORKERS_SINGLETON_WIN
 #include <chrono>
 #include <cstring>
+#include <fast_task/shared.hpp>
 #include <list>
 #include <mutex>
-#include <shared.hpp>
 #include <thread>
 #include <vector>
 #define WIN32_LEAN_AND_MEAN

@@ -4,9 +4,9 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
+#include <fast_task/task/future.hpp>
 #include <helpers.hpp>
 #include <stdexcept>
-#include <task/future.hpp>
 
 class FutureBasicTest : public SchedulerFixture {};
 

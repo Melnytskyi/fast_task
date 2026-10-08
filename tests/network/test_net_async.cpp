@@ -4,7 +4,7 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
-#include <coroutine/net.hpp>
+#include <fast_task/coroutine/net.hpp>
 #include <helpers.hpp>
 
 #include <array>

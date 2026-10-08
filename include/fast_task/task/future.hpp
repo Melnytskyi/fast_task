@@ -7,10 +7,10 @@
 #pragma once
 #ifndef FAST_TASK_INCLUDE_TASK_FUTURE
     #define FAST_TASK_INCLUDE_TASK_FUTURE
+    #include "../shared.hpp"
     #include "fwd.hpp"
     #include "queue.hpp"
     #include "scheduler.hpp"
-    #include "shared.hpp"
     #include "task.hpp"
 
 namespace fast_task {

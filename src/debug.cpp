@@ -4,17 +4,17 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
-#include <debug.hpp>
-#include <experimental/futex.hpp>
-#include <file.hpp>
+#include <fast_task/debug.hpp>
+#include <fast_task/experimental/futex.hpp>
+#include <fast_task/file.hpp>
 
 #include <atomic>
 #include <barrier>
+#include <fast_task/task.hpp>
 #include <format>
 #include <iostream>
 #include <mutex>
 #include <optional>
-#include <task.hpp>
 #include <tasks/_internal.hpp>
 #include <unordered_map>
 #include <vector>

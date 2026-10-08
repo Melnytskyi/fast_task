@@ -9,8 +9,8 @@
 
     #include "tasks/_internal.hpp"
     #include "tasks/util/native_workers_singleton.hpp"
-    #include <file.hpp>
-    #include <net.hpp>
+    #include <fast_task/file.hpp>
+    #include <fast_task/net.hpp>
     #include <span>
 
 namespace fast_task::net {

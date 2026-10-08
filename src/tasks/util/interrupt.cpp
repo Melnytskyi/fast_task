@@ -4,7 +4,7 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
-#include <native.hpp>
+#include <fast_task/native.hpp>
 #include <tasks/_internal.hpp>
 #include <tasks/util/interrupt.hpp>
 #include <tasks/util/native_workers_singleton.hpp>

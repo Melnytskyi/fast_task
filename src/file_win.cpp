@@ -7,10 +7,10 @@
 
     #include <filesystem>
 
-    #include <file.hpp>
+    #include <fast_task/file.hpp>
+    #include <fast_task/task.hpp>
+    #include <fast_task/task/future.hpp>
     #include <string>
-    #include <task.hpp>
-    #include <task/future.hpp>
     #include <tasks/_internal.hpp>
     #include <tasks/util/native_workers_singleton.hpp>
     #include <variant>

@@ -4,8 +4,8 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
+#include <fast_task/native/mutex.hpp>
 #include <helpers.hpp>
-#include <native/mutex.hpp>
 
 TEST(TimedMutex, BasicLockUnlock) {
     fast_task::native::timed_mutex m;

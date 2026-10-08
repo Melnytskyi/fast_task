@@ -5,8 +5,8 @@
 // http://www.boost.org/LICENSE_1_0.txt)
 
 #include <atomic>
+#include <fast_task/native.hpp>
 #include <helpers.hpp>
-#include <native.hpp>
 
 TEST(Thread, JoinableAndJoin) {
     std::atomic<bool> ran{false};

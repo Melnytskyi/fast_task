@@ -5,11 +5,11 @@
 // http://www.boost.org/LICENSE_1_0.txt)
 
 #include "benchmark_helpers.hpp"
-#include <coroutine/file.hpp>
 #include <cstring>
+#include <fast_task/coroutine/file.hpp>
+#include <fast_task/task.hpp>
+#include <fast_task/task/future.hpp>
 #include <filesystem>
-#include <task.hpp>
-#include <task/future.hpp>
 #include <thread>
 #include <vector>
 
