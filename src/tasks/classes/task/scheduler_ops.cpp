@@ -241,23 +241,12 @@ namespace fast_task::scheduler {
     }
 
     void become_task_executor() {
-        auto& loc = get_loc();
-        try {
-            ++glob.thread_count;
-            taskExecutor();
-            loc.context_in_swap = false;
-            loc.is_task_thread = false;
-            loc.curr_task = nullptr;
-        } catch (...) {
-            loc.context_in_swap = false;
-            loc.is_task_thread = false;
-            loc.curr_task = nullptr;
-            throw;
-        }
+        ++glob.thread_count;
+        taskExecutor();
     }
 
     void await_no_tasks(bool be_executor) {
-        if (be_executor && !get_loc().is_task_thread) {
+        if (be_executor && !get_loc()) {
             ++glob.thread_count;
             taskExecutor(true);
         } else {
@@ -301,7 +290,7 @@ namespace fast_task::scheduler {
     }
 
     void await_end_tasks(bool be_executor) {
-        if (be_executor && !get_loc().is_task_thread) {
+        if (be_executor && !get_loc()) {
             while (glob.executing_tasks) {
                 try {
                     ++glob.thread_count;
@@ -314,7 +303,7 @@ namespace fast_task::scheduler {
             mutex_unify uni(glob.task_thread_safety);
             fast_task::unique_lock l(uni);
 
-            if (get_loc().is_task_thread)
+            if (get_loc())
                 while (glob.executing_tasks != 1) {
                     if (!total_executors())
                         create_executor(1);
@@ -371,11 +360,12 @@ namespace fast_task::scheduler {
     }
 
     const task& current_context_task() {
-        return get_loc().curr_task;
+        static const task empty;
+        return get_loc() ? get_loc()->curr_task : empty;
     }
 
     void request_stw(const std::function<void()>& func) {
-        if (!get_loc().is_task_thread)
+        if (!get_loc())
             unsafe_perform_stop_the_world(func);
         else
             throw invalid_native_context{};
@@ -383,9 +373,9 @@ namespace fast_task::scheduler {
 
     void clean_up() {
         await_no_tasks();
-        auto& loc = get_loc();
-        loc.task_alloc_cache.release();
-        loc.timing_alloc_cache.release();
+        auto& loc = get_alloc_loc();
+        loc.task_cache.release();
+        loc.timing_cache.release();
         decltype(glob.cold_tasks) cold;
         glob.cold_tasks.swap(cold);
         glob.gba.claim_unused();
@@ -393,9 +383,9 @@ namespace fast_task::scheduler {
     }
 
     void local_clean_up() {
-        auto& loc = get_loc();
-        loc.task_alloc_cache.release();
-        loc.timing_alloc_cache.release();
+        auto& loc = get_alloc_loc();
+        loc.task_cache.release();
+        loc.timing_cache.release();
     }
 
     bool preemption_enabled() {

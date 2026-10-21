@@ -156,7 +156,8 @@ namespace fast_task {
                     bool timed_out;
                     {
                         fast_task::unique_lock lock(hh->no_race);
-                        timed_out = hh->canceled_tasks.find(get_loc().curr_task.get_id()) == hh->canceled_tasks.end();
+                        auto curr_task = get_loc() ? get_loc()->curr_task : nullptr;
+                        timed_out = hh->canceled_tasks.find(curr_task.get_id()) == hh->canceled_tasks.end();
                         if (timed_out)
                             timed_out = hh->time_point == timeout_time;
 
@@ -193,7 +194,7 @@ namespace fast_task {
             return status::timeouted;
         else {
             fast_task::unique_lock lock(hh->no_race);
-            auto curr_task = get_loc().curr_task;
+            auto curr_task = get_loc() ? get_loc()->curr_task : nullptr;
             hh->sleeping_tasks.push_back(curr_task);
             auto timeout_time = hh->time_point;
             lock.unlock();

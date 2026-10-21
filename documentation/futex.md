@@ -83,9 +83,9 @@ void wait_on_address(void* address, bool (*check_callback)(void*), node_data dat
     /* ... fill me, link into bucket ... */
     make_wait(bucket, &me);
 
-    auto& loc = get_loc();
-    if (loc.is_task_thread && loc.curr_task) {
-        me.waiter = loc.curr_task;
+    auto loc = get_loc();
+    if (loc && loc->is_task_thread && loc->curr_task) {
+        me.waiter = loc->curr_task;
         swapCtxUnlock(*guard.release());   // TASK: park, no syscall
     } else {
         guard.unlock();

@@ -534,9 +534,9 @@ namespace fast_task::futex {
         me.native_wake.store(0, std::memory_order_relaxed);
         me.node_data = data.data;
         make_wait(bucket, &me);
-        auto& loc = get_loc();
-        if (loc.is_task_thread && loc.curr_task) {
-            me.waiter = loc.curr_task;
+        auto loc = get_loc();
+        if (loc && loc->is_task_thread && loc->curr_task) {
+            me.waiter = loc->curr_task;
             swapCtxUnlock(*guard.release());
         } else {
             guard.unlock();
@@ -561,16 +561,16 @@ namespace fast_task::futex {
         me.node_data = data.data;
         make_wait(bucket, &me);
 
-        auto& loc = get_loc();
-        if (loc.is_task_thread && loc.curr_task) {
-            me.waiter = loc.curr_task;
+        auto loc = get_loc();
+        if (loc && loc->is_task_thread && loc->curr_task) {
+            me.waiter = loc->curr_task;
             me.needs_awake_check = true;
-            me.awake_check = get_data(loc.curr_task).awake_check;
+            me.awake_check = get_data(loc->curr_task).awake_check;
 
-            loc.pending_timer = time_point;
+            loc->pending_timer = time_point;
             swapCtxUnlock(*guard.release());
 
-            if (get_loc().curr_task.has_wait_timed_out()) {
+            if (get_loc()->curr_task.has_wait_timed_out()) {
                 auto& my_bucket = glob.futex_global.get_bucket(me.wait_address);
                 std::unique_lock my_guard(my_bucket.lock);
                 remove_waiter(my_bucket, &me);
@@ -632,9 +632,9 @@ namespace fast_task::futex {
         me.node_data = data.data;
         make_wait(bucket, &me);
 
-        auto& loc = get_loc();
-        if (loc.is_task_thread && loc.curr_task) {
-            me.waiter = loc.curr_task;
+        auto loc = get_loc();
+        if (loc && loc->is_task_thread && loc->curr_task) {
+            me.waiter = loc->curr_task;
             swapCtxUnlock(*guard.release_b0());
         } else {
             guard.unlock_b0();
@@ -678,16 +678,16 @@ namespace fast_task::futex {
         me.node_data = data.data;
         make_wait(bucket, &me);
 
-        auto& loc = get_loc();
-        if (loc.is_task_thread && loc.curr_task) {
-            me.waiter = loc.curr_task;
+        auto loc = get_loc();
+        if (loc && loc->is_task_thread && loc->curr_task) {
+            me.waiter = loc->curr_task;
             me.needs_awake_check = true;
-            me.awake_check = get_data(loc.curr_task).awake_check;
+            me.awake_check = get_data(loc->curr_task).awake_check;
 
-            loc.pending_timer = time_point;
+            loc->pending_timer = time_point;
             swapCtxUnlock(*guard.release_b0());
 
-            if (get_loc().curr_task.has_wait_timed_out()) {
+            if (get_loc()->curr_task.has_wait_timed_out()) {
                 auto& my_bucket = glob.futex_global.get_bucket(me.wait_address);
                 std::unique_lock my_guard(my_bucket.lock);
                 remove_waiter(my_bucket, &me);

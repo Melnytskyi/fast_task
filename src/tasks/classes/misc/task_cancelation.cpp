@@ -30,7 +30,9 @@ namespace fast_task {
     bool checkCancellation() noexcept {
         constexpr auto timeout_disabled = std::chrono::high_resolution_clock::time_point::min().time_since_epoch().count();
         interrupt_unsafe_region reg;
-        auto& task = get_loc().curr_task;
+        if (!get_loc())
+            return false;
+        auto& task = get_loc()->curr_task;
         if (!task)
             return false;
         auto& curr_task = get_data(task);

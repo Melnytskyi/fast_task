@@ -245,11 +245,11 @@ namespace fast_task {
     }
 
     task_object* task_alloc::allocate() {
-        return get_loc().task_alloc_cache.allocate();
+        return get_alloc_loc().task_cache.allocate();
     }
 
     void task_alloc::deallocate(task_object* p) {
-        get_loc().task_alloc_cache.deallocate(p);
+        get_alloc_loc().task_cache.deallocate(p);
     }
 
     void global_task_allocator::claim_unused() {

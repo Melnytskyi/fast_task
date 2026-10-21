@@ -10,14 +10,14 @@
 
 namespace fast_task::this_task {
     size_t get_id() noexcept {
-        if (!get_loc().is_task_thread)
-            return ((size_t)_thread_id() & native_thread_mask) | native_thread_flag;
+        if (get_loc() && get_loc()->is_task_thread)
+            return get_loc()->curr_task.get_id();
         else
-            return get_loc().curr_task.get_id();
+            return ((size_t)_thread_id() & native_thread_mask) | native_thread_flag;
     }
 
     bool is_task() noexcept {
-        return get_loc().is_task_thread;
+        return get_loc() && get_loc()->is_task_thread;
     }
 
     void check_cancellation() {
@@ -30,9 +30,9 @@ namespace fast_task::this_task {
     }
 
     void self_cancel() {
-        if (get_loc().is_task_thread) {
-            if (get_loc().curr_task)
-                get_loc().curr_task.notify_cancel();
+        if (get_loc()) {
+            if (get_loc()->curr_task)
+                get_loc()->curr_task.notify_cancel();
             throw task_cancellation();
         } else
             throw invalid_context();
@@ -49,39 +49,39 @@ namespace fast_task::this_task {
     }
 
     bool transfer_to(const task& target) {
-        if (get_loc().is_task_thread) {
-            if (!target || !get_loc().curr_task)
+        if (get_loc()) {
+            if (!target || !get_loc()->curr_task)
                 return false;
-            if (get_loc().ex_ptr)
+            if (get_loc()->ex_ptr)
                 return false;
-            if (get_loc().transfer_state.pending)
+            if (get_loc()->transfer_state.pending)
                 return false;
             if (!(
-                    get_data(get_loc().curr_task).get_is_on_scheduler() == true &&
+                    get_data(get_loc()->curr_task).get_is_on_scheduler() == true &&
                     get_data(target).get_is_on_scheduler() == true &&
                     (get_data(target).is_scheduled() == false || (get_data(target).is_suspended() == true && get_data(target).get_is_restartable() == true))
                 ))
                 return false;
 
-            if (get_data(get_loc().curr_task).bind_to_worker_id != get_data(target).bind_to_worker_id)
+            if (get_data(get_loc()->curr_task).bind_to_worker_id != get_data(target).bind_to_worker_id)
                 return false;
 
 
 #if FT_TASK_TRANSFERS_LIMIT > 0
-            if (get_loc().transfer_state.transfers >= FT_TASK_TRANSFERS_LIMIT)
+            if (get_loc()->transfer_state.transfers >= FT_TASK_TRANSFERS_LIMIT)
                 return false;
-            ++get_loc().transfer_state.transfers;
+            ++get_loc()->transfer_state.transfers;
 #endif
             get_data(target).set_status(task_object::status_e::scheduled);
-            get_loc().transfer_state.pending = target;
+            get_loc()->transfer_state.pending = target;
             return true;
         } else
             return false;
     }
 
     void sleep_until(std::chrono::high_resolution_clock::time_point time_point) {
-        if (get_loc().is_task_thread) {
-            get_loc().pending_timer = time_point;
+        if (get_loc()) {
+            get_loc()->pending_timer = time_point;
             swapCtx();
             resetTimeWait();
         } else
@@ -89,23 +89,25 @@ namespace fast_task::this_task {
     }
 
     bool FT_API enter_sleep_until(enter_state&, std::chrono::high_resolution_clock::time_point time_point) {
-        if (get_loc().is_task_thread) {
+        if (get_loc()) {
             if (std::chrono::high_resolution_clock::now() >= time_point)
                 return true;
-            get_loc().pending_timer = time_point;
+            get_loc()->pending_timer = time_point;
             return false;
         } else
-            throw invalid_context();
+            return true;
     }
 
     bool FT_API enter_yield(enter_state&) {
-        transfer_task(task{get_loc().curr_task});
-        return false;
+        auto loc = get_loc();
+        if (loc)
+            transfer_task(task{loc->curr_task});
+        return loc == nullptr;
     }
 
     void yield() {
-        if (get_loc().is_task_thread) {
-            get_loc().yield_request = true;
+        if (get_loc()) {
+            get_loc()->yield_request = true;
             swapCtx();
         } else
             native::this_thread::yield();

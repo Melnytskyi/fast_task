@@ -320,7 +320,7 @@ namespace fast_task {
     }
 
     timing* hashed_timing_wheel::allocate_node() {
-        void* p = get_loc().timing_alloc_cache.allocate();
+        void* p = get_alloc_loc().timing_cache.allocate();
         return static_cast<timing*>(p);
     }
 
@@ -330,7 +330,7 @@ namespace fast_task {
         t->wheel_level = 0;
         t->wheel_slot = 0;
         t->flags.store(0, std::memory_order_relaxed);
-        get_loc().timing_alloc_cache.deallocate(t);
+        get_alloc_loc().timing_cache.deallocate(t);
     }
 
     hashed_timing_wheel::hashed_timing_wheel() {

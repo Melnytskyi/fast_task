@@ -149,7 +149,8 @@ namespace fast_task {
         if (RUNNING_ON_VALGRIND) {
             [[maybe_unused]] void* stack_bottom = static_cast<uint8_t*>(vp) + guard_page_size;
             [[maybe_unused]] void* stack_top = static_cast<uint8_t*>(vp) + total_size;
-            get_execution_data(get_loc().curr_task).valgrind_stack_id = VALGRIND_STACK_REGISTER(stack_bottom, stack_top);
+            if (get_loc())
+                get_execution_data(get_loc()->curr_task).valgrind_stack_id = VALGRIND_STACK_REGISTER(stack_bottom, stack_top);
         }
 
         stack_context sctx;
@@ -162,8 +163,10 @@ namespace fast_task {
         if (!sctx.sp)
             return;
 
-        if (RUNNING_ON_VALGRIND)
-            VALGRIND_STACK_DEREGISTER(get_execution_data(get_loc().curr_task).valgrind_stack_id);
+        if (RUNNING_ON_VALGRIND) {
+            if (get_loc())
+                VALGRIND_STACK_DEREGISTER(get_execution_data(get_loc()->curr_task).valgrind_stack_id);
+        }
 
         munmap(static_cast<char*>(sctx.sp) - sctx.size, sctx.size);
         sctx.sp = nullptr;

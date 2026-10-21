@@ -171,7 +171,7 @@ namespace fast_task {
     void FT_API_LOCAL task_switch(task_priority priority, std::chrono::nanoseconds& current_available_quantum, std::chrono::nanoseconds elapsed);
     std::chrono::nanoseconds FT_API_LOCAL init_quantum(task_priority priority);
 
-    struct futex_global_t {
+    struct FT_API_LOCAL futex_global_t {
         enum class node_type : uint8_t {
             wait,
             unlock_and_wait,
@@ -216,9 +216,13 @@ namespace fast_task {
         }
     };
 
+    struct FT_API_LOCAL allocators_local_t {
+        tl_task_alloc_cache task_cache;
+        tl_timing_alloc_cache timing_cache;
+        void reset();
+    };
+
     struct FT_API_LOCAL executors_local {
-        tl_task_alloc_cache task_alloc_cache;
-        tl_timing_alloc_cache timing_alloc_cache;
         std::unique_ptr<work_stealing_deque<task_object*>> local_tasks = std::make_unique<work_stealing_deque<task_object*>>();
         std::exception_ptr ex_ptr;
         task curr_task = nullptr;
@@ -310,7 +314,9 @@ namespace fast_task {
         ~executor_global();
     };
 
-    NOINLINE executors_local& get_loc() noexcept;
+    NOINLINE allocators_local_t& get_alloc_loc() noexcept;
+    NOINLINE executors_local* get_loc() noexcept;
+    void set_loc(executors_local*) noexcept;
 
     extern FT_API_LOCAL executor_global glob;
     constexpr size_t native_thread_flag = size_t(1) << (sizeof(size_t) * 8 - 2);

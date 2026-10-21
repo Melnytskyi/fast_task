@@ -20,9 +20,22 @@
     #define __IS_X86_OR_X64
 #endif
 namespace fast_task {
-    NOINLINE executors_local& get_loc() noexcept {
-        static thread_local executors_local loc;
+    executors_local*& _get_loc() noexcept {
+        static thread_local executors_local* loc;
         return loc;
+    }
+
+    NOINLINE allocators_local_t& get_alloc_loc() noexcept {
+        static thread_local allocators_local_t loc;
+        return loc;
+    }
+
+    NOINLINE executors_local* get_loc() noexcept {
+        return _get_loc();
+    }
+
+    void set_loc(executors_local* loc) noexcept {
+        _get_loc() = loc;
     }
 
     executor_global glob;
@@ -110,9 +123,12 @@ namespace fast_task {
         return true;
     }
 
+    void allocators_local_t::reset() {
+        task_cache.release();
+        timing_cache.release();
+    }
+
     void executors_local::reset() {
-        task_alloc_cache.release();
-        timing_alloc_cache.release();
         ex_ptr = nullptr;
         curr_task.reset();
         transfer_state.pending.reset();
@@ -447,7 +463,7 @@ namespace fast_task {
     }
 
     task_object* task_object::alloc() {
-        auto obj = static_cast<task_object*>(get_loc().task_alloc_cache.allocate());
+        auto obj = static_cast<task_object*>(get_alloc_loc().task_cache.allocate());
 
         obj->tls_data.store(nullptr, std::memory_order_relaxed);
         obj->exdata.store(nullptr, std::memory_order_relaxed);
@@ -510,7 +526,7 @@ namespace fast_task {
                 delete const_cast<task_vtable*>(obj->vtable);
 
             obj->status.store(task_object::status_e::released, std::memory_order_relaxed);
-            get_loc().task_alloc_cache.deallocate(obj);
+            get_alloc_loc().task_cache.deallocate(obj);
             FT_DEBUG_ONLY(unregister_object(obj));
         }
     }

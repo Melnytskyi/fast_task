@@ -130,8 +130,8 @@ namespace fast_task {
         flush_cold();
 
 
+        get_alloc_loc().reset();
         fast_task::shared_lock _guard(glob.task_thread_safety);
-        get_loc().reset();
         --glob.thread_count;
         glob.executor_shutdown_notifier.notify_all();
     }
@@ -165,17 +165,17 @@ namespace fast_task {
 
     void makeTimeWait(std::chrono::high_resolution_clock::time_point t) {
         startTimeController();
-        auto& loc = get_loc();
-        get_data(loc.curr_task).set_awaked(false);
-        get_data(loc.curr_task).set_time_end(false);
+        auto loc = get_loc();
+        get_data(loc->curr_task).set_awaked(false);
+        get_data(loc->curr_task).set_time_end(false);
 
-        put_task_to_wheel(glob.timed_wheel, t, loc.curr_task);
+        put_task_to_wheel(glob.timed_wheel, t, loc->curr_task);
         glob.timer_waiter.notify_one();
     }
 
     void resetTimeWait() {
-        auto& loc = get_loc();
-        get_data(loc.curr_task).set_awaked(false);
-        get_data(loc.curr_task).set_time_end(false);
+        auto loc = get_loc();
+        get_data(loc->curr_task).set_awaked(false);
+        get_data(loc->curr_task).set_time_end(false);
     }
 } // namespace fast_task
