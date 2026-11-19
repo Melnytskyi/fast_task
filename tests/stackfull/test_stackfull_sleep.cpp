@@ -10,21 +10,21 @@
 class StackfullSleepTest : public SchedulerFixture {};
 
 TEST_F(StackfullSleepTest, SleepFor) {
-    auto start = std::chrono::high_resolution_clock::now();
+    auto start = fast_task::clock::now();
     run_task([&] {
         fast_task::this_task::sleep_for(std::chrono::milliseconds(50));
     });
-    auto elapsed = std::chrono::high_resolution_clock::now() - start;
+    auto elapsed = fast_task::clock::now() - start;
     EXPECT_GE(elapsed, std::chrono::milliseconds(40));
 }
 
 TEST_F(StackfullSleepTest, SleepUntil) {
-    auto tp = std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(50);
-    auto start = std::chrono::high_resolution_clock::now();
+    auto tp = fast_task::clock::now() + std::chrono::milliseconds(50);
+    auto start = fast_task::clock::now();
     run_task([&] {
         fast_task::this_task::sleep_until(tp);
     });
-    auto elapsed = std::chrono::high_resolution_clock::now() - start;
+    auto elapsed = fast_task::clock::now() - start;
     EXPECT_GE(elapsed, std::chrono::milliseconds(40));
 }
 
@@ -42,11 +42,11 @@ TEST_F(StackfullSleepTest, Yield) {
 }
 
 TEST_F(StackfullSleepTest, SleepForZeroReturnsQuickly) {
-    auto start = std::chrono::high_resolution_clock::now();
+    auto start = fast_task::clock::now();
     run_task([&] {
         fast_task::this_task::sleep_for(std::chrono::milliseconds(0));
     });
-    auto elapsed = std::chrono::high_resolution_clock::now() - start;
+    auto elapsed = fast_task::clock::now() - start;
     EXPECT_LT(elapsed, std::chrono::milliseconds(100));
 }
 

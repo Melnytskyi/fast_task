@@ -156,10 +156,10 @@ namespace fast_task {
 
         template <class Dur_resolution, class Dur_type>
         bool wait_for(std::chrono::duration<Dur_resolution, Dur_type> duration) {
-            return wait_until(std::chrono::high_resolution_clock::now() + duration);
+            return wait_until(fast_task::clock::now() + duration);
         }
 
-        bool wait_until(std::chrono::high_resolution_clock::time_point time) {
+        bool wait_until(fast_task::time_point time) {
             if (!task_.is_ended())
                 if (!task_.await_task_until(time))
                     return false;
@@ -177,10 +177,10 @@ namespace fast_task {
 
         template <class Dur_resolution, class Dur_type>
         bool wait_for_no_except(std::chrono::duration<Dur_resolution, Dur_type> duration) {
-            return wait_until_no_except(std::chrono::high_resolution_clock::now() + duration);
+            return wait_until_no_except(fast_task::clock::now() + duration);
         }
 
-        bool wait_until_no_except(std::chrono::high_resolution_clock::time_point time) {
+        bool wait_until_no_except(fast_task::time_point time) {
             if (!task_.is_ended())
                 if (!task_.await_task_until(time))
                     return false;
@@ -203,7 +203,7 @@ namespace fast_task {
             return task_.enter_wait(t, state);
         }
 
-        bool enter_wait_until(const task& t, enter_state& state, std::chrono::high_resolution_clock::time_point time) {
+        bool enter_wait_until(const task& t, enter_state& state, fast_task::time_point time) {
             return task_.enter_wait_until(t, state, time);
         }
     };
@@ -302,23 +302,23 @@ namespace fast_task {
 
         template <class Dur_resolution, class Dur_type>
         bool wait_for(std::chrono::duration<Dur_resolution, Dur_type> duration) {
-            return wait_until(std::chrono::high_resolution_clock::now() + duration);
+            return wait_until(fast_task::clock::now() + duration);
         }
 
-        bool wait_until(std::chrono::time_point<std::chrono::high_resolution_clock> time);
+        bool wait_until(fast_task::time_point time);
         void wait_no_except();
 
         template <class Dur_resolution, class Dur_type>
         bool wait_for_no_except(std::chrono::duration<Dur_resolution, Dur_type> duration) {
-            return wait_until_no_except(std::chrono::high_resolution_clock::now() + duration);
+            return wait_until_no_except(fast_task::clock::now() + duration);
         }
 
-        bool wait_until_no_except(std::chrono::time_point<std::chrono::high_resolution_clock> time);
+        bool wait_until_no_except(fast_task::time_point time);
         bool has_exception() const;
         bool is_canceled() const;
         void cancel();
         bool enter_wait(const task&, enter_state& t);
-        bool enter_wait_until(const task&, enter_state& t, std::chrono::high_resolution_clock::time_point time);
+        bool enter_wait_until(const task&, enter_state& t, fast_task::time_point time);
     };
 
     extern template class FT_API future<void>;

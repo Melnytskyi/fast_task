@@ -17,29 +17,45 @@ namespace fast_task {
         syscall(SYS_futex, address, FUTEX_WAIT_PRIVATE, expected_value, nullptr, nullptr, 0);
     }
 
-    bool native_futex_wait_until(std::atomic<uint32_t>* address, uint32_t expected_value, std::chrono::high_resolution_clock::time_point time_point) {
-        auto now = std::chrono::high_resolution_clock::now();
-        if (now >= time_point)
-            return false;
-
-        auto sec = std::chrono::time_point_cast<std::chrono::seconds>(time_point);
-        auto nsec = std::chrono::duration_cast<std::chrono::nanoseconds>(time_point - sec);
-
+    bool native_futex_wait_until(std::atomic<uint32_t>* address, uint32_t expected_value, fast_task::time_point time_point) {
+        // FUTEX_WAIT_BITSET without FUTEX_CLOCK_REALTIME treats the timeout as an
+        // absolute CLOCK_MONOTONIC value, which is exactly the fast_task::clock
+        // base. Asking for FUTEX_CLOCK_REALTIME made the kernel compare a
+        // monotonic deadline against the wall clock, so every timed futex wait
+        // returned immediately after a clock step.
+        //
+        // The clock is only read for a bounded wait. An unbounded park (the
+        // idle worker's normal state) passes time_point::max(), and reading the
+        // clock there was a wasted vDSO round-trip on the parking *and* on the
+        // waking side of every park: the AMD uProf profile of the 1M empty-task
+        // stream showed __clock_gettime inside scheduler_event::wait even though
+        // no waiter ever had a deadline.
         struct timespec ts;
-        ts.tv_sec = static_cast<time_t>(sec.time_since_epoch().count());
-        ts.tv_nsec = static_cast<long>(nsec.count());
+        const struct timespec* timeout = nullptr;
+        if (time_point != fast_task::time_point::max()) {
+            auto now = fast_task::clock::now();
+            if (now >= time_point)
+                return false;
 
-        if (ts.tv_nsec < 0) {
-            ts.tv_sec -= 1;
-            ts.tv_nsec += 1000000000L;
+            auto sec = std::chrono::time_point_cast<std::chrono::seconds>(time_point);
+            auto nsec = std::chrono::duration_cast<std::chrono::nanoseconds>(time_point - sec);
+
+            ts.tv_sec = static_cast<time_t>(sec.time_since_epoch().count());
+            ts.tv_nsec = static_cast<long>(nsec.count());
+
+            if (ts.tv_nsec < 0) {
+                ts.tv_sec -= 1;
+                ts.tv_nsec += 1000000000L;
+            }
+            timeout = &ts;
         }
 
         long ret = syscall(
             SYS_futex,
             address,
-            FUTEX_WAIT_BITSET_PRIVATE | FUTEX_CLOCK_REALTIME,
+            FUTEX_WAIT_BITSET_PRIVATE,
             expected_value,
-            &ts,
+            timeout,
             nullptr,
             FUTEX_BITSET_MATCH_ANY
         );
@@ -49,7 +65,16 @@ namespace fast_task {
     }
 
     void native_futex_wake(std::atomic_uint32_t* address, uint32_t count) {
-        syscall(SYS_futex, address, FUTEX_WAKE_PRIVATE, count, nullptr, nullptr, 0);
+        // The kernel takes FUTEX_WAKE's count as a *signed* int, so a caller
+        // asking for "everybody" with UINT32_MAX arrives as -1 and futex_wake()
+        // stops after a single waiter (measured: it wakes exactly one, and
+        // returns 1). Clamping to INT32_MAX keeps "unbounded" unbounded; the
+        // kernel never wakes more threads than are actually parked, so the
+        // value only has to exceed any possible sleeper count.
+        const long wake_count = count > static_cast<uint32_t>(INT32_MAX)
+                                    ? static_cast<long>(INT32_MAX)
+                                    : static_cast<long>(count);
+        syscall(SYS_futex, address, FUTEX_WAKE_PRIVATE, wake_count, nullptr, nullptr, 0);
     }
 }
 #elif defined(PLATFORM_WINDOWS)
@@ -61,15 +86,23 @@ namespace fast_task {
         WaitOnAddress(address, &expected_value, sizeof(uint32_t), INFINITE);
     }
 
-    bool native_futex_wait_until(std::atomic<uint32_t>* address, uint32_t expected_value, std::chrono::high_resolution_clock::time_point time_point) {
-        auto now = std::chrono::high_resolution_clock::now();
+    bool native_futex_wait_until(std::atomic<uint32_t>* address, uint32_t expected_value, fast_task::time_point time_point) {
+        auto now = fast_task::clock::now();
         if (now >= time_point)
             return false;
 
-        auto dur = time_point - now;
-        auto ms = std::chrono::ceil<std::chrono::milliseconds>(dur);
+        // WaitOnAddress takes a relative timeout, so an "infinite" deadline maps
+        // to INFINITE instead of an overflowing DWORD.
+        DWORD wait_ms = INFINITE;
+        if (time_point != fast_task::time_point::max()) {
+            auto ms = std::chrono::ceil<std::chrono::milliseconds>(time_point - now);
+            if (ms.count() > 0)
+                wait_ms = ms.count() > 0x7FFFFFFF ? 0x7FFFFFFF : static_cast<DWORD>(ms.count());
+            else
+                wait_ms = 0;
+        }
 
-        BOOL res = WaitOnAddress(address, &expected_value, sizeof(uint32_t), static_cast<DWORD>(ms.count()));
+        BOOL res = WaitOnAddress(address, &expected_value, sizeof(uint32_t), wait_ms);
 
         if (!res && GetLastError() == ERROR_TIMEOUT)
             return false;
@@ -547,7 +580,7 @@ namespace fast_task::futex {
         }
     }
 
-    bool FT_API wait_on_address_until(void* address, bool (*check_callback)(void*), std::chrono::high_resolution_clock::time_point time_point, node_data data) {
+    bool FT_API wait_on_address_until(void* address, bool (*check_callback)(void*), fast_task::time_point time_point, node_data data) {
         bucket_t& bucket = glob.futex_global.get_bucket(address);
         std::unique_lock guard(bucket.lock);
 
@@ -652,7 +685,7 @@ namespace fast_task::futex {
         void* lock_address,
         bool (*make_unlock_callback)(void*, bool more_waiters_present),
         bool (*is_unlocked_callback)(void*, bool),
-        std::chrono::high_resolution_clock::time_point time_point,
+        fast_task::time_point time_point,
         node_data data
     ) {
         bucket_t& bucket = glob.futex_global.get_bucket(address);
@@ -744,7 +777,7 @@ namespace fast_task::futex {
         void* address,
         bool (*check_callback)(void*),
         enter_state& state,
-        std::chrono::high_resolution_clock::time_point time_point,
+        fast_task::time_point time_point,
         node_data data
     ) {
         bucket_t& bucket = glob.futex_global.get_bucket(address);
@@ -812,7 +845,7 @@ namespace fast_task::futex {
         bool (*make_unlock_callback)(void*, bool more_waiters_present),
         bool (*is_unlocked_callback)(void*, bool mark_request),
         enter_state& state,
-        std::chrono::high_resolution_clock::time_point time_point,
+        fast_task::time_point time_point,
         node_data data
     ) {
         bucket_t& bucket = glob.futex_global.get_bucket(address);
@@ -876,7 +909,7 @@ namespace fast_task::futex {
         bool (*check_callback)(void*),
         void (*lock_callback)(void*, const task& task_obj, node_data),
         enter_state& state,
-        std::chrono::high_resolution_clock::time_point time_point,
+        fast_task::time_point time_point,
         node_data data
     ) {
         bucket_t& bucket = glob.futex_global.get_bucket(address);

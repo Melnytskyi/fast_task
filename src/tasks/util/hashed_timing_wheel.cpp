@@ -334,7 +334,7 @@ namespace fast_task {
     }
 
     hashed_timing_wheel::hashed_timing_wheel() {
-        epoch_ = std::chrono::high_resolution_clock::now();
+        epoch_ = fast_task::clock::now();
         for (auto& level : slots_)
             for (auto& slot : level)
                 slot.store(nullptr, std::memory_order_relaxed);
@@ -353,7 +353,7 @@ namespace fast_task {
         return static_cast<size_t>((tick >> (level * SLOT_BITS)) & (SLOTS - 1));
     }
 
-    uint64_t hashed_timing_wheel::to_ticks(std::chrono::high_resolution_clock::time_point tp) const {
+    uint64_t hashed_timing_wheel::to_ticks(fast_task::time_point tp) const {
         auto dur = tp - epoch_;
         auto us = std::chrono::duration_cast<std::chrono::microseconds>(dur).count();
 #if FT_TIMER_PRECISION == 1
@@ -365,7 +365,7 @@ namespace fast_task {
 #endif
     }
 
-    std::chrono::high_resolution_clock::time_point hashed_timing_wheel::to_timepoint(uint64_t ticks) const {
+    fast_task::time_point hashed_timing_wheel::to_timepoint(uint64_t ticks) const {
 #if FT_TIMER_PRECISION == 1
         auto dur = std::chrono::microseconds(ticks);
 #elif FT_TIMER_PRECISION == 1000
@@ -498,52 +498,56 @@ namespace fast_task {
         has_overflow_.store(drained > 0, std::memory_order_relaxed);
     }
 
-    std::chrono::high_resolution_clock::time_point hashed_timing_wheel::next_deadline() const {
-        auto earliest = std::chrono::high_resolution_clock::time_point::max();
+    fast_task::time_point hashed_timing_wheel::next_deadline() const {
+        auto earliest = fast_task::time_point::max();
 
+        // Level 0 holds every node that fires within the next SLOTS ticks, so
+        // the first live node found here is the true earliest. Scan the whole
+        // ring starting at current_tick_+1: a slot may be non-empty yet contain
+        // only canceled nodes, in which case we must keep looking instead of
+        // stopping at the first non-null slot.
         size_t start = static_cast<size_t>((current_tick_ + 1) & (SLOTS - 1));
         for (size_t i = 0; i < SLOTS; ++i) {
             size_t slot = (start + i) & (SLOTS - 1);
-            timing* t = slots_[0][slot].load(std::memory_order_acquire);
-            if (t) {
-                while (t) {
-                    if (!t->get_is_canceled()) {
+            for (timing* t = slots_[0][slot].load(std::memory_order_acquire);
+                 t;
+                 t = t->wheel_next.load(std::memory_order_acquire)) {
+                if (t->get_is_canceled())
+                    continue;
+                auto tp = to_timepoint(t->wait_ticks);
+                if (tp < earliest)
+                    earliest = tp;
+            }
+            if (earliest != fast_task::time_point::max())
+                break;
+        }
+
+        // Nothing in level 0: the next deadline lives in a coarser level. Those
+        // nodes are guaranteed to be further out than anything level 0 could
+        // hold, so the first live node found in the lowest non-empty level wins.
+        if (earliest == fast_task::time_point::max()) {
+            for (size_t L = 1; L < LEVELS; ++L) {
+                for (size_t slot = 0; slot < SLOTS; ++slot) {
+                    for (timing* t = slots_[L][slot].load(std::memory_order_acquire);
+                         t;
+                         t = t->wheel_next.load(std::memory_order_acquire)) {
+                        if (t->get_is_canceled())
+                            continue;
                         auto tp = to_timepoint(t->wait_ticks);
                         if (tp < earliest)
                             earliest = tp;
                     }
-                    t = t->wheel_next.load(std::memory_order_acquire);
-                }
-                break;
-            }
-        }
-
-        if (earliest == std::chrono::high_resolution_clock::time_point::max()) {
-            for (size_t L = 1; L < LEVELS; ++L) {
-                for (size_t slot = 0; slot < SLOTS; ++slot) {
-                    timing* t = slots_[L][slot].load(std::memory_order_acquire);
-                    if (t) {
-                        while (t) {
-                            if (!t->get_is_canceled()) {
-                                auto tp = to_timepoint(t->wait_ticks);
-                                if (tp < earliest)
-                                    earliest = tp;
-                            }
-                            t = t->wheel_next.load(
-                                std::memory_order_acquire
-                            );
-                        }
+                    if (earliest != fast_task::time_point::max())
                         break;
-                    }
                 }
-                if (earliest != std::chrono::high_resolution_clock::time_point::max())
+                if (earliest != fast_task::time_point::max())
                     break;
             }
         }
 
         if (has_overflow_.load(std::memory_order_acquire)) {
             auto now_plus_range = to_timepoint(current_tick_ + MAX_TICK_RANGE);
-            if (earliest == std::chrono::high_resolution_clock::time_point::max() || now_plus_range < earliest)
+            if (earliest == fast_task::time_point::max() || now_plus_range < earliest)
                 earliest = now_plus_range;
         }
 

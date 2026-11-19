@@ -11,6 +11,7 @@
 
 #include <fast_task/shared.hpp>
 #include <tasks/util/cpu_usage.hpp>
+#include <tasks/util/pcg32.hpp>
 
 namespace fast_task::util {
     class FT_API_LOCAL hill_climb {
@@ -40,7 +41,11 @@ namespace fast_task::util {
         std::vector<double> thread_counts;
         uint32_t current_sample_ms = 0;
 
-        std::mt19937 _random_interval_generator;
+        // S2a (§2.2): pcg32 instead of std::mt19937. It exposes the
+        // UniformRandomBitGenerator interface, so std::uniform_int_distribution
+        // keeps working, and the climber no longer drags the state of the
+        // Mersenne twister into every pool storage.
+        pcg32 _random_interval_generator;
         util::cpu::usage_prev_stat prev_stat;
         std::complex<double> get_wave_component(std::vector<double>& samples, size_t num_samples, double period);
         void set_thread_count(uint32_t thread_count);

@@ -231,7 +231,9 @@ namespace fast_task::interrupt {
             sev.sigev_notify = SIGEV_THREAD_ID;
             sev.sigev_signo = PREEMPTION_SIGNAL;
             sev._sigev_un._tid = syscall(SYS_gettid);
-            if (timer_create(CLOCK_REALTIME, &sev, &timer.handle->timerid) == -1)
+            // CLOCK_MONOTONIC: the preemption quantum must not change length
+            // when the wall clock is stepped.
+            if (timer_create(CLOCK_MONOTONIC, &sev, &timer.handle->timerid) == -1)
                 return false;
             timer.initialized = true;
         }

@@ -101,7 +101,7 @@ namespace fast_task {
         return true;
     }
 
-    bool rw_mutex::try_read_lock_until(std::chrono::high_resolution_clock::time_point time_point) {
+    bool rw_mutex::try_read_lock_until(fast_task::time_point time_point) {
         interrupt_unsafe_region region;
         while (true) {
             uint64_t writer = values.state.load(std::memory_order_relaxed);
@@ -208,7 +208,7 @@ namespace fast_task {
         return values.state.compare_exchange_strong(expected, self, std::memory_order_acquire, std::memory_order_relaxed);
     }
 
-    bool rw_mutex::try_write_lock_until(std::chrono::high_resolution_clock::time_point time_point) {
+    bool rw_mutex::try_write_lock_until(fast_task::time_point time_point) {
         interrupt_unsafe_region region;
         size_t self = this_task::get_id();
         while (true) {
@@ -300,7 +300,7 @@ namespace fast_task {
         );
     }
 
-    bool rw_mutex::enter_read_wait_until(const task& task_obj, enter_state& state, std::chrono::high_resolution_clock::time_point time_point) {
+    bool rw_mutex::enter_read_wait_until(const task& task_obj, enter_state& state, fast_task::time_point time_point) {
         interrupt_unsafe_region region;
         return futex::enter_wait_on_address_lock_until(
             task_obj,
@@ -345,7 +345,7 @@ namespace fast_task {
         );
     }
 
-    bool rw_mutex::enter_write_wait_until(const task& task_obj, enter_state& state, std::chrono::high_resolution_clock::time_point time_point) {
+    bool rw_mutex::enter_write_wait_until(const task& task_obj, enter_state& state, fast_task::time_point time_point) {
         interrupt_unsafe_region region;
         return futex::enter_wait_on_address_lock_until(
             task_obj,

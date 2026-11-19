@@ -34,17 +34,17 @@ namespace fast_task {
         void set_max_threshold(size_t val);
         void lock();
         bool try_lock();
-        bool try_lock_until(std::chrono::high_resolution_clock::time_point time_point);
+        bool try_lock_until(fast_task::time_point time_point);
         void release();
         void release_all();
         bool is_locked();
 
         bool enter_wait(const task&, enter_state& task);
-        bool enter_wait_until(const task&, enter_state& task, std::chrono::high_resolution_clock::time_point);
+        bool enter_wait_until(const task&, enter_state& task, fast_task::time_point);
 
         template <class Rep, class Period>
         bool try_lock_for(const std::chrono::duration<Rep, Period>& duration) {
-            return try_lock_until(std::chrono::high_resolution_clock::now() + duration);
+            return try_lock_until(fast_task::clock::now() + duration);
         }
 
 #if __cplusplus >= 202002
@@ -52,13 +52,13 @@ namespace fast_task {
             return detail::async_lock(*this);
         }
 
-        [[nodiscard]] inline auto async_try_lock_until(std::chrono::high_resolution_clock::time_point time_point) {
+        [[nodiscard]] inline auto async_try_lock_until(fast_task::time_point time_point) {
             return detail::async_try_lock_until(*this, time_point);
         }
 
         template <class Rep, class Period>
         [[nodiscard]] inline auto async_try_lock_for(const std::chrono::duration<Rep, Period>& duration) {
-            return detail::async_try_lock_until(*this, std::chrono::high_resolution_clock::now() + duration);
+            return detail::async_try_lock_until(*this, fast_task::clock::now() + duration);
         }
 #endif
     };
@@ -85,29 +85,29 @@ namespace fast_task {
         void set_max_threshold(size_t val);
         void lock();
         bool try_lock();
-        bool try_lock_until(std::chrono::high_resolution_clock::time_point time_point);
+        bool try_lock_until(fast_task::time_point time_point);
         void unlock();
         bool is_locked();
 
         bool enter_wait(const task&, enter_state& task);
-        bool enter_wait_until(const task&, enter_state& task, std::chrono::high_resolution_clock::time_point);
+        bool enter_wait_until(const task&, enter_state& task, fast_task::time_point);
 
         template <class Rep, class Period>
         bool try_lock_for(const std::chrono::duration<Rep, Period>& duration) {
-            return try_lock_until(std::chrono::high_resolution_clock::now() + duration);
+            return try_lock_until(fast_task::clock::now() + duration);
         }
 #if __cplusplus >= 202002
         [[nodiscard]] inline auto async_lock() {
             return detail::async_lock(*this);
         }
 
-        [[nodiscard]] inline auto async_try_lock_until(std::chrono::high_resolution_clock::time_point time_point) {
+        [[nodiscard]] inline auto async_try_lock_until(fast_task::time_point time_point) {
             return detail::async_try_lock_until(*this, time_point);
         }
 
         template <class Rep, class Period>
         [[nodiscard]] inline auto async_try_lock_for(const std::chrono::duration<Rep, Period>& duration) {
-            return detail::async_try_lock_until(*this, std::chrono::high_resolution_clock::now() + duration);
+            return detail::async_try_lock_until(*this, fast_task::clock::now() + duration);
         }
 #endif
     };

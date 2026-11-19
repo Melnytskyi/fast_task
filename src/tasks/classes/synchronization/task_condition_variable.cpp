@@ -45,7 +45,7 @@ namespace fast_task {
         guard = fast_task::unique_lock<mutex>{*mut}; //locks
     }
 
-    bool condition_variable::wait_until(fast_task::unique_lock<mutex>& guard, std::chrono::high_resolution_clock::time_point time_point) {
+    bool condition_variable::wait_until(fast_task::unique_lock<mutex>& guard, fast_task::time_point time_point) {
         auto* mut = guard.release();
         auto res = futex::unlock_and_wait_until(
             &address,
@@ -85,7 +85,7 @@ namespace fast_task {
         guard = std::unique_lock<mutex>{*mut}; //locks
     }
 
-    bool condition_variable::wait_until(std::unique_lock<mutex>& guard, std::chrono::high_resolution_clock::time_point time_point) {
+    bool condition_variable::wait_until(std::unique_lock<mutex>& guard, fast_task::time_point time_point) {
         auto* mut = guard.release();
         auto res = futex::unlock_and_wait_until(
             &address,
@@ -166,7 +166,7 @@ namespace fast_task {
         auto res = new redefine_start_callback();
         get_data(task).on_start_override = res;
         if (get_data(task).is_created())
-            ++glob.executing_tasks;
+            task_mark_created(get_data(task));
 
         get_data(task).set_status(task_object::status_e::scheduled);
         futex::enter_wait_on_address(
@@ -210,7 +210,7 @@ namespace fast_task {
         auto res = new redefine_start_callback();
         get_data(task).on_start_override = res;
         if (get_data(task).is_created())
-            ++glob.executing_tasks;
+            task_mark_created(get_data(task));
 
         get_data(task).set_status(task_object::status_e::scheduled);
         futex::enter_wait_on_address(
@@ -242,8 +242,8 @@ namespace fast_task {
         return false;
     }
 
-    bool condition_variable::enter_wait_until(mutex& mut, const task& task, enter_state& st, std::chrono::high_resolution_clock::time_point time_point) {
-        if (std::chrono::high_resolution_clock::now() >= time_point)
+    bool condition_variable::enter_wait_until(mutex& mut, const task& task, enter_state& st, fast_task::time_point time_point) {
+        if (fast_task::clock::now() >= time_point)
             return true;
         get_data(task).set_relock(mut);
         return futex::enter_unlock_and_wait_until(

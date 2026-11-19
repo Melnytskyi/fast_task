@@ -31,15 +31,15 @@ namespace fast_task {
         void set_max_at_execution(size_t val);
         size_t get_max_at_execution();
         void wait();
-        bool wait_until(std::chrono::high_resolution_clock::time_point time_point);
+        bool wait_until(fast_task::time_point time_point);
 
         template <class Rep, class Period>
         bool wait_for(const std::chrono::duration<Rep, Period>& duration) {
-            return wait_until(std::chrono::high_resolution_clock::now() + duration);
+            return wait_until(fast_task::clock::now() + duration);
         }
 
         bool enter_wait(const task&, enter_state& task);
-        bool enter_wait_until(const task&, enter_state& task, std::chrono::high_resolution_clock::time_point);
+        bool enter_wait_until(const task&, enter_state& task, fast_task::time_point);
 
 #if __cplusplus >= 202002
         [[nodiscard]] auto async_wait() {
@@ -61,16 +61,16 @@ namespace fast_task {
             return awaiter{{}, *this};
         }
 
-        [[nodiscard]] auto async_wait_until(std::chrono::high_resolution_clock::time_point time_point) {
+        [[nodiscard]] auto async_wait_until(fast_task::time_point time_point) {
             struct awaiter {
                 enter_state state;
                 queue& q;
-                std::chrono::high_resolution_clock::time_point time_point;
+                fast_task::time_point time_point;
                 fast_task::task task_obj;
                 bool successful = false;
 
                 bool await_ready() noexcept {
-                    successful = std::chrono::high_resolution_clock::now() >= time_point;
+                    successful = fast_task::clock::now() >= time_point;
                     return successful;
                 }
 
@@ -92,7 +92,7 @@ namespace fast_task {
 
         template <class Rep, class Period>
         [[nodiscard]] auto async_wait_for(const std::chrono::duration<Rep, Period>& duration) {
-            return async_wait_until(std::chrono::high_resolution_clock::now() + duration);
+            return async_wait_until(fast_task::clock::now() + duration);
         }
 #endif
     };

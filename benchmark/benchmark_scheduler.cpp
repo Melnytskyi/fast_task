@@ -88,12 +88,12 @@ static const scale_point scheduler_staggered_scales[] = {
 BENCHMARK_MEM(scheduler_staggered_sleep, scheduler_staggered_scales, std::chrono::milliseconds(50)) {
     std::vector<fast_task::task> tasks;
     tasks.reserve(scale);
-    auto coro = [](std::chrono::high_resolution_clock::time_point tp) -> fast_task::task_coro<void> {
+    auto coro = [](fast_task::time_point tp) -> fast_task::task_coro<void> {
         co_await fast_task::this_task::async_sleep_until(tp);
         co_return;
     };
 
-    auto tp = std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(50);
+    auto tp = fast_task::clock::now() + std::chrono::milliseconds(50);
     for (uint64_t i = 0; i < scale; ++i) {
         auto task = coro(tp);
         task->start();
@@ -113,7 +113,7 @@ static const scale_point scheduler_schedule_scales[] = {
 };
 
 BENCHMARK_MEM(scheduler_schedule_until, scheduler_schedule_scales, std::chrono::milliseconds(100)) {
-    auto tp = std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(100);
+    auto tp = fast_task::clock::now() + std::chrono::milliseconds(100);
     auto coro = []() -> fast_task::task_coro<void> {
         co_return;
     };

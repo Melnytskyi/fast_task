@@ -3,18 +3,14 @@
 // Distributed under the Boost Software License, Version 1.0.
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
+//
+// Residual internal implementation: the thread-local context accessors, the
+// task_object relock bridge and every task_object member function. The rest of
+// the old monolith now lives in tasks/core/* (S0b, plans/pool-architecture.md
+// §4); behaviour is unchanged.
 
 #include <fast_task/internal/futex.hpp>
 #include <tasks/_internal.hpp>
-
-#if PLATFORM_WINDOWS
-    #define NOMINMAX
-    #include <Windows.h>
-    #include <locale>
-#elif PLATFORM_LINUX
-    #include <fstream>
-    #include <iostream>
-#endif
 
 #if defined(__x86_64__) || defined(__i386__) || defined(_M_IX86) || defined(_M_X64)
     #define __IS_X86_OR_X64
@@ -25,11 +21,6 @@ namespace fast_task {
         return loc;
     }
 
-    NOINLINE allocators_local_t& get_alloc_loc() noexcept {
-        static thread_local allocators_local_t loc;
-        return loc;
-    }
-
     NOINLINE executors_local* get_loc() noexcept {
         return _get_loc();
     }
@@ -37,8 +28,6 @@ namespace fast_task {
     void set_loc(executors_local* loc) noexcept {
         _get_loc() = loc;
     }
-
-    executor_global glob;
 
     struct mutex_unify_relock_access {
         static void* raw_ptr(const mutex_unify& m) noexcept {
@@ -66,180 +55,6 @@ namespace fast_task {
 
     static_assert(sizeof(task_object::sbo_buffer) == task::sbo_size, "task::sbo_size must match task_object::sbo_buffer");
 
-    inline static constexpr std::chrono::nanoseconds priority_quantum_basic[] = {
-        std::chrono::nanoseconds(FT_PREEMPT_BACKGROUND_BASIC_QUANTUM_NS),
-        std::chrono::nanoseconds(FT_PREEMPT_LOW_BASIC_QUANTUM_NS),
-        std::chrono::nanoseconds(FT_PREEMPT_LOWER_BASIC_QUANTUM_NS),
-        std::chrono::nanoseconds(FT_PREEMPT_NORMAL_BASIC_QUANTUM_NS),
-        std::chrono::nanoseconds(FT_PREEMPT_HIGHER_BASIC_QUANTUM_NS),
-        std::chrono::nanoseconds(FT_PREEMPT_HIGH_BASIC_QUANTUM_NS),
-        std::chrono::nanoseconds::min()
-    };
-
-    inline static constexpr std::chrono::nanoseconds priority_quantum_max[] = {
-        std::chrono::nanoseconds(FT_PREEMPT_BACKGROUND_MAX_QUANTUM_NS),
-        std::chrono::nanoseconds(FT_PREEMPT_LOW_MAX_QUANTUM_NS),
-        std::chrono::nanoseconds(FT_PREEMPT_LOWER_MAX_QUANTUM_NS),
-        std::chrono::nanoseconds(FT_PREEMPT_NORMAL_MAX_QUANTUM_NS),
-        std::chrono::nanoseconds(FT_PREEMPT_HIGHER_MAX_QUANTUM_NS),
-        std::chrono::nanoseconds(FT_PREEMPT_HIGH_MAX_QUANTUM_NS),
-        std::chrono::nanoseconds::min()
-    };
-
-    std::chrono::nanoseconds next_quantum(task_priority priority, std::chrono::nanoseconds& current_available_quantum) {
-        if (priority == task_priority::semi_realtime)
-            return std::chrono::nanoseconds::min();
-
-        current_available_quantum += priority_quantum_basic[(size_t)priority];
-        if (current_available_quantum > priority_quantum_max[(size_t)priority])
-            current_available_quantum = priority_quantum_max[(size_t)priority];
-        return current_available_quantum > std::chrono::nanoseconds(0) ? current_available_quantum : std::chrono::nanoseconds(0);
-    }
-
-    std::chrono::nanoseconds peek_quantum(task_priority priority, std::chrono::nanoseconds current_available_quantum) {
-        if (priority == task_priority::semi_realtime)
-            return std::chrono::nanoseconds::min();
-
-        current_available_quantum += priority_quantum_basic[(size_t)priority];
-        if (current_available_quantum > priority_quantum_max[(size_t)priority])
-            current_available_quantum = priority_quantum_max[(size_t)priority];
-        return current_available_quantum > std::chrono::nanoseconds(0) ? current_available_quantum : std::chrono::nanoseconds(0);
-    }
-
-    void task_switch(task_priority priority, std::chrono::nanoseconds& current_available_quantum, std::chrono::nanoseconds elapsed) {
-        if (priority == task_priority::semi_realtime)
-            return;
-        current_available_quantum -= elapsed;
-    }
-
-    std::chrono::nanoseconds init_quantum(task_priority priority) {
-        return priority_quantum_basic[(size_t)priority];
-    }
-
-    bool can_be_scheduled_task_to_hot() {
-        if (task::max_running_tasks)
-            if (task::max_running_tasks <= glob.in_run_tasks.load(std::memory_order_relaxed))
-                return false;
-        return true;
-    }
-
-    void allocators_local_t::reset() {
-        task_cache.release();
-        timing_cache.release();
-    }
-
-    void executors_local::reset() {
-        ex_ptr = nullptr;
-        curr_task.reset();
-        transfer_state.pending.reset();
-        pending_timer = std::chrono::high_resolution_clock::time_point::min();
-    }
-
-    executors_local::~executors_local() {
-        reset();
-    }
-
-    executor_global::executor_global() = default;
-
-    executor_global::~executor_global() {}
-
-#if PLATFORM_WINDOWS
-    std::wstring s2ws(const std::string& str) {
-        int len = MultiByteToWideChar(CP_UTF8, 0, str.c_str(), -1, NULL, 0);
-        if (len == 0)
-            return L"";
-
-        std::vector<wchar_t> wstr(len);
-        MultiByteToWideChar(CP_UTF8, 0, str.c_str(), -1, &wstr[0], len);
-        return std::wstring(wstr.begin(), wstr.end() - 1);
-    }
-
-    std::string ws2s(const std::wstring& wstr) {
-        const CHAR def[] = " ";
-        BOOL used = true;
-        int len = WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), -1, NULL, 0, def, &used);
-        if (len == 0)
-            return "";
-
-        std::vector<char> str(len);
-        WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), -1, str.data(), len, def, &used);
-        return std::string(str.begin(), str.end() - 1);
-    }
-
-    bool _set_name_thread_dbg(const std::string& name, unsigned long thread_id) {
-        std::wstring wname = s2ws(name);
-        HANDLE thread = OpenThread(THREAD_SET_LIMITED_INFORMATION, false, thread_id);
-        if (!thread)
-            return false;
-        bool result = SUCCEEDED(SetThreadDescription(thread, wname.c_str()));
-        CloseHandle(thread);
-        return result;
-    }
-
-    bool _set_name_thread_dbg(const std::string& name) {
-        std::wstring wname = s2ws(name);
-        return SUCCEEDED(SetThreadDescription(GetCurrentThread(), wname.c_str()));
-    }
-
-    std::string _get_name_thread_dbg(unsigned long thread_id) {
-        HANDLE thread = OpenThread(THREAD_QUERY_LIMITED_INFORMATION, false, thread_id);
-        if (!thread)
-            return "";
-        WCHAR* res;
-        if (SUCCEEDED(GetThreadDescription(thread, &res))) {
-            std::string result = ws2s(res);
-            LocalFree(res);
-            CloseHandle(thread);
-            return result;
-        } else {
-            CloseHandle(thread);
-            return "";
-        }
-    }
-
-    unsigned long _thread_id() {
-        return GetCurrentThreadId();
-    }
-
-    bool is_debugger_attached() {
-        return IsDebuggerPresent();
-    }
-
-#elif PLATFORM_LINUX
-    bool _set_name_thread_dbg(const std::string& name) {
-        if (name.size() > 15)
-            return false;
-        return pthread_setname_np(pthread_self(), name.c_str()) == 0;
-    }
-
-    bool _set_name_thread_dbg(const std::string& name, unsigned long id) {
-        if (name.size() > 15)
-            return false;
-        return pthread_setname_np(id, name.c_str()) == 0;
-    }
-
-    std::string _get_name_thread_dbg(unsigned long thread_id) {
-        char name[16];
-        if (pthread_getname_np(pthread_t(thread_id), name, 16) != 0)
-            return "";
-        return name;
-    }
-
-    unsigned long _thread_id() {
-        return pthread_self();
-    }
-
-    bool is_debugger_attached() {
-        std::ifstream status_file("/proc/self/status");
-        if (!status_file.is_open())
-            return false;
-        std::string line;
-        while (std::getline(status_file, line))
-            if (line.rfind("TracerPid:", 0) == 0)
-                return std::stoi(line.substr(10)) != 0;
-        return false;
-    }
-#endif
     bool task_object::get_time_end() const noexcept {
         return (state.load(std::memory_order_acquire) & (state_f::time_end)) != 0;
     }
@@ -248,8 +63,8 @@ namespace fast_task {
         return (state.load(std::memory_order_acquire) & (state_f::awaked)) != 0;
     }
 
-    bool task_object::get_auto_bind() const noexcept {
-        return (state.load(std::memory_order_relaxed) & (state_f::auto_bind)) != 0;
+    bool task_object::get_pool_assigned() const noexcept {
+        return (state.load(std::memory_order_relaxed) & (state_f::pool_assigned)) != 0;
     }
 
     bool task_object::get_is_restartable() const noexcept {
@@ -278,10 +93,10 @@ namespace fast_task {
 
     template <fast_task::task_object::state_f::f flag>
     void set_flag(std::atomic<fast_task::task_object::state_f::f>& state, bool on) noexcept {
-        task_object::state_f::f cur = state.load(std::memory_order_relaxed), next;
-        do {
-            next = on ? task_object::state_f::f(cur | (flag)) : task_object::state_f::f(cur & ~(flag));
-        } while (!state.compare_exchange_weak(cur, next, std::memory_order_acq_rel, std::memory_order_relaxed));
+        if (on)
+            reinterpret_cast<std::atomic_uint16_t&>(state).fetch_or(flag, std::memory_order_acq_rel);
+        else
+            reinterpret_cast<std::atomic_uint16_t&>(state).fetch_and(~flag, std::memory_order_acq_rel);
     }
 
     void task_object::set_time_end(bool on) noexcept {
@@ -292,8 +107,8 @@ namespace fast_task {
         set_flag<state_f::awaked>(state, on);
     }
 
-    void task_object::set_auto_bind(bool on) noexcept {
-        set_flag<state_f::auto_bind>(state, on);
+    void task_object::set_pool_assigned(bool on) noexcept {
+        set_flag<state_f::pool_assigned>(state, on);
     }
 
     void task_object::set_is_restartable(bool on) noexcept {
@@ -331,7 +146,7 @@ namespace fast_task {
             cur = state_f::f(cur & ~state_f::spin_lock_locked);
             if (state.compare_exchange_weak(cur, state_f::f(cur | state_f::spin_lock_locked), std::memory_order_acquire, std::memory_order_relaxed))
                 return;
-#ifdef PLATFORM_WINDOWS
+#if defined(PLATFORM_WINDOWS)
     #ifdef __IS_X86_OR_X64
             _mm_pause();
     #endif
@@ -401,7 +216,7 @@ namespace fast_task {
         );
     }
 
-    void task_object::wait_until(std::chrono::high_resolution_clock::time_point time_point) {
+    void task_object::wait_until(fast_task::time_point time_point) {
         futex::wait_on_address_until(
             this,
             [](void* self) {
@@ -426,7 +241,7 @@ namespace fast_task {
         );
     }
 
-    bool task_object::enter_wait_until(const task& waiter, enter_state& st, std::chrono::high_resolution_clock::time_point time_point) {
+    bool task_object::enter_wait_until(const task& waiter, enter_state& st, fast_task::time_point time_point) {
         return futex::enter_wait_on_address_until(
             waiter,
             this,
@@ -472,7 +287,8 @@ namespace fast_task {
         obj->relock_type = 0;
         obj->status.store(status_e::created, std::memory_order_relaxed);
         obj->state.store(static_cast<state_f::f>(0), std::memory_order_relaxed);
-        obj->bind_to_worker_id = static_cast<uint16_t>(-1);
+        obj->pool_index = global_pool_index;
+        obj->pool_padding = 0;
         obj->awake_check = 0;
         obj->tls_capacity = 0;
         obj->link_counter.store(1, std::memory_order_relaxed);
@@ -510,11 +326,8 @@ namespace fast_task {
                 obj->exdata.store(nullptr, std::memory_order_relaxed);
             }
 
-            if (!ended && started) {
-                --glob.executing_tasks;
-                fast_task::shared_lock guard(glob.task_thread_safety);
-                glob.no_tasks_execute_notifier.notify_all();
-            }
+            if (!ended && started)
+                task_mark_completed(*obj);
 
 #ifdef FT_ENABLE_ABORT_IF_NEVER_STARTED
             if (!started && !ended) {

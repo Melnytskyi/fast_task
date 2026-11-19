@@ -232,7 +232,7 @@ namespace fast_task::debug {
         bool is_on_scheduler : 1;
         bool time_end : 1;
         bool awaked : 1;
-        bool auto_bind : 1;
+        bool pool_assigned : 1;
         bool is_sbo : 1;
         bool spin_lock_locked : 1;
         bool cancellation_requested : 1;
@@ -249,7 +249,7 @@ namespace fast_task::debug {
         size_t counter_context_switch;
         task_priority priority;
         uint16_t awake_check; //if check does not match with check from awake_item the awake is invalid and would be ignored by scheduler. This is intended behavior.
-        uint16_t bind_to_worker_id;
+        uint8_t pool_slot;    //0..254 user pool, 255 global (plans/pool-architecture.md §2.4)
 
         uintptr_t created_by_id;
         bool created_by_is_native; //defines meaning of the created_by_id field, if false the id means the task id

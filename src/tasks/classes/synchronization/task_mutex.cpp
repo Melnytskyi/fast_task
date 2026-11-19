@@ -90,7 +90,7 @@ namespace fast_task {
         return false;
     }
 
-    bool mutex::try_lock_until(std::chrono::high_resolution_clock::time_point time_point) {
+    bool mutex::try_lock_until(fast_task::time_point time_point) {
         interrupt_unsafe_region region;
         size_t expected = UNLOCKED;
         size_t self_id = this_task::get_id();
@@ -183,7 +183,7 @@ namespace fast_task {
         );
     }
 
-    bool mutex::enter_wait_until(const task& task, enter_state& es, std::chrono::high_resolution_clock::time_point time_point) {
+    bool mutex::enter_wait_until(const task& task, enter_state& es, fast_task::time_point time_point) {
         interrupt_unsafe_region region;
         size_t self_id = task.get_id();
         size_t expected = state.load(std::memory_order_relaxed);

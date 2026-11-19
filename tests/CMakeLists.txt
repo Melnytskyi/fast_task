@@ -17,12 +17,16 @@ include(GoogleTest)
 
 set(FT_TESTS_ROOT ${CMAKE_CURRENT_SOURCE_DIR})
 
+# Extra (optional) arguments after SOURCE_FILE are added to the include path. They
+# let a single test reach the private headers under src/ (used by
+# test_scheduler_event, which unit-tests the S1 eventcount directly).
 function(add_ft_test TARGET_NAME SOURCE_FILE)
     add_executable(${TARGET_NAME} ${SOURCE_FILE} ${FT_TESTS_ROOT}/main.cpp)
     target_link_libraries(${TARGET_NAME} PRIVATE GTest::gtest_main fast_task)
     target_include_directories(${TARGET_NAME} PRIVATE
         ${FT_TESTS_ROOT}              # for helpers.hpp
         ${CMAKE_SOURCE_DIR}/include   # library public headers
+        ${ARGN}
     )
     set_property(TARGET ${TARGET_NAME} PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
     set_target_properties(${TARGET_NAME} PROPERTIES

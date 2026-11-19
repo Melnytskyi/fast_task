@@ -24,9 +24,9 @@ namespace fast_task {
         condition_variable();
         ~condition_variable();
         void wait(fast_task::unique_lock<mutex>& lock);
-        bool wait_until(fast_task::unique_lock<mutex>& lock, std::chrono::high_resolution_clock::time_point time_point);
+        bool wait_until(fast_task::unique_lock<mutex>& lock, fast_task::time_point time_point);
         void wait(std::unique_lock<mutex>& lock);
-        bool wait_until(std::unique_lock<mutex>& lock, std::chrono::high_resolution_clock::time_point time_point);
+        bool wait_until(std::unique_lock<mutex>& lock, fast_task::time_point time_point);
         void notify_one();
         void notify_all();
         bool has_waiters();
@@ -35,16 +35,16 @@ namespace fast_task {
         void callback(std::unique_lock<mutex>& mut, const task& task);
 
         bool enter_wait(mutex& mut, const task& task, enter_state&);                                                       //always returns false, requires mut to be locked
-        bool enter_wait_until(mutex& mut, const task& task, enter_state&, std::chrono::high_resolution_clock::time_point); //could return true on early timeout, requires mut to be locked
+        bool enter_wait_until(mutex& mut, const task& task, enter_state&, fast_task::time_point); //could return true on early timeout, requires mut to be locked
 
         template <class Rep, class Period>
         bool wait_for(fast_task::unique_lock<mutex>& lock, const std::chrono::duration<Rep, Period>& duration) {
-            return wait_until(lock, std::chrono::high_resolution_clock::now() + duration);
+            return wait_until(lock, fast_task::clock::now() + duration);
         }
 
         template <class Rep, class Period>
         bool wait_for(std::unique_lock<mutex>& lock, const std::chrono::duration<Rep, Period>& duration) {
-            return wait_until(lock, std::chrono::high_resolution_clock::now() + duration);
+            return wait_until(lock, fast_task::clock::now() + duration);
         }
 
 #if __cplusplus >= 202002
@@ -71,18 +71,18 @@ namespace fast_task {
             return awaiter{{}, lock, lock.release(), *this};
         }
 
-        [[nodiscard]] auto async_wait_until(fast_task::unique_lock<mutex>& lock, std::chrono::high_resolution_clock::time_point time_point) {
+        [[nodiscard]] auto async_wait_until(fast_task::unique_lock<mutex>& lock, fast_task::time_point time_point) {
             struct awaiter {
                 enter_state state;
                 fast_task::unique_lock<mutex>& lock;
                 mutex* mut;
                 condition_variable& cv;
-                std::chrono::high_resolution_clock::time_point time_point;
+                fast_task::time_point time_point;
                 fast_task::task task_obj;
                 bool successful = false;
 
                 bool await_ready() noexcept {
-                    successful = std::chrono::high_resolution_clock::now() >= time_point;
+                    successful = fast_task::clock::now() >= time_point;
                     return successful;
                 }
 
@@ -105,7 +105,7 @@ namespace fast_task {
 
         template <class Rep, class Period>
         [[nodiscard]] auto async_wait_for(fast_task::unique_lock<mutex>& lock, const std::chrono::duration<Rep, Period>& duration) {
-            return async_wait_until(lock, std::chrono::high_resolution_clock::now() + duration);
+            return async_wait_until(lock, fast_task::clock::now() + duration);
         }
 
         [[nodiscard]] auto async_wait(std::unique_lock<mutex>& lock) {
@@ -131,18 +131,18 @@ namespace fast_task {
             return awaiter{{}, lock, lock.release(), *this};
         }
 
-        [[nodiscard]] auto async_wait_until(std::unique_lock<mutex>& lock, std::chrono::high_resolution_clock::time_point time_point) {
+        [[nodiscard]] auto async_wait_until(std::unique_lock<mutex>& lock, fast_task::time_point time_point) {
             struct awaiter {
                 enter_state state;
                 std::unique_lock<mutex>& lock;
                 mutex* mut;
                 condition_variable& cv;
-                std::chrono::high_resolution_clock::time_point time_point;
+                fast_task::time_point time_point;
                 fast_task::task task_obj;
                 bool successful = false;
 
                 bool await_ready() noexcept {
-                    successful = std::chrono::high_resolution_clock::now() >= time_point;
+                    successful = fast_task::clock::now() >= time_point;
                     return successful;
                 }
 
@@ -165,7 +165,7 @@ namespace fast_task {
 
         template <class Rep, class Period>
         [[nodiscard]] inline auto async_wait_for(condition_variable& cv, std::unique_lock<mutex>& lock, const std::chrono::duration<Rep, Period>& duration) {
-            return async_wait_until(cv, lock, std::chrono::high_resolution_clock::now() + duration);
+            return async_wait_until(cv, lock, fast_task::clock::now() + duration);
         }
 #endif
     };
@@ -201,11 +201,11 @@ namespace fast_task {
 
         template <class mut>
         bool wait_for(mut& mtx, std::chrono::milliseconds ms) {
-            return wait_until(mtx, std::chrono::high_resolution_clock::now() + ms);
+            return wait_until(mtx, fast_task::clock::now() + ms);
         }
 
         template <class mut>
-        bool wait_until(mut& mtx, std::chrono::high_resolution_clock::time_point time) {
+        bool wait_until(mut& mtx, fast_task::time_point time) {
             fast_task::unique_lock<mutex> lock(_mutex);
             relock_guard<mut> relock(mtx);
             bool ret = _cond.wait_until(lock, time);

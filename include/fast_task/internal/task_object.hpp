@@ -32,7 +32,11 @@ namespace fast_task {
                 is_on_scheduler = 0x2,
                 time_end = 0x4,
                 awaked = 0x8,
-                auto_bind = 0x10,
+                // The task is assigned to a pool; `pool_index` is then valid.
+                // Reuses the bit the removed `auto_bind` flag occupied, so the
+                // layout and `0x800` stay unchanged (plans/pool-architecture.md
+                // §2.4).
+                pool_assigned = 0x10,
                 is_sbo = 0x20,
                 spin_lock_locked = 0x40,
                 cancellation_requested = 0x80,
@@ -59,7 +63,8 @@ namespace fast_task {
         void* unused;                        //std::atomic<wait_item*> on_wait;     // 8 //TODO use this field to store the timeout pointer to enable automatic cancellations
         const task_vtable* vtable;           // 8
         void* relock;                        // 8
-        uint16_t bind_to_worker_id;          // 2
+        uint8_t pool_index;                  // 1 0..254 user pool, 255 global; valid when pool_assigned
+        uint8_t pool_padding;                // 1 keeps the following fields aligned
         uint16_t tls_capacity;               // 2
         uint16_t awake_check;                // 2
         uint16_t arena_offset_pages;         // 2[also used for allocator, do not modify!]
@@ -71,8 +76,8 @@ namespace fast_task {
         void set_time_end(bool state) noexcept;
         bool get_awaked() const noexcept;
         void set_awaked(bool state) noexcept;
-        bool get_auto_bind() const noexcept;
-        void set_auto_bind(bool state) noexcept;
+        bool get_pool_assigned() const noexcept;
+        void set_pool_assigned(bool state) noexcept;
         bool get_is_restartable() const noexcept;
         void set_is_restartable(bool state) noexcept;
         bool get_is_on_scheduler() const noexcept;
@@ -103,11 +108,11 @@ namespace fast_task {
         void unlock() noexcept;
 
         void wait();
-        void wait_until(std::chrono::high_resolution_clock::time_point);
+        void wait_until(fast_task::time_point);
         void cancel();
 
         bool enter_wait(const task&, enter_state& state);
-        bool enter_wait_until(const task&, enter_state& state, std::chrono::high_resolution_clock::time_point);
+        bool enter_wait_until(const task&, enter_state& state, fast_task::time_point);
         bool enter_cancel(const task&, enter_state& state);
 
         mutex_unify get_relock() noexcept;

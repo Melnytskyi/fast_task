@@ -31,11 +31,11 @@ namespace fast_task::detail {
     }
 
     template <class T>
-    [[nodiscard]] auto async_try_lock_until(T& mut, std::chrono::high_resolution_clock::time_point time_point) {
+    [[nodiscard]] auto async_try_lock_until(T& mut, fast_task::time_point time_point) {
         struct awaiter {
             enter_state state;
             T& mutex;
-            std::chrono::high_resolution_clock::time_point time_point;
+            fast_task::time_point time_point;
             fast_task::task task_obj;
             bool successful = false;
 

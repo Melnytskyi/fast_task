@@ -30,8 +30,8 @@ namespace fast_task {
             shutdown,  //set when deadline_timer is destructed
         };
         deadline_timer();
-        deadline_timer(std::chrono::high_resolution_clock::duration);
-        deadline_timer(std::chrono::high_resolution_clock::time_point);
+        deadline_timer(fast_task::clock::duration);
+        deadline_timer(fast_task::time_point);
         deadline_timer(deadline_timer&&);
         ~deadline_timer();
 
@@ -48,7 +48,7 @@ namespace fast_task {
         void async_wait(const std::function<void(status)>&);
 
         //returns count of canceled tasks
-        size_t expires_at(std::chrono::high_resolution_clock::time_point dur);
+        size_t expires_at(fast_task::time_point dur);
 
         status wait();
         status wait(fast_task::unique_lock<mutex_unify>& lock);
@@ -56,13 +56,13 @@ namespace fast_task {
 
         bool timed_out();
 
-        bool enter_wait(const task&, enter_state& task, std::chrono::high_resolution_clock::time_point& out_time);
-        bool enter_wait(mutex_unify& mut, const task& task, enter_state&, std::chrono::high_resolution_clock::time_point& out_time);
-        status get_status(const task& task, std::chrono::high_resolution_clock::time_point timeout_time);
+        bool enter_wait(const task&, enter_state& task, fast_task::time_point& out_time);
+        bool enter_wait(mutex_unify& mut, const task& task, enter_state&, fast_task::time_point& out_time);
+        status get_status(const task& task, fast_task::time_point timeout_time);
 
         template <class Rep, class Period>
         size_t expires_from_now(const std::chrono::duration<Rep, Period>& duration) {
-            return expires_at(std::chrono::high_resolution_clock::now() + duration);
+            return expires_at(fast_task::clock::now() + duration);
         }
 
 #if __cplusplus >= 202002
@@ -70,7 +70,7 @@ namespace fast_task {
             struct awaiter {
                 enter_state state;
                 deadline_timer& timer;
-                std::chrono::high_resolution_clock::time_point timeout_time;
+                fast_task::time_point timeout_time;
                 task task_obj;
 
                 bool await_ready() noexcept {
@@ -97,7 +97,7 @@ namespace fast_task {
                 enter_state state;
                 mutex_unify& mut;
                 deadline_timer& timer;
-                std::chrono::high_resolution_clock::time_point timeout_time;
+                fast_task::time_point timeout_time;
                 task task_obj;
 
                 bool await_ready() noexcept {
@@ -124,7 +124,7 @@ namespace fast_task {
                 enter_state state;
                 mutex_unify& mut;
                 deadline_timer& timer;
-                std::chrono::high_resolution_clock::time_point timeout_time;
+                fast_task::time_point timeout_time;
                 task task_obj;
 
                 bool await_ready() noexcept {

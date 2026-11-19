@@ -103,7 +103,7 @@ namespace fast_task::native {
         void unlock();
         bool try_lock();
         bool try_lock_for(std::chrono::milliseconds ms);
-        bool try_lock_until(std::chrono::high_resolution_clock::time_point time);
+        bool try_lock_until(fast_task::time_point time);
     };
 }
 

@@ -34,6 +34,12 @@ namespace fast_task::native {
         void lock();
         bool try_lock();
         void unlock();
+
+        // Advisory observation of the owner state, used by idle workers that
+        // want to know whether they should claim the floating driver. It is
+        // inherently racy as a synchronisation primitive and must never be used
+        // as one: callers re-validate with try_lock().
+        bool is_locked() const noexcept;
     };
 }
 

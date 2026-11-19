@@ -7,6 +7,7 @@
 #ifndef FAST_TASK_INCLUDE_TASK_TASK_FWD
 #define FAST_TASK_INCLUDE_TASK_TASK_FWD
 #pragma once
+#include "../clock.hpp"
 #include "../shared.hpp"
 #include "../shared/primitives.hpp"
 #include <chrono>

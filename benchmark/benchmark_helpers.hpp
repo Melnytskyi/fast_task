@@ -24,7 +24,9 @@
 #include <iostream>
 #include <string>
 #include <vector>
-using Clock = std::chrono::high_resolution_clock;
+// Benchmark wall-clock measurements stay independent of the library clock: the
+// harness measures wall time, the scheduler itself uses fast_task::clock.
+using Clock = std::chrono::steady_clock;
 
 #if defined(__linux__) || defined(__unix__)
     #define BENCH_KEEP_ALIVE __attribute__((used))

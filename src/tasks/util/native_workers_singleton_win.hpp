@@ -47,34 +47,51 @@ namespace fast_task::util {
     };
 
     class FT_API_LOCAL native_workers_singleton {
+        // Completion key reserved for driver wake-ups. Real handles are
+        // registered with a native_worker_manager* as their key, which is never
+        // null, so this sentinel cannot collide.
+        static constexpr ULONG_PTR WAKEUP_KEY = 0;
+
         std::shared_ptr<void> m_hCompletionPort;
+        std::vector<OVERLAPPED_ENTRY> m_entries;
 
         native_workers_singleton() {
             m_hCompletionPort.reset(CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 0), CloseHandle);
             if (!m_hCompletionPort)
                 throw std::runtime_error("CreateIoCompletionPort failed");
-            fast_task::native::thread(&native_workers_singleton::dispatch, this).detach();
+            m_entries.resize(std::min<size_t>(fast_task::native::thread::hardware_concurrency(), INT32_MAX));
         }
 
-        void dispatch() {
-            SetThreadDescription(GetCurrentThread(), L"native_dispatcher");
-            std::vector<OVERLAPPED_ENTRY> entries;
-            entries.resize(std::min<size_t>(fast_task::native::thread::hardware_concurrency(), INT32_MAX));
-            while (true) {
-                ULONG entries_count = 0;
-                auto status = GetQueuedCompletionStatusEx(m_hCompletionPort.get(), entries.data(), (ULONG)entries.size(), &entries_count, INFINITE, false);
-                if (!status)
+        // Block up to timeout_ms for completions, then dispatch them. A negative
+        // timeout means block indefinitely. Non-looping: driver_context decides
+        // when to call this. Returns true if any completion was dispatched.
+        bool poll_once(int timeout_ms) {
+            ULONG entries_count = 0;
+            DWORD wait_ms = timeout_ms < 0 ? INFINITE : static_cast<DWORD>(timeout_ms);
+            auto status = GetQueuedCompletionStatusEx(m_hCompletionPort.get(), m_entries.data(), (ULONG)m_entries.size(), &entries_count, wait_ms, false);
+            if (!status)
+                return false;
+
+            bool processed = false;
+            for (ULONG i = 0; i < entries_count; i++) {
+                auto& entry = m_entries[i];
+                if (entry.lpCompletionKey == WAKEUP_KEY)
                     continue;
-                for (ULONG i = 0; i < entries_count; i++) {
-                    auto& entry = entries[i];
-                    auto overlap = ((native_worker_handle*)entry.lpOverlapped);
-                    overlap->manager->handle(
-                        (void*)entry.lpCompletionKey,
-                        overlap,
-                        entry.dwNumberOfBytesTransferred
-                    );
-                }
+                auto overlap = ((native_worker_handle*)entry.lpOverlapped);
+                if (!overlap || !overlap->manager)
+                    continue;
+                overlap->manager->handle(
+                    (void*)entry.lpCompletionKey,
+                    overlap,
+                    entry.dwNumberOfBytesTransferred
+                );
+                processed = true;
             }
+            return processed;
+        }
+
+        void wake() {
+            PostQueuedCompletionStatus(m_hCompletionPort.get(), 0, WAKEUP_KEY, nullptr);
         }
 
         bool _register_handle(HANDLE hFile, void* data) {
@@ -92,6 +109,14 @@ namespace fast_task::util {
 
     public:
         ~native_workers_singleton() = default;
+
+        static bool poll_all(int timeout_ms) {
+            return get_instance().poll_once(timeout_ms);
+        }
+
+        static void wake_all() {
+            get_instance().wake();
+        }
 
         static bool register_handle(HANDLE hFile, void* data) {
             return get_instance()._register_handle(hFile, data);

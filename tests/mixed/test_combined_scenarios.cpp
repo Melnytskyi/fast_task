@@ -42,7 +42,7 @@ TEST_F(CombinedScenariosTest, DeadlineTimerCancelsBlockedTask) {
     fast_task::mutex mtx;
     std::atomic<bool> cancelled{false};
 
-    auto deadline = std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(50);
+    auto deadline = fast_task::clock::now() + std::chrono::milliseconds(50);
     auto t = fast_task::task::create(
         [&] {
             try {

@@ -40,7 +40,7 @@ TEST(TimedMutex, TryLockForTimesOut) {
 
 TEST(TimedMutex, TryLockUntilSucceeds) {
     fast_task::native::timed_mutex m;
-    auto deadline = std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(200);
+    auto deadline = fast_task::clock::now() + std::chrono::milliseconds(200);
     EXPECT_TRUE(m.try_lock_until(deadline));
     m.unlock();
 }
@@ -50,7 +50,7 @@ TEST(TimedMutex, TryLockUntilTimesOut) {
     m.lock();
     bool result = true;
     fast_task::native::thread t([&] {
-        auto deadline = std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(30);
+        auto deadline = fast_task::clock::now() + std::chrono::milliseconds(30);
         result = m.try_lock_until(deadline);
     });
     t.join();

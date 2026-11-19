@@ -27,6 +27,13 @@ export module fast_task;
 
 
 export namespace fast_task {
+    using ::fast_task::clock;
+    using ::fast_task::deadline_after;
+    using ::fast_task::duration;
+    using ::fast_task::is_no_deadline;
+    using ::fast_task::no_deadline;
+    using ::fast_task::time_point;
+
     using ::fast_task::task;
     using ::fast_task::task_priority;
 

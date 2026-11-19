@@ -26,7 +26,7 @@ namespace fast_task::futex {
     };
 
     void FT_API wait_on_address(void* address, bool (*check_callback)(void* address), node_data key = {0});
-    bool FT_API wait_on_address_until(void* address, bool (*check_callback)(void* address), std::chrono::high_resolution_clock::time_point time_point, node_data key = {0});
+    bool FT_API wait_on_address_until(void* address, bool (*check_callback)(void* address), fast_task::time_point time_point, node_data key = {0});
 
     void FT_API unlock_and_wait(
         void* address,
@@ -44,7 +44,7 @@ namespace fast_task::futex {
         void* lock_address,
         bool (*make_unlock_callback)(void* lock_address, bool more_waiters_present),
         bool (*is_unlocked_callback)(void* lock_address, bool mark_request),
-        std::chrono::high_resolution_clock::time_point time_point,
+        fast_task::time_point time_point,
         node_data key = {0}
     );
 
@@ -95,7 +95,7 @@ namespace fast_task::futex {
         void* address,
         bool (*check_callback)(void* address),
         enter_state& state,
-        std::chrono::high_resolution_clock::time_point time_point,
+        fast_task::time_point time_point,
         node_data key = {0}
     );
     bool FT_API enter_unlock_and_wait(
@@ -118,7 +118,7 @@ namespace fast_task::futex {
         bool (*make_unlock_callback)(void* lock_address, bool more_waiters_present),
         bool (*is_unlocked_callback)(void* lock_address, bool mark_request),
         enter_state& state,
-        std::chrono::high_resolution_clock::time_point time_point,
+        fast_task::time_point time_point,
         node_data key = {0}
     );
 
@@ -136,7 +136,7 @@ namespace fast_task::futex {
         bool (*check_callback)(void* address),
         void (*lock_callback)(void* address, const task& task_obj, node_data),
         enter_state& state,
-        std::chrono::high_resolution_clock::time_point time_point,
+        fast_task::time_point time_point,
         node_data key = {0}
     );
 }

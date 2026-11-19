@@ -35,7 +35,7 @@ namespace fast_task {
         return false;
     }
 
-    bool multiply_mutex::try_lock_until(std::chrono::high_resolution_clock::time_point time_point) {
+    bool multiply_mutex::try_lock_until(fast_task::time_point time_point) {
         std::vector<mutex_unify> locked;
         for (auto& mut : value.mu) {
             if (mut.try_lock_until(time_point))
@@ -76,7 +76,7 @@ namespace fast_task {
         return false;
     }
 
-    bool multiply_mutex::enter_wait_until(const task& parent_coro, enter_state&, std::chrono::high_resolution_clock::time_point time_point) {
+    bool multiply_mutex::enter_wait_until(const task& parent_coro, enter_state&, fast_task::time_point time_point) {
         if (try_lock())
             return true;
 

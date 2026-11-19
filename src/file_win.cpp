@@ -978,7 +978,7 @@ namespace fast_task::file {
     }
 
     template <>
-    bool io_operation<std::vector<uint8_t>>::enter_wait_until(const task& t, enter_state& state, std::chrono::high_resolution_clock::time_point tp) {
+    bool io_operation<std::vector<uint8_t>>::enter_wait_until(const task& t, enter_state& state, fast_task::time_point tp) {
         if (slot_)
             return slot_.enter_wait_until(t, state, tp);
         else
@@ -1028,7 +1028,7 @@ namespace fast_task::file {
     }
 
     template <>
-    bool io_operation<void>::enter_wait_until(const task& t, enter_state& state, std::chrono::high_resolution_clock::time_point tp) {
+    bool io_operation<void>::enter_wait_until(const task& t, enter_state& state, fast_task::time_point tp) {
         return slot_.enter_wait_until(t, state, tp);
     }
 

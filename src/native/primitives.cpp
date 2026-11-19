@@ -17,27 +17,90 @@
     #include <Windows.h>
 #else
     #include <chrono>
+    #include <limits>
 
     #include <pthread.h>
     #include <semaphore.h>
     #include <signal.h>
+    #include <time.h>
     #include <ucontext.h>
 
-static timespec to_abs_timespec(std::chrono::high_resolution_clock::time_point time) {
-    struct timespec ts;
-    clock_gettime(CLOCK_REALTIME, &ts);
-    auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(time - std::chrono::high_resolution_clock::now());
-    ts.tv_sec += ns.count() / 1000000000;
-    ts.tv_nsec += ns.count() % 1000000000;
-    if (ts.tv_nsec >= 1000000000) {
-        ts.tv_sec++;
-        ts.tv_nsec -= 1000000000;
-    } else if (ts.tv_nsec < 0) {
-        ts.tv_sec--;
-        ts.tv_nsec += 1000000000;
+// Absolute CLOCK_MONOTONIC timespec for a fast_task::time_point. The
+// condition_variable objects below are created with
+// pthread_condattr_setclock(CLOCK_MONOTONIC) whenever the libc allows it, so
+// their absolute deadlines and fast_task::clock share one time base.
+// Returns false for the "no deadline" sentinel.
+static bool to_abs_timespec(fast_task::time_point time, timespec& ts) {
+    if (fast_task::is_no_deadline(time))
+        return false;
+    if (time == fast_task::time_point::max()) {
+        // Far future, but still representable as a timespec.
+        ts.tv_sec = static_cast<time_t>(std::numeric_limits<time_t>::max() / 2);
+        ts.tv_nsec = 999999999L;
+        return true;
     }
-    return ts;
+    const auto since_epoch = time.time_since_epoch();
+    const auto secs = std::chrono::duration_cast<std::chrono::seconds>(since_epoch);
+    const auto nsecs = std::chrono::duration_cast<std::chrono::nanoseconds>(since_epoch - secs);
+    ts.tv_sec = static_cast<time_t>(secs.count());
+    ts.tv_nsec = static_cast<long>(nsecs.count());
+    if (ts.tv_nsec < 0) {
+        ts.tv_sec -= 1;
+        ts.tv_nsec += 1000000000L;
+    }
+    return true;
 }
+
+// Absolute CLOCK_REALTIME timespec for the same monotonic deadline. Used by the
+// pthread primitives that have no monotonic variant here, and by condition
+// variables whose setclock() call failed. The wall-clock step risk is confined
+// to those two paths.
+static bool to_abs_realtime_timespec(fast_task::time_point time, timespec& ts) {
+    if (fast_task::is_no_deadline(time))
+        return false;
+    if (time == fast_task::time_point::max()) {
+        ts.tv_sec = static_cast<time_t>(std::numeric_limits<time_t>::max() / 2);
+        ts.tv_nsec = 999999999L;
+        return true;
+    }
+    clock_gettime(CLOCK_REALTIME, &ts);
+    const auto remaining = time - fast_task::clock::now();
+    if (remaining <= fast_task::duration::zero())
+        return true; // already expired, callers re-check the clock
+    const auto secs = std::chrono::duration_cast<std::chrono::seconds>(remaining);
+    const auto nsecs = std::chrono::duration_cast<std::chrono::nanoseconds>(remaining - secs);
+    ts.tv_sec += static_cast<time_t>(secs.count());
+    ts.tv_nsec += static_cast<long>(nsecs.count());
+    if (ts.tv_nsec >= 1000000000L) {
+        ts.tv_sec += 1;
+        ts.tv_nsec -= 1000000000L;
+    }
+    return true;
+}
+
+// Whether pthread_condattr_setclock(CLOCK_MONOTONIC) works on this libc. The
+// answer is process wide, so it is probed exactly once.
+static bool condvar_monotonic() noexcept {
+    static const bool supported = [] {
+        pthread_condattr_t attr;
+        if (pthread_condattr_init(&attr) != 0)
+            return false;
+        const bool ok = pthread_condattr_setclock(&attr, CLOCK_MONOTONIC) == 0;
+        pthread_condattr_destroy(&attr);
+        return ok;
+    }();
+    return supported;
+}
+
+    // pthread_mutex_clocklock landed in glibc 2.30 and is only declared when
+    // _GNU_SOURCE is visible. Everything else converts the monotonic deadline to a
+    // realtime one and uses pthread_mutex_timedlock.
+    #if defined(__linux__) && defined(_GNU_SOURCE) && defined(__GLIBC__) && \
+        (__GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 30))
+        #define FAST_TASK_HAS_PTHREAD_MUTEX_CLOCKLOCK 1
+    #else
+        #define FAST_TASK_HAS_PTHREAD_MUTEX_CLOCKLOCK 0
+    #endif
 #endif
 
 namespace fast_task::native {
@@ -142,10 +205,10 @@ namespace fast_task::native {
     }
 
     bool timed_mutex::try_lock_for(std::chrono::milliseconds ms) {
-        return try_lock_until(std::chrono::high_resolution_clock::now() + ms);
+        return try_lock_until(fast_task::clock::now() + ms);
     }
 
-    bool timed_mutex::try_lock_until(std::chrono::high_resolution_clock::time_point time) {
+    bool timed_mutex::try_lock_until(fast_task::time_point time) {
         lock_guard<mutex> lock(_mutex);
         while (locked != 0)
             if (_cond.wait_until(_mutex, time) == cv_status::timeout)
@@ -173,20 +236,24 @@ namespace fast_task::native {
 
     void condition_variable::wait(mutex& mtx) {
         interrupt_unsafe_region region;
-        if (SleepConditionVariableSRW((PCONDITION_VARIABLE)&_cond, (PSRWLOCK)&mtx._mutex, INFINITE, 0)) {
-            DWORD err = GetLastError();
-            if (err)
-                throw std::system_error(err, std::system_category());
-        }
+        // SleepConditionVariableSRW returns non-zero on success, so GetLastError
+        // is only meaningful after a failure. The previous check threw whenever
+        // the leftover error code of an earlier call was non-zero.
+        if (!SleepConditionVariableSRW((PCONDITION_VARIABLE)&_cond, (PSRWLOCK)&mtx._mutex, INFINITE, 0))
+            throw std::system_error(static_cast<int>(GetLastError()), std::system_category());
     }
 
     cv_status condition_variable::wait_for(mutex& mtx, std::chrono::milliseconds ms) {
-        return wait_until(mtx, std::chrono::high_resolution_clock::now() + ms);
+        return wait_until(mtx, fast_task::clock::now() + ms);
     }
 
-    cv_status condition_variable::wait_until(mutex& mtx, std::chrono::high_resolution_clock::time_point time) {
+    cv_status condition_variable::wait_until(mutex& mtx, fast_task::time_point time) {
+        if (time == fast_task::time_point::max()) {
+            wait(mtx);
+            return cv_status::no_timeout;
+        }
         while (true) {
-            auto sleep_ms = std::chrono::duration_cast<std::chrono::milliseconds>(time - std::chrono::high_resolution_clock::now());
+            auto sleep_ms = std::chrono::duration_cast<std::chrono::milliseconds>(time - fast_task::clock::now());
             if (sleep_ms.count() <= 0)
                 return cv_status::timeout;
             DWORD wait_time = sleep_ms.count() > 0x7FFFFFFF ? 0x7FFFFFFF : (DWORD)sleep_ms.count();
@@ -205,27 +272,37 @@ namespace fast_task::native {
     void condition_variable::wait(recursive_mutex& mtx) {
         interrupt_unsafe_region region;
         auto state = mtx.relock_begin();
-        if (SleepConditionVariableSRW((PCONDITION_VARIABLE)&_cond, (PSRWLOCK)&mtx.actual_mutex._mutex, INFINITE, 0)) {
+        // Non-zero is success: the lock has already been reacquired. A failure
+        // leaves the recursive state restored and surfaces the real error.
+        if (!SleepConditionVariableSRW((PCONDITION_VARIABLE)&_cond, (PSRWLOCK)&mtx.actual_mutex._mutex, INFINITE, 0)) {
+            const DWORD err = GetLastError();
             mtx.lock();
             mtx.relock_end(state);
-            DWORD err = GetLastError();
-            if (err)
-                throw std::system_error(err, std::system_category());
-            else
-                return;
+            throw std::system_error(static_cast<int>(err), std::system_category());
         }
+        mtx.lock();
         mtx.relock_end(state);
     }
 
     cv_status condition_variable::wait_for(recursive_mutex& mtx, std::chrono::milliseconds ms) {
-        return wait_until(mtx, std::chrono::high_resolution_clock::now() + ms);
+        return wait_until(mtx, fast_task::clock::now() + ms);
     }
 
-    cv_status condition_variable::wait_until(recursive_mutex& mtx, std::chrono::high_resolution_clock::time_point time) {
+    cv_status condition_variable::wait_until(recursive_mutex& mtx, fast_task::time_point time) {
         interrupt_unsafe_region region;
         auto state = mtx.relock_begin();
+        if (time == fast_task::time_point::max()) {
+            const int err = SleepConditionVariableSRW((PCONDITION_VARIABLE)&_cond, (PSRWLOCK)&mtx.actual_mutex._mutex, INFINITE, 0)
+                                ? 0
+                                : static_cast<int>(GetLastError());
+            mtx.lock();
+            mtx.relock_end(state);
+            if (err)
+                throw std::system_error(err, std::system_category());
+            return cv_status::no_timeout;
+        }
         while (true) {
-            auto sleep_ms = std::chrono::duration_cast<std::chrono::milliseconds>(time - std::chrono::high_resolution_clock::now());
+            auto sleep_ms = std::chrono::duration_cast<std::chrono::milliseconds>(time - fast_task::clock::now());
             if (sleep_ms.count() <= 0)
                 return cv_status::timeout;
             DWORD wait_time = sleep_ms.count() > 0x7FFFFFFF ? 0x7FFFFFFF : (DWORD)sleep_ms.count();
@@ -410,16 +487,29 @@ namespace fast_task::native {
     }
 
     bool timed_mutex::try_lock_for(std::chrono::milliseconds ms) {
-        return try_lock_until(std::chrono::high_resolution_clock::now() + ms);
+        return try_lock_until(fast_task::clock::now() + ms);
     }
 
-    bool timed_mutex::try_lock_until(std::chrono::high_resolution_clock::time_point time) {
+    bool timed_mutex::try_lock_until(fast_task::time_point time) {
         interrupt_unsafe_region region;
+        if (time == fast_task::time_point::max()) {
+            int err = pthread_mutex_lock(_mutex);
+            if (err)
+                throw std::system_error(err, std::system_category());
+            interrupt_unsafe_region::lock();
+            return true;
+        }
         while (true) {
-            if (time <= std::chrono::high_resolution_clock::now())
+            if (time <= fast_task::clock::now())
                 return false;
-            timespec ts = to_abs_timespec(time);
+            timespec ts;
+    #if FAST_TASK_HAS_PTHREAD_MUTEX_CLOCKLOCK
+            to_abs_timespec(time, ts);
+            int err = pthread_mutex_clocklock(_mutex, CLOCK_MONOTONIC, &ts);
+    #else
+            to_abs_realtime_timespec(time, ts);
             int err = pthread_mutex_timedlock(_mutex, &ts);
+    #endif
             if (err == 0) {
                 interrupt_unsafe_region::lock();
                 return true;
@@ -432,7 +522,19 @@ namespace fast_task::native {
     condition_variable::condition_variable() {
         interrupt_unsafe_region region;
         _cond = new pthread_cond_t;
-        pthread_cond_init(_cond, nullptr);
+        // pthread_cond_timedwait takes an absolute deadline, so the condition
+        // variable must be created on CLOCK_MONOTONIC: that is the only way its
+        // deadline base matches fast_task::clock, and it keeps the wait immune
+        // to wall-clock steps.
+        if (condvar_monotonic()) {
+            pthread_condattr_t attr;
+            pthread_condattr_init(&attr);
+            pthread_condattr_setclock(&attr, CLOCK_MONOTONIC);
+            pthread_cond_init(_cond, &attr);
+            pthread_condattr_destroy(&attr);
+        } else {
+            pthread_cond_init(_cond, nullptr);
+        }
     }
 
     condition_variable::~condition_variable() noexcept {
@@ -467,19 +569,32 @@ namespace fast_task::native {
     }
 
     cv_status condition_variable::wait_for(mutex& mtx, std::chrono::milliseconds ms) {
-        return wait_until(mtx, std::chrono::high_resolution_clock::now() + ms);
+        return wait_until(mtx, fast_task::clock::now() + ms);
     }
 
-    cv_status condition_variable::wait_until(mutex& mtx, std::chrono::high_resolution_clock::time_point time) {
+    cv_status condition_variable::wait_until(mutex& mtx, fast_task::time_point time) {
         interrupt_unsafe_region region;
-        while (true) {
-            if (time <= std::chrono::high_resolution_clock::now())
-                return cv_status::timeout;
-            timespec ts = to_abs_timespec(time);
-            if (pthread_cond_timedwait(_cond, mtx._mutex, &ts) == 0)
-                return cv_status::no_timeout;
+        if (time == fast_task::time_point::max()) {
+            // A "no deadline" wait must block, not spin on an overflown timespec.
+            int err = pthread_cond_wait(_cond, mtx._mutex);
+            if (err)
+                throw std::system_error(err, std::system_category());
+            return cv_status::no_timeout;
         }
-        return cv_status::no_timeout;
+        while (true) {
+            if (time <= fast_task::clock::now())
+                return cv_status::timeout;
+            timespec ts;
+            if (condvar_monotonic())
+                to_abs_timespec(time, ts);
+            else
+                to_abs_realtime_timespec(time, ts);
+            int err = pthread_cond_timedwait(_cond, mtx._mutex, &ts);
+            if (err == 0)
+                return cv_status::no_timeout;
+            if (err != ETIMEDOUT)
+                throw std::system_error(err, std::system_category());
+        }
     }
 
     void condition_variable::wait(recursive_mutex& mtx) {
@@ -490,19 +605,31 @@ namespace fast_task::native {
     }
 
     cv_status condition_variable::wait_for(recursive_mutex& mtx, std::chrono::milliseconds ms) {
-        return wait_until(mtx, std::chrono::high_resolution_clock::now() + ms);
+        return wait_until(mtx, fast_task::clock::now() + ms);
     }
 
-    cv_status condition_variable::wait_until(recursive_mutex& mtx, std::chrono::high_resolution_clock::time_point time) {
+    cv_status condition_variable::wait_until(recursive_mutex& mtx, fast_task::time_point time) {
         interrupt_unsafe_region region;
-        while (true) {
-            if (time <= std::chrono::high_resolution_clock::now())
-                return cv_status::timeout;
-            timespec ts = to_abs_timespec(time);
-            if (pthread_cond_timedwait(_cond, mtx.actual_mutex._mutex, &ts) == 0)
-                return cv_status::no_timeout;
+        if (time == fast_task::time_point::max()) {
+            int err = pthread_cond_wait(_cond, mtx.actual_mutex._mutex);
+            if (err)
+                throw std::system_error(err, std::system_category());
+            return cv_status::no_timeout;
         }
-        return cv_status::no_timeout;
+        while (true) {
+            if (time <= fast_task::clock::now())
+                return cv_status::timeout;
+            timespec ts;
+            if (condvar_monotonic())
+                to_abs_timespec(time, ts);
+            else
+                to_abs_realtime_timespec(time, ts);
+            int err = pthread_cond_timedwait(_cond, mtx.actual_mutex._mutex, &ts);
+            if (err == 0)
+                return cv_status::no_timeout;
+            if (err != ETIMEDOUT)
+                throw std::system_error(err, std::system_category());
+        }
     }
 #endif
 

@@ -134,28 +134,16 @@ namespace fast_task::util {
     };
 
     class FT_API_LOCAL native_workers_singleton {
-        struct io_shard {
-            io_uring ring;
-            moodycamel::ConcurrentQueue<native_worker_handle*> queue;
-            int wakeup_eventfd;
-            fast_task::native::thread dispatcher_thread;
-            alignas(64) std::atomic<bool> is_sleeping{false};
-            std::atomic<bool> stop_flag{false};
-
-            io_shard() : wakeup_eventfd(-1) {}
-
-            ~io_shard() {
-                if (wakeup_eventfd > 0)
-                    close(wakeup_eventfd);
-                io_uring_queue_exit(&ring);
-            }
-        };
-
-        std::vector<std::unique_ptr<io_shard>> io_pool;
+        // A single ring driven by driver_context. There is no dispatcher thread
+        // and therefore no reason to shard: the driver is the only consumer of
+        // completions, so spreading submissions across N rings would only add
+        // wake-up fan-out without adding parallelism.
+        io_uring ring;
+        moodycamel::ConcurrentQueue<native_worker_handle*> queue;
+        int wakeup_eventfd = -1;
 
         native_workers_singleton() {
-            auto size = std::max<unsigned int>(fast_task::native::thread::hardware_concurrency(), 1);
-            io_pool.reserve(size);
+            wakeup_eventfd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
 
             struct rlimit mem_rl = {};
             getrlimit(RLIMIT_MEMLOCK, &mem_rl);
@@ -181,69 +169,76 @@ namespace fast_task::util {
                 size_t available = static_cast<size_t>(mem_rl.rlim_cur) > locked_kb * 1024
                                        ? static_cast<size_t>(mem_rl.rlim_cur) - locked_kb * 1024
                                        : 0;
-                size_t per_shard = available / size;
+                // One ring now gets the whole budget instead of a 1/N slice.
                 start_idx = num_candidates - 1;
                 for (unsigned int ci = 0; ci < num_candidates; ++ci) {
-                    if (ring_bytes_estimate(candidates[ci]) <= per_shard) {
+                    if (ring_bytes_estimate(candidates[ci]) <= available) {
                         start_idx = ci;
                         break;
                     }
                 }
             }
 
-            for (unsigned int i = 0; i < size; i++) {
-                io_pool.push_back(std::make_unique<io_shard>());
-                auto& shard = *io_pool.back();
-                shard.wakeup_eventfd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
-
-                struct io_uring_params params;
-                std::memset(&params, 0, sizeof(params));
-                int uring_ret = -ENOMEM;
-                for (unsigned int ci = start_idx; ci < num_candidates && uring_ret == -ENOMEM; ++ci) {
-                    for (int attempt = 0; attempt < 10 && uring_ret == -ENOMEM; ++attempt) {
-                        uring_ret = io_uring_queue_init_params(candidates[ci], &shard.ring, &params);
-                        if (uring_ret != -ENOMEM)
-                            break;
-                        struct timespec ts = {0, static_cast<long>(20000000L * (attempt + 1))};
-                        nanosleep(&ts, nullptr);
-                    }
-                    if (uring_ret == 0)
+            struct io_uring_params params;
+            std::memset(&params, 0, sizeof(params));
+            int uring_ret = -ENOMEM;
+            for (unsigned int ci = start_idx; ci < num_candidates && uring_ret == -ENOMEM; ++ci) {
+                for (int attempt = 0; attempt < 10 && uring_ret == -ENOMEM; ++attempt) {
+                    uring_ret = io_uring_queue_init_params(candidates[ci], &ring, &params);
+                    if (uring_ret != -ENOMEM)
                         break;
-                    std::memset(&params, 0, sizeof(params));
+                    struct timespec ts = {0, static_cast<long>(20000000L * (attempt + 1))};
+                    nanosleep(&ts, nullptr);
                 }
-                if (uring_ret < 0) {
-                    fprintf(stderr, "fast_task: io_uring_queue_init_params failed: %s\n", strerror(-uring_ret));
-                    if (uring_ret == -ENOMEM && mem_rl.rlim_cur != RLIM_INFINITY) {
-                        fprintf(stderr, "  RLIMIT_MEMLOCK = %zu KB, currently locked = %zu KB\n"
-                                        "  Estimated minimum requirement: ~%zu KB for %u shards\n"
-                                        "  To fix, increase the locked memory limit:\n"
-                                        "    session:   ulimit -l unlimited\n"
-                                        "    permanent: add '* - memlock unlimited' to /etc/security/limits.conf\n"
-                                        "               then log out and back in\n",
-                                static_cast<size_t>(mem_rl.rlim_cur) / 1024,
-                                locked_kb,
-                                ring_bytes_estimate(candidates[num_candidates - 1]) * size / 1024,
-                                size);
-                    }
-                    assert(false && "io_uring_queue_init_params failed");
-                    std::terminate();
-                }
-
-                shard.dispatcher_thread = fast_task::native::thread(dispatch, std::ref(shard));
+                if (uring_ret == 0)
+                    break;
+                std::memset(&params, 0, sizeof(params));
             }
+            if (uring_ret < 0) {
+                fprintf(stderr, "fast_task: io_uring_queue_init_params failed: %s\n", strerror(-uring_ret));
+                if (uring_ret == -ENOMEM && mem_rl.rlim_cur != RLIM_INFINITY) {
+                    fprintf(stderr, "  RLIMIT_MEMLOCK = %zu KB, currently locked = %zu KB\n"
+                                    "  Estimated minimum requirement: ~%zu KB for 1 ring\n"
+                                    "  To fix, increase the locked memory limit:\n"
+                                    "    session:   ulimit -l unlimited\n"
+                                    "    permanent: add '* - memlock unlimited' to /etc/security/limits.conf\n"
+                                    "               then log out and back in\n",
+                            static_cast<size_t>(mem_rl.rlim_cur) / 1024,
+                            locked_kb,
+                            ring_bytes_estimate(candidates[num_candidates - 1]) / 1024);
+                }
+                assert(false && "io_uring_queue_init_params failed");
+                std::terminate();
+            }
+
+            // Arm directly on `this`: calling arm_wakeup() here would re-enter
+            // get_instance() while the function-local static guard is still
+            // held by this very constructor, deadlocking on __cxa_guard_acquire.
+            arm_wakeup_on(*this);
         }
 
-        static void arm_wakeup(io_shard& shard) {
-            io_uring_sqe* sqe = io_uring_get_sqe(&shard.ring);
-            io_uring_prep_poll_add(sqe, shard.wakeup_eventfd, POLLIN);
+        static void arm_wakeup_on(native_workers_singleton& self) {
+            io_uring_sqe* sqe = io_uring_get_sqe(&self.ring);
+            if (!sqe) {
+                io_uring_submit(&self.ring);
+                sqe = io_uring_get_sqe(&self.ring);
+            }
+            if (!sqe)
+                return;
+            io_uring_prep_poll_add(sqe, self.wakeup_eventfd, POLLIN);
             io_uring_sqe_set_data(sqe, reinterpret_cast<void*>(1));
         }
 
-        static void prepare_handle_sqe(io_shard& shard, native_worker_handle* h) {
-            io_uring_sqe* sqe = io_uring_get_sqe(&shard.ring);
+        static void arm_wakeup() {
+            arm_wakeup_on(get_instance());
+        }
+
+        static void prepare_handle_sqe(native_worker_handle* h) {
+            auto& self = get_instance();
+            io_uring_sqe* sqe = io_uring_get_sqe(&self.ring);
             if (!sqe) {
-                io_uring_submit(&shard.ring);
-                sqe = io_uring_get_sqe(&shard.ring);
+                io_uring_submit(&self.ring);
+                sqe = io_uring_get_sqe(&self.ring);
             }
             switch (h->request_data.opcode) {
             case operations::nop:
@@ -256,7 +251,7 @@ namespace fast_task::util {
                 io_uring_prep_connect(sqe, h->request_data.fd, h->request_data.addr_target.addr, h->request_data.addr_target.len);
                 io_uring_sqe_set_data(sqe, nullptr);
                 sqe->flags |= IOSQE_IO_LINK;
-                sqe = io_uring_get_sqe(&shard.ring);
+                sqe = io_uring_get_sqe(&self.ring);
                 io_uring_prep_recv(sqe, h->request_data.fd, const_cast<void*>(h->request_data.b.buf), h->request_data.b.len, 0);
                 break;
             case operations::recv:
@@ -281,7 +276,7 @@ namespace fast_task::util {
                 io_uring_prep_splice(sqe, h->request_data.splice_fds.file_fd, (int64_t)h->request_data.offset, h->request_data.splice_fds.pipe_wfd, -1, h->request_data.splice_fds.len, SPLICE_F_MOVE);
                 io_uring_sqe_set_data(sqe, nullptr);
                 sqe->flags |= IOSQE_IO_LINK;
-                sqe = io_uring_get_sqe(&shard.ring);
+                sqe = io_uring_get_sqe(&self.ring);
                 io_uring_prep_splice(sqe, h->request_data.splice_fds.pipe_rfd, -1, h->request_data.fd, -1, h->request_data.splice_fds.len, SPLICE_F_MOVE);
                 break;
             }
@@ -290,17 +285,17 @@ namespace fast_task::util {
                     io_uring_prep_send(sqe, h->request_data.fd, h->request_data.send_file_v.prefix, h->request_data.send_file_v.prefix_len, 0);
                     io_uring_sqe_set_data(sqe, nullptr);
                     sqe->flags |= IOSQE_IO_LINK;
-                    sqe = io_uring_get_sqe(&shard.ring);
+                    sqe = io_uring_get_sqe(&self.ring);
                 }
                 io_uring_prep_splice(sqe, h->request_data.splice_fds.file_fd, (int64_t)h->request_data.offset, h->request_data.splice_fds.pipe_wfd, -1, h->request_data.splice_fds.len, SPLICE_F_MOVE);
                 io_uring_sqe_set_data(sqe, nullptr);
                 sqe->flags |= IOSQE_IO_LINK;
-                sqe = io_uring_get_sqe(&shard.ring);
+                sqe = io_uring_get_sqe(&self.ring);
                 io_uring_prep_splice(sqe, h->request_data.splice_fds.pipe_rfd, -1, h->request_data.fd, -1, h->request_data.splice_fds.len, SPLICE_F_MOVE);
                 if (h->request_data.send_file_v.postfix_len > 0) {
                     io_uring_sqe_set_data(sqe, nullptr);
                     sqe->flags |= IOSQE_IO_LINK;
-                    sqe = io_uring_get_sqe(&shard.ring);
+                    sqe = io_uring_get_sqe(&self.ring);
                     io_uring_prep_send(sqe, h->request_data.fd, h->request_data.send_file_v.postfix, h->request_data.send_file_v.postfix_len, 0);
                 }
                 break;
@@ -326,59 +321,47 @@ namespace fast_task::util {
             io_uring_sqe_set_data(sqe, h);
         }
 
-        static void dispatch(io_shard& shard) {
-            pthread_setname_np(pthread_self(), "native_dispatcher");
-            native_worker_handle* handles[256];
+        // Reap every completion currently queued on the ring and dispatch it to
+        // the owning manager. Non-looping: the caller (driver_context) decides
+        // how long to block and how often to call this.
+        static void drain() {
+            auto& self = get_instance();
+            io_uring_cqe* cqe;
+            unsigned head;
+            uint32_t cqe_count = 0;
 
-            arm_wakeup(shard);
+            io_uring_for_each_cqe(&self.ring, head, cqe) {
+                ++cqe_count;
+                auto user_data = reinterpret_cast<uintptr_t>(io_uring_cqe_get_data(cqe));
 
-            while (true) {
-                size_t count = shard.queue.try_dequeue_bulk(handles, 256);
-
-                for (size_t i = 0; i < count; ++i)
-                    prepare_handle_sqe(shard, handles[i]);
-
-                shard.is_sleeping.store(true, std::memory_order_seq_cst);
-                count = shard.queue.try_dequeue_bulk(handles, 256);
-                if (count > 0) {
-                    shard.is_sleeping.store(false, std::memory_order_relaxed);
-                    for (size_t i = 0; i < count; ++i)
-                        prepare_handle_sqe(shard, handles[i]);
-                    io_uring_submit(&shard.ring);
+                if (user_data == 1) {
+                    uint64_t val;
+                    read(self.wakeup_eventfd, &val, sizeof(val));
+                    // Re-arm unconditionally: there is no dispatcher thread to
+                    // stop, and dropping the poll would make wake() a no-op.
+                    arm_wakeup();
                     continue;
                 }
 
-                io_uring_submit_and_wait(&shard.ring, 1);
-                shard.is_sleeping.store(false, std::memory_order_relaxed);
+                auto handle = reinterpret_cast<native_worker_handle*>(user_data);
+                if (!handle || !handle->manager)
+                    continue;
 
-                io_uring_cqe* cqe;
-                unsigned head;
-                uint32_t cqe_count = 0;
-
-                io_uring_for_each_cqe(&shard.ring, head, cqe) {
-                    ++cqe_count;
-                    auto user_data = reinterpret_cast<uintptr_t>(io_uring_cqe_get_data(cqe));
-
-                    if (user_data == 1) {
-                        uint64_t val;
-                        read(shard.wakeup_eventfd, &val, sizeof(val));
-                        if (shard.stop_flag.load(std::memory_order_acquire)) {
-                            io_uring_cq_advance(&shard.ring, cqe_count);
-                            return;
-                        }
-                        arm_wakeup(shard);
-                        continue;
-                    }
-
-                    auto handle = reinterpret_cast<native_worker_handle*>(user_data);
-                    if (!handle || !handle->manager)
-                        continue;
-
-                    handle->manager->handle(handle, cqe->res, cqe->flags);
-                }
-
-                io_uring_cq_advance(&shard.ring, cqe_count);
+                handle->manager->handle(handle, cqe->res, cqe->flags);
             }
+
+            io_uring_cq_advance(&self.ring, cqe_count);
+        }
+
+        // Move every queued request into the submission queue, then submit.
+        static void flush() {
+            auto& self = get_instance();
+            native_worker_handle* handles[256];
+            size_t count;
+            while ((count = self.queue.try_dequeue_bulk(handles, 256)) > 0)
+                for (size_t i = 0; i < count; ++i)
+                    prepare_handle_sqe(handles[i]);
+            io_uring_submit(&self.ring);
         }
 
         static native_workers_singleton& get_instance() {
@@ -386,29 +369,52 @@ namespace fast_task::util {
             return instance;
         }
 
-        io_shard& get_shard(int fd) noexcept {
-            return *io_pool[static_cast<size_t>(fd >= 0 ? fd : 0) % io_pool.size()];
-        }
-
-        static void sumbmit(native_worker_handle* handle, int hFile) {
-            auto& instance = get_instance();
-            auto& shard = instance.get_shard(hFile);
-            shard.queue.enqueue(handle);
-            if (shard.is_sleeping.load(std::memory_order_seq_cst)) {
-                uint64_t val = 1;
-                write(shard.wakeup_eventfd, &val, sizeof(val));
-            }
+        static void sumbmit(native_worker_handle* handle, int /*hFile*/) {
+            auto& self = get_instance();
+            self.queue.enqueue(handle);
+            // Always poke the eventfd. With no dispatcher thread the driver is
+            // either inside poll_all() (and will see the completion) or not
+            // parked at all, so there is no "asleep" state to test for.
+            uint64_t val = 1;
+            write(self.wakeup_eventfd, &val, sizeof(val));
         }
 
     public:
         ~native_workers_singleton() {
-            for (auto& pool : io_pool) {
-                pool->stop_flag.store(true, std::memory_order_release);
-                uint64_t val = 1;
-                write(pool->wakeup_eventfd, &val, sizeof(val));
+            io_uring_queue_exit(&ring);
+            if (wakeup_eventfd >= 0)
+                close(wakeup_eventfd);
+        }
+
+        // Submit pending work and block up to timeout_ms for at least one
+        // completion, then drain. A negative timeout blocks indefinitely.
+        // Returns true if any completion was processed.
+        static bool poll_all(int timeout_ms) {
+            auto& self = get_instance();
+            flush();
+
+            io_uring_cqe* cqe = nullptr;
+            __kernel_timespec ts{};
+            __kernel_timespec* ts_ptr = nullptr;
+            if (timeout_ms >= 0) {
+                ts.tv_sec = timeout_ms / 1000;
+                ts.tv_nsec = static_cast<long long>(timeout_ms % 1000) * 1000000LL;
+                ts_ptr = &ts;
             }
-            for (auto& pool : io_pool)
-                pool->dispatcher_thread.join();
+
+            int ret = io_uring_submit_and_wait_timeout(&self.ring, &cqe, 1, ts_ptr, nullptr);
+            if (ret < 0 && ret != -ETIME && ret != -EINTR)
+                return false;
+
+            drain();
+            return true;
+        }
+
+        // Wake a driver blocked in poll_all(). Safe from any thread.
+        static void wake_all() {
+            auto& self = get_instance();
+            uint64_t val = 1;
+            write(self.wakeup_eventfd, &val, sizeof(val));
         }
 
         static void post_connect(native_worker_handle* handle, int hSocket, const sockaddr* pAddr, socklen_t addrLen) {

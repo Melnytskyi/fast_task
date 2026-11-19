@@ -101,16 +101,20 @@ namespace fast_task {
     void task::set_auto_bind_worker(bool enable) const noexcept {
         if (!obj)
             return;
-        obj->set_auto_bind(enable);
+        // Transitional: "auto bind" is now a property of the pools that allow
+        // implicit start (worker_pool_options::allow_implicit_start), so the
+        // task only has to be unassigned for route_task() to consider them.
         if (enable)
-            obj->bind_to_worker_id = (uint16_t)-1;
+            obj->set_pool_assigned(false);
+        else
+            obj->set_pool_assigned(true);
     }
 
     void task::set_worker_id(uint16_t id) const noexcept {
         if (!obj)
             return;
-        obj->bind_to_worker_id = id;
-        obj->set_auto_bind(false);
+        obj->pool_index = bind_pool_index(id);
+        obj->set_pool_assigned(true);
     }
 
     void task::set_priority([[maybe_unused]] task_priority p) const noexcept {
@@ -123,10 +127,10 @@ namespace fast_task {
 #endif
     }
 
-    void task::set_timeout(std::chrono::high_resolution_clock::time_point timeout) const noexcept {
+    void task::set_timeout(fast_task::time_point timeout) const noexcept {
         if (!obj)
             return;
-        if (!get_data(*this).exdata && timeout == std::chrono::high_resolution_clock::time_point::min())
+        if (!get_data(*this).exdata && timeout == fast_task::time_point::min())
             return;
         get_execution_data(*this).timeout = timeout.time_since_epoch().count();
     }
@@ -160,12 +164,12 @@ namespace fast_task {
         return ex ? ex->context_switch_count : 0;
     }
 
-    std::chrono::high_resolution_clock::time_point task::get_timeout() const noexcept {
+    fast_task::time_point task::get_timeout() const noexcept {
         if (!obj)
-            return std::chrono::high_resolution_clock::time_point::min();
+            return fast_task::time_point::min();
         auto* ex = obj->exdata.load(std::memory_order_acquire);
-        auto rep = ex ? ex->timeout : std::chrono::high_resolution_clock::time_point::min().time_since_epoch().count();
-        return std::chrono::high_resolution_clock::time_point(std::chrono::high_resolution_clock::duration(rep));
+        auto rep = ex ? ex->timeout : fast_task::time_point::min().time_since_epoch().count();
+        return fast_task::time_point(fast_task::clock::duration(rep));
     }
 
     bool task::has_wait_timed_out() const noexcept {
@@ -255,7 +259,7 @@ namespace fast_task {
         cd.on_start_override = res;
 
         if (cd.is_created()) {
-            ++glob.executing_tasks;
+            task_mark_created(cd);
             cd.set_status(task_object::status_e::scheduled);
         }
         futex::enter_wait_on_address(
@@ -315,7 +319,7 @@ namespace fast_task {
         return obj->enter_wait(waiter, st);
     }
 
-    bool task::enter_wait_until(const task& waiter, enter_state& st, std::chrono::high_resolution_clock::time_point time_point) const {
+    bool task::enter_wait_until(const task& waiter, enter_state& st, fast_task::time_point time_point) const {
         if (!obj)
             return true;
         if (!obj->is_scheduled() && obj->vtable && obj->vtable->on_start)
@@ -346,7 +350,7 @@ namespace fast_task {
         d.wait();
     }
 
-    bool task::await_task_until(std::chrono::high_resolution_clock::time_point time_point) const {
+    bool task::await_task_until(fast_task::time_point time_point) const {
         if (!obj)
             return true;
         if (!scheduler::total_executors())

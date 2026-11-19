@@ -164,7 +164,7 @@ namespace fast_task {
             handle->end_of_queue.wait(lock);
     }
 
-    bool queue::wait_until(std::chrono::high_resolution_clock::time_point time_point) {
+    bool queue::wait_until(fast_task::time_point time_point) {
         fast_task::unique_lock lock(handle->no_race);
         while (handle->now_at_execution != 0 || !handle->tasks.empty()) {
             if (!handle->end_of_queue.wait_until(lock, time_point))
@@ -196,7 +196,7 @@ namespace fast_task {
         return false;
     }
 
-    bool queue::enter_wait_until(const task& task, enter_state&, std::chrono::high_resolution_clock::time_point time_point) {
+    bool queue::enter_wait_until(const task& task, enter_state&, fast_task::time_point time_point) {
         if (handle->now_at_execution == 0 && handle->tasks.empty())
             return true;
 

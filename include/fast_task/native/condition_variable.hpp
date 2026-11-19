@@ -79,21 +79,21 @@ namespace fast_task::native {
         void notify_all();
         void wait(mutex& mtx);
         cv_status wait_for(mutex& mtx, std::chrono::milliseconds ms);
-        cv_status wait_until(mutex& mtx, std::chrono::high_resolution_clock::time_point time);
+        cv_status wait_until(mutex& mtx, fast_task::time_point time);
 
         void wait(recursive_mutex& mtx);
         cv_status wait_for(recursive_mutex& mtx, std::chrono::milliseconds ms);
-        cv_status wait_until(recursive_mutex& mtx, std::chrono::high_resolution_clock::time_point time);
+        cv_status wait_until(recursive_mutex& mtx, fast_task::time_point time);
 
         inline void wait(::fast_task::unique_lock<mutex>& mtx) {
             wait(*mtx.mutex());
         }
 
         inline cv_status wait_for(::fast_task::unique_lock<mutex>& mtx, std::chrono::milliseconds ms) {
-            return wait_until(*mtx.mutex(), std::chrono::high_resolution_clock::now() + ms);
+            return wait_until(*mtx.mutex(), fast_task::clock::now() + ms);
         }
 
-        inline cv_status wait_until(::fast_task::unique_lock<mutex>& mtx, std::chrono::high_resolution_clock::time_point time) {
+        inline cv_status wait_until(::fast_task::unique_lock<mutex>& mtx, fast_task::time_point time) {
             return wait_until(*mtx.mutex(), time);
         }
 
@@ -102,10 +102,10 @@ namespace fast_task::native {
         }
 
         inline cv_status wait_for(::fast_task::unique_lock<recursive_mutex>& mtx, std::chrono::milliseconds ms) {
-            return wait_until(*mtx.mutex(), std::chrono::high_resolution_clock::now() + ms);
+            return wait_until(*mtx.mutex(), fast_task::clock::now() + ms);
         }
 
-        inline cv_status wait_until(::fast_task::unique_lock<recursive_mutex>& mtx, std::chrono::high_resolution_clock::time_point time) {
+        inline cv_status wait_until(::fast_task::unique_lock<recursive_mutex>& mtx, fast_task::time_point time) {
             return wait_until(*mtx.mutex(), time);
         }
     };
@@ -129,11 +129,11 @@ namespace fast_task::native {
 
         template <class mut>
         cv_status wait_for(mut& mtx, std::chrono::milliseconds ms) {
-            return wait_until(mtx, std::chrono::high_resolution_clock::now() + ms);
+            return wait_until(mtx, fast_task::clock::now() + ms);
         }
 
         template <class mut>
-        cv_status wait_until(mut& mtx, std::chrono::high_resolution_clock::time_point time) {
+        cv_status wait_until(mut& mtx, fast_task::time_point time) {
             fast_task::unique_lock<mutex> lock(_mutex);
             detail::full_state_relock_guard<mut> relock(mtx);
             cv_status ret = _cond.wait_until(_mutex, time);

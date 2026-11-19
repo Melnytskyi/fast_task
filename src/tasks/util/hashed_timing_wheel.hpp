@@ -158,15 +158,18 @@ namespace fast_task {
         hashed_timing_wheel(const hashed_timing_wheel&) = delete;
         hashed_timing_wheel& operator=(const hashed_timing_wheel&) = delete;
 
+        // Returns the inserted node. Callers must always wake the driver after
+        // inserting: the driver reads next_deadline() and then parks, and those
+        // two steps are not atomic with this insert.
         timing* insert(uint64_t wait_ticks, task awake_task, uint16_t check_id, bool is_cold);
 
         void remove(timing* handle);
 
-        uint64_t to_ticks(std::chrono::high_resolution_clock::time_point tp) const;
-        std::chrono::high_resolution_clock::time_point to_timepoint(uint64_t ticks) const;
+        uint64_t to_ticks(fast_task::time_point tp) const;
+        fast_task::time_point to_timepoint(uint64_t ticks) const;
 
         template <typename F>
-        void collect_expired(std::chrono::high_resolution_clock::time_point now, F&& handler) {
+        void collect_expired(fast_task::time_point now, F&& handler) {
             uint64_t target = to_ticks(now);
             if (target <= current_tick_)
                 return;
@@ -185,7 +188,7 @@ namespace fast_task {
 
         void drain_overflow();
 
-        std::chrono::high_resolution_clock::time_point next_deadline() const;
+        fast_task::time_point next_deadline() const;
 
         bool empty() const;
         size_t size() const;
@@ -219,7 +222,7 @@ namespace fast_task {
             }
             has_overflow_.store(false, std::memory_order_relaxed);
 
-            epoch_ = std::chrono::high_resolution_clock::now();
+            epoch_ = fast_task::clock::now();
             current_tick_ = 0;
         }
 
@@ -227,7 +230,7 @@ namespace fast_task {
         std::atomic<timing*> slots_[LEVELS][SLOTS];
 
         uint64_t current_tick_ = 0;
-        std::chrono::high_resolution_clock::time_point epoch_;
+        fast_task::time_point epoch_;
 
         moodycamel::ConcurrentQueue<timing*> overflow_;
         std::atomic<bool> has_overflow_{false};
@@ -268,7 +271,7 @@ namespace fast_task {
         }
 
         template <typename F>
-        void drain_expired_overflow(std::chrono::high_resolution_clock::time_point now, F& handler) {
+        void drain_expired_overflow(fast_task::time_point now, F& handler) {
             if (!has_overflow_.load(std::memory_order_relaxed))
                 return;
 

@@ -42,7 +42,7 @@ namespace fast_task {
             throw std::runtime_error("Task has been canceled. Can not receive result.");
     }
 
-    bool future<void>::wait_until(std::chrono::time_point<std::chrono::high_resolution_clock> time) {
+    bool future<void>::wait_until(fast_task::time_point time) {
         if (!task_.is_ended())
             if (!task_.await_task_until(time))
                 return false;
@@ -58,7 +58,7 @@ namespace fast_task {
             task_.await_task();
     }
 
-    bool future<void>::wait_until_no_except(std::chrono::time_point<std::chrono::high_resolution_clock> time) {
+    bool future<void>::wait_until_no_except(fast_task::time_point time) {
         if (!task_.is_ended())
             if (!task_.await_task_until(time))
                 return false;
@@ -81,7 +81,7 @@ namespace fast_task {
         return task_.enter_wait(t, state);
     }
 
-    bool future<void>::enter_wait_until(const task& t, enter_state& state, std::chrono::high_resolution_clock::time_point time) {
+    bool future<void>::enter_wait_until(const task& t, enter_state& state, fast_task::time_point time) {
         return task_.enter_wait_until(t, state, time);
     }
 }

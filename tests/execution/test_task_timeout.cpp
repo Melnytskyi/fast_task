@@ -10,7 +10,7 @@
 class TaskTimeoutTest : public SchedulerFixture {};
 
 TEST_F(TaskTimeoutTest, SetAndGetTimeout) {
-    auto deadline = std::chrono::high_resolution_clock::now() + std::chrono::seconds(10);
+    auto deadline = fast_task::clock::now() + std::chrono::seconds(10);
     auto t = fast_task::task::create([] {});
     t.set_timeout(deadline);
     EXPECT_EQ(t.get_timeout(), deadline);
@@ -21,7 +21,7 @@ TEST_F(TaskTimeoutTest, TimeoutBeforeCompletion) {
     std::atomic<bool> completed{false};
     std::atomic<bool> was_cancelled{false};
 
-    auto deadline = std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(50);
+    auto deadline = fast_task::clock::now() + std::chrono::milliseconds(50);
 
     auto t = fast_task::task::create(
         [&] {
@@ -46,7 +46,7 @@ TEST_F(TaskTimeoutTest, TimeoutBeforeCompletion) {
 
 TEST_F(TaskTimeoutTest, NoTimeoutWhenCompletesEarly) {
     std::atomic<bool> completed{false};
-    auto deadline = std::chrono::high_resolution_clock::now() + std::chrono::seconds(6);
+    auto deadline = fast_task::clock::now() + std::chrono::seconds(6);
     auto t = fast_task::task::create(
         [&] { completed = true; },
         nullptr,

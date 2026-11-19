@@ -4,8 +4,10 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
-#include <helpers.hpp>
 #include <atomic>
+#include <helpers.hpp>
+#include <stdexcept>
+#include <vector>
 
 TEST(BindExecutor, CreateAndClose) {
     fast_task::scheduler::create_executor(2);
@@ -66,6 +68,27 @@ TEST(BindExecutor, SetWorkerIdOnTask) {
     EXPECT_TRUE(ran.load());
 
     fast_task::scheduler::close_bind_only_executor(id);
+    fast_task::scheduler::shut_down();
+}
+
+// S2a gate "table exhaustion" (plans/pool-architecture.md §2.2): slots 0..254
+// are user pools and slot 255 is the global pool. The 256th user pool must be
+// rejected with std::length_error and the table must be reusable afterwards.
+TEST(BindExecutor, PoolTableExhaustionThrows) {
+    std::vector<uint16_t> ids;
+    ids.reserve(255);
+    for (int i = 0; i < 255; ++i)
+        ids.push_back(fast_task::scheduler::create_bind_only_executor(0, false));
+
+    EXPECT_THROW(fast_task::scheduler::create_bind_only_executor(0, false), std::length_error);
+
+    for (uint16_t id : ids)
+        fast_task::scheduler::close_bind_only_executor(id);
+
+    // Every slot was released, so a new pool must fit again.
+    const uint16_t id = fast_task::scheduler::create_bind_only_executor(0, false);
+    fast_task::scheduler::close_bind_only_executor(id);
+
     fast_task::scheduler::shut_down();
 }
 

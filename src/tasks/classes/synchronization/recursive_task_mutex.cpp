@@ -43,7 +43,7 @@ namespace fast_task {
         return true;
     }
 
-    bool recursive_mutex::try_lock_until(std::chrono::high_resolution_clock::time_point time_point) {
+    bool recursive_mutex::try_lock_until(fast_task::time_point time_point) {
         if (!mut.is_own())
             return mut.try_lock_until(time_point);
         ++recursive_count;
@@ -93,7 +93,7 @@ namespace fast_task {
             return mut.enter_wait(task, state);
     }
 
-    bool recursive_mutex::enter_wait_until(const task& task, enter_state& state, std::chrono::high_resolution_clock::time_point time_point) {
+    bool recursive_mutex::enter_wait_until(const task& task, enter_state& state, fast_task::time_point time_point) {
         if (mut.is_own()) {
             recursive_count++;
             if (recursive_count == 0) {

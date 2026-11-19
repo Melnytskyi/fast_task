@@ -48,4 +48,8 @@ namespace fast_task::native {
         flag.clear(std::memory_order_release);
         interrupt_unsafe_region::unlock();
     }
+
+    bool spin_lock::is_locked() const noexcept {
+        return flag.test(std::memory_order_relaxed);
+    }
 }

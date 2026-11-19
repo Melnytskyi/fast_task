@@ -63,7 +63,10 @@ namespace fast_task::this_task {
                 ))
                 return false;
 
-            if (get_data(get_loc()->curr_task).bind_to_worker_id != get_data(target).bind_to_worker_id)
+            // The target must be runnable by *this* worker: an assigned task
+            // must already belong to the worker's pool (§2.11). An unassigned
+            // one is adopted into it below.
+            if (get_data(target).get_pool_assigned() && get_data(target).pool_index != get_loc()->pool_index)
                 return false;
 
 
@@ -72,6 +75,10 @@ namespace fast_task::this_task {
                 return false;
             ++get_loc()->transfer_state.transfers;
 #endif
+            // A freshly created target was never counted; count it now on the
+            // worker's pool so its completion cannot underflow.
+            if (get_data(target).is_created())
+                task_mark_created(get_data(target));
             get_data(target).set_status(task_object::status_e::scheduled);
             get_loc()->transfer_state.pending = target;
             return true;
@@ -79,7 +86,7 @@ namespace fast_task::this_task {
             return false;
     }
 
-    void sleep_until(std::chrono::high_resolution_clock::time_point time_point) {
+    void sleep_until(fast_task::time_point time_point) {
         if (get_loc()) {
             get_loc()->pending_timer = time_point;
             swapCtx();
@@ -88,9 +95,9 @@ namespace fast_task::this_task {
             native::this_thread::sleep_until(time_point);
     }
 
-    bool FT_API enter_sleep_until(enter_state&, std::chrono::high_resolution_clock::time_point time_point) {
+    bool FT_API enter_sleep_until(enter_state&, fast_task::time_point time_point) {
         if (get_loc()) {
-            if (std::chrono::high_resolution_clock::now() >= time_point)
+            if (fast_task::clock::now() >= time_point)
                 return true;
             get_loc()->pending_timer = time_point;
             return false;

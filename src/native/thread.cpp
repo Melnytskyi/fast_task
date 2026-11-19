@@ -168,13 +168,13 @@ namespace fast_task::native {
             Sleep((DWORD)ms.count());
         }
 
-        void sleep_until(std::chrono::high_resolution_clock::time_point time) {
+        void sleep_until(fast_task::time_point time) {
             interrupt_unsafe_region region;
-            auto diff = time - std::chrono::high_resolution_clock::now();
+            auto diff = time - fast_task::clock::now();
             while (diff.count() > 0) {
                 std::chrono::milliseconds ms = std::chrono::duration_cast<std::chrono::milliseconds>(diff);
                 Sleep((DWORD)ms.count());
-                diff = time - std::chrono::high_resolution_clock::now();
+                diff = time - fast_task::clock::now();
             }
         }
     }
@@ -299,18 +299,18 @@ namespace fast_task::native {
 
         void sleep_for(std::chrono::milliseconds ms) {
             interrupt_unsafe_region region;
-            sleep_until(std::chrono::high_resolution_clock::now() + ms);
+            sleep_until(fast_task::clock::now() + ms);
         }
 
-        void sleep_until(std::chrono::high_resolution_clock::time_point time) {
+        void sleep_until(fast_task::time_point time) {
             interrupt_unsafe_region region;
-            auto diff = time - std::chrono::high_resolution_clock::now();
+            auto diff = time - fast_task::clock::now();
             while (diff.count() > 0) {
                 timespec ts;
                 ts.tv_sec = diff.count() / 1000000000;
                 ts.tv_nsec = diff.count() % 1000000000;
                 nanosleep(&ts, nullptr);
-                diff = time - std::chrono::high_resolution_clock::now();
+                diff = time - fast_task::clock::now();
             }
         }
     }

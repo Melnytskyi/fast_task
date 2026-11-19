@@ -50,7 +50,7 @@ TEST_F(FutureBasicTest, WaitForTimeout) {
 
 TEST_F(FutureBasicTest, WaitUntilSuccess) {
     auto f = fast_task::future<int>::start([] { return 3; });
-    auto until = std::chrono::high_resolution_clock::now() + std::chrono::seconds(1);
+    auto until = fast_task::clock::now() + std::chrono::seconds(1);
     bool ready = f->wait_until(until);
     EXPECT_TRUE(ready);
 }

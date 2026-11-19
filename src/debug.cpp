@@ -70,10 +70,10 @@ namespace fast_task::debug {
     debug_data::debug_data(debug_registry& reg) : virtual_id(reg.task_id_counter++) {
         if (reg._init_stack_trace)
             init_trace = make_trace(1);
-        auto& loc = get_loc();
-        created_by_is_native = !loc.is_task_thread;
-        if (loc.is_task_thread)
-            created_by_id = reg.task_instances.at(loc.curr_task.get_id()).virtual_id;
+        auto* loc = get_loc();
+        created_by_is_native = !loc || !loc->is_task_thread;
+        if (loc && loc->is_task_thread)
+            created_by_id = reg.task_instances.at(loc->curr_task.get_id()).virtual_id;
         else
             created_by_id = _thread_id();
     }
@@ -265,7 +265,7 @@ namespace fast_task::debug {
                     info.is_on_scheduler = task_data->get_is_on_scheduler();
                     info.time_end = task_data->get_time_end();
                     info.awaked = task_data->get_awaked();
-                    info.auto_bind = task_data->get_auto_bind();
+                    info.pool_assigned = task_data->get_pool_assigned();
                     info.is_sbo = task_data->get_is_sbo();
                     info.spin_lock_locked = (task_data->state.load(std::memory_order_relaxed) & (task_object::state_f::spin_lock_locked)) != 0;
                     info.cancellation_requested = task_data->get_cancellation_requested();
@@ -301,7 +301,7 @@ namespace fast_task::debug {
                     }
 
                     info.awake_check = task_data->awake_check;
-                    info.bind_to_worker_id = task_data->bind_to_worker_id;
+                    info.pool_slot = task_data->pool_index;
                     if (task_data->exdata) {
                         auto& exdata = get_execution_data(task_data);
                         info.timeout_timestamp = exdata.timeout;
@@ -473,7 +473,19 @@ namespace fast_task::debug {
                 info.timer_id = id;
                 info.shutdown = mutd->hh->shutdown;
                 info.internal_mutex_id = reg.mutex_instances.at(&mutd->hh->no_race).virtual_id;
-                info.timestamp = mutd->hh->time_point.time_since_epoch().count();
+                // hh->time_point is a monotonic fast_task::time_point, while the
+                // dump prints this field as an absolute date. Convert it to the
+                // wall clock here so the report stays readable.
+                if (mutd->hh->time_point == fast_task::time_point::max())
+                    info.timestamp = std::chrono::system_clock::time_point::max().time_since_epoch().count();
+                else
+                    info.timestamp =
+                        (std::chrono::system_clock::now() +
+                         std::chrono::duration_cast<std::chrono::system_clock::duration>(
+                             mutd->hh->time_point - fast_task::clock::now()
+                         ))
+                            .time_since_epoch()
+                            .count();
                 size_t coll = 0;
                 info.canceled_tasks = array<uintptr_t>(mutd->hh->canceled_tasks.size());
                 for (auto& it : mutd->hh->canceled_tasks)
@@ -931,7 +943,7 @@ namespace fast_task::debug {
             ii << "\t\tAllow threshold: " << it.allow_threshold << std::endl;
             ii << "\t\tMax threshold: " << it.max_threshold << std::endl;
         }
-        auto hi_current = std::chrono::high_resolution_clock::now();
+        auto hi_current = fast_task::clock::now();
         for (auto& it : dump.tasks) {
             ii << "\tTask: " << it.task_id << std::endl;
             ii << "\t\tCreated by: " << it.created_by_id << (it.created_by_is_native ? " thread" : " task") << std::endl;
@@ -968,7 +980,7 @@ namespace fast_task::debug {
             ii << "\t\t\tUse scheduler stack: " << it.is_on_scheduler << std::endl;
             ii << "\t\t\tTime end Flag: " << it.time_end << std::endl;
             ii << "\t\t\tAwaked: " << it.awaked << std::endl;
-            ii << "\t\t\tAuto bind enabled: " << it.auto_bind << std::endl;
+            ii << "\t\t\tPool assigned: " << it.pool_assigned << std::endl;
             ii << "\t\t\tUsed SBO: " << it.is_sbo << std::endl;
             ii << "\t\t\tTask locked: " << it.spin_lock_locked << std::endl;
             ii << "\t\t\tCancel requested: " << it.cancellation_requested << std::endl;
@@ -1010,15 +1022,19 @@ namespace fast_task::debug {
             ii << "\t\tCounter interrupt: " << it.counter_interrupt << std::endl;
             ii << "\t\tCounter constext switch: " << it.counter_context_switch << std::endl;
             ii << "\t\tAwake check: " << it.awake_check << std::endl;
-            ii << "\t\tBinded to worker id: " << it.bind_to_worker_id << std::endl;
+            ii << "\t\tPool slot: " << static_cast<unsigned>(it.pool_slot) << std::endl;
             ii << "\t\tPreempt available quantum ns: " << it.current_available_quantum_ns << std::endl;
             ii << "\t\tInterrupt data: " << it.interrupt_data << std::endl;
             ii << "\t\tInterrupt data: " << it.interrupt_data << std::endl;
             ii << "\t\tStart overriden: " << (it.on_start_override ? "true" : "false") << std::endl;
             //TODO SHOW VTABLE
 
-            if (it.timeout_timestamp != std::chrono::high_resolution_clock::time_point::min().time_since_epoch().count())
-                ii << "\t\tTimeouts in: " << std::chrono::hh_mm_ss{std::chrono::high_resolution_clock::time_point(std::chrono::high_resolution_clock::duration(it.timeout_timestamp)) - hi_current} << '\n';
+            // time_point::min() is "no deadline" and time_point::max() is
+            // "deadline far in the future"; both would print nonsense through
+            // hh_mm_ss, so they are skipped instead of being formatted.
+            if (it.timeout_timestamp != fast_task::no_deadline.time_since_epoch().count() &&
+                it.timeout_timestamp != fast_task::time_point::max().time_since_epoch().count())
+                ii << "\t\tTimeouts in: " << std::chrono::hh_mm_ss{fast_task::time_point(fast_task::clock::duration(it.timeout_timestamp)) - hi_current} << '\n';
         }
     }
 

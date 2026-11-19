@@ -28,7 +28,7 @@ namespace fast_task {
     }
 
     bool checkCancellation() noexcept {
-        constexpr auto timeout_disabled = std::chrono::high_resolution_clock::time_point::min().time_since_epoch().count();
+        constexpr auto timeout_disabled = fast_task::time_point::min().time_since_epoch().count();
         interrupt_unsafe_region reg;
         if (!get_loc())
             return false;
@@ -40,7 +40,7 @@ namespace fast_task {
             return true;
         if (curr_task.exdata.load(std::memory_order_relaxed))
             if (curr_task.exdata.load(std::memory_order_relaxed)->timeout != timeout_disabled)
-                if (curr_task.exdata.load(std::memory_order_relaxed)->timeout <= std::chrono::high_resolution_clock::now().time_since_epoch().count())
+                if (curr_task.exdata.load(std::memory_order_relaxed)->timeout <= fast_task::clock::now().time_since_epoch().count())
                     return true;
         return false;
     }

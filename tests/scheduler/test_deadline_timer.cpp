@@ -48,7 +48,7 @@ TEST_F(DeadlineTimerTest, ExpiresFromNow) {
 
 TEST_F(DeadlineTimerTest, ExpiresAt) {
     fast_task::deadline_timer timer;
-    auto tp = std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(30);
+    auto tp = fast_task::clock::now() + std::chrono::milliseconds(30);
     timer.expires_at(tp);
     auto status = timer.wait();
     EXPECT_EQ(status, fast_task::deadline_timer::status::timeouted);

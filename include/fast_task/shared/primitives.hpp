@@ -1,5 +1,6 @@
 #ifndef INCLUDE_SHARED_PRIMITIVES
 #define INCLUDE_SHARED_PRIMITIVES
+#include "../clock.hpp"
 #include <stdexcept>
 #include <utility>
 

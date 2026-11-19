@@ -136,7 +136,7 @@ namespace fast_task::native {
         thread::id FT_API get_id() noexcept;
         void FT_API yield() noexcept;
         void FT_API sleep_for(std::chrono::milliseconds ms);
-        void FT_API sleep_until(std::chrono::high_resolution_clock::time_point time);
+        void FT_API sleep_until(fast_task::time_point time);
     }
 
     struct FT_API thread::id {

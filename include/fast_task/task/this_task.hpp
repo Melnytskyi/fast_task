@@ -15,11 +15,11 @@
 namespace fast_task::this_task {
     size_t FT_API get_id() noexcept;
     void FT_API yield();
-    void FT_API sleep_until(std::chrono::high_resolution_clock::time_point time_point);
+    void FT_API sleep_until(fast_task::time_point time_point);
 
     template <class Dur_resolution, class Dur_type>
     void sleep_for(std::chrono::duration<Dur_resolution, Dur_type> duration) {
-        sleep_until(std::chrono::high_resolution_clock::now() + duration);
+        sleep_until(fast_task::clock::now() + duration);
     }
     
     void FT_API check_cancellation();
@@ -30,7 +30,7 @@ namespace fast_task::this_task {
     bool FT_API transfer_to(const task& target);
 
 
-    bool FT_API enter_sleep_until(enter_state&, std::chrono::high_resolution_clock::time_point time_point);
+    bool FT_API enter_sleep_until(enter_state&, fast_task::time_point time_point);
     bool FT_API enter_yield(enter_state&);
 
 #if __cplusplus >= 202002
@@ -53,10 +53,10 @@ namespace fast_task::this_task {
         return awaiter{};
     }
 
-    [[nodiscard]] inline auto async_sleep_until(std::chrono::high_resolution_clock::time_point time_point) {
+    [[nodiscard]] inline auto async_sleep_until(fast_task::time_point time_point) {
         struct awaiter {
             enter_state state;
-            std::chrono::high_resolution_clock::time_point time_point;
+            fast_task::time_point time_point;
 
             bool await_ready() noexcept {
                 return false;
@@ -74,7 +74,7 @@ namespace fast_task::this_task {
 
     template <class Rep, class Period>
     [[nodiscard]] inline auto async_sleep_for(const std::chrono::duration<Rep, Period>& duration) {
-        return async_sleep_until(std::chrono::high_resolution_clock::now() + duration);
+        return async_sleep_until(fast_task::clock::now() + duration);
     }
 
 #endif

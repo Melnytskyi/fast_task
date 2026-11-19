@@ -105,7 +105,7 @@ namespace fast_task {
         return false;
     }
 
-    bool limiter::try_lock_until(std::chrono::high_resolution_clock::time_point time_point) {
+    bool limiter::try_lock_until(fast_task::time_point time_point) {
         interrupt_unsafe_region region;
         size_t expected = values.state.load(std::memory_order_relaxed);
         while (true) {
@@ -191,7 +191,7 @@ namespace fast_task {
         );
     }
 
-    bool limiter::enter_wait_until(const task& task, enter_state& state, std::chrono::high_resolution_clock::time_point time_point) {
+    bool limiter::enter_wait_until(const task& task, enter_state& state, fast_task::time_point time_point) {
         interrupt_unsafe_region region;
         size_t expected = values.state.load(std::memory_order_relaxed);
         while ((expected & LIM_COUNT_MASK) > 0) {

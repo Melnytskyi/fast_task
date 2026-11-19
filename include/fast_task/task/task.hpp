@@ -7,6 +7,7 @@
 #ifndef FAST_TASK_INCLUDE_TASK_TASK
 #define FAST_TASK_INCLUDE_TASK_TASK
 
+#include "../clock.hpp"
 #include "../shared.hpp"
 #include "enter_state.hpp"
 #include <atomic>
@@ -126,16 +127,16 @@ namespace fast_task {
         void set_auto_bind_worker(bool enable = true) const noexcept;
         void set_worker_id(uint16_t id) const noexcept;
         void set_priority(task_priority) const noexcept;
-        void set_timeout(std::chrono::high_resolution_clock::time_point timeout) const noexcept;
+        void set_timeout(fast_task::time_point timeout) const noexcept;
         task_priority get_priority() const noexcept;
         size_t get_counter_interrupt() const noexcept;
         size_t get_counter_context_switch() const noexcept;
-        std::chrono::high_resolution_clock::time_point get_timeout() const noexcept;
+        fast_task::time_point get_timeout() const noexcept;
         bool has_wait_timed_out() const noexcept; // for timed enter_wait_until, allows to check if the operation timed out. Also resets the flag(locks)
         bool is_cancellation_requested() const noexcept;
         bool is_ended() const noexcept;
         void await_task() const;
-        bool await_task_until(std::chrono::high_resolution_clock::time_point) const;
+        bool await_task_until(fast_task::time_point) const;
         void callback(const task&) const;
         void notify_cancel() const;
         void await_notify_cancel() const;
@@ -155,18 +156,18 @@ namespace fast_task {
         };
 
         bool enter_wait(const task&, enter_state&) const;
-        bool enter_wait_until(const task&, enter_state&, std::chrono::high_resolution_clock::time_point) const;
+        bool enter_wait_until(const task&, enter_state&, fast_task::time_point) const;
         bool enter_cancel(const task&, enter_state&) const;
 
         template <typename Func, typename ExHandle = std::nullptr_t>
-        static task run(Func&& func, ExHandle&& ex_handle = nullptr, std::chrono::high_resolution_clock::time_point timeout = std::chrono::high_resolution_clock::time_point::min(), task_priority priority = task_priority::high, bool is_on_scheduler = false) {
+        static task run(Func&& func, ExHandle&& ex_handle = nullptr, fast_task::time_point timeout = fast_task::time_point::min(), task_priority priority = task_priority::high, bool is_on_scheduler = false) {
             auto r = create(std::forward<Func>(func), std::forward<ExHandle>(ex_handle), timeout, priority, is_on_scheduler);
             r.start();
             return r;
         }
 
         template <typename Func, typename ExHandle = std::nullptr_t>
-        static task create(Func&& func, ExHandle&& ex_handle = nullptr, std::chrono::high_resolution_clock::time_point timeout = std::chrono::high_resolution_clock::time_point::min(), task_priority priority = task_priority::high, bool is_on_scheduler = false) {
+        static task create(Func&& func, ExHandle&& ex_handle = nullptr, fast_task::time_point timeout = fast_task::time_point::min(), task_priority priority = task_priority::high, bool is_on_scheduler = false) {
             task res;
             if constexpr (std::is_same_v<std::decay_t<Func>, std::nullptr_t>) {
                 static task_vtable empty_vtable{
@@ -222,7 +223,7 @@ namespace fast_task {
 
         template <class Dur_resolution, class Dur_type>
         bool await_task_for(std::chrono::duration<Dur_resolution, Dur_type> duration) const {
-            return await_task_until(std::chrono::high_resolution_clock::now() + duration);
+            return await_task_until(fast_task::clock::now() + duration);
         }
     };
 }

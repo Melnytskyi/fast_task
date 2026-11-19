@@ -24,7 +24,7 @@ BENCHMARK_MEM(memory_idle_task_footprint_multithreaded, scales_xxl_large) {
                     fast_task::task::run(
                         [] {},
                         nullptr,
-                        std::chrono::high_resolution_clock::time_point::min(),
+                        fast_task::time_point::min(),
                         fast_task::task_priority::high,
                         true
                     )
@@ -46,7 +46,7 @@ BENCHMARK_MEM(memory_task_footprint_multithreaded, scales_xxl_large) {
                     fast_task::task::run(
                         [] {},
                         nullptr,
-                        std::chrono::high_resolution_clock::time_point::min(),
+                        fast_task::time_point::min(),
                         fast_task::task_priority::high,
                         true
                     )
@@ -69,7 +69,7 @@ BENCHMARK_MEM(memory_idle_task_footprint, scales_xxl_large) {
             fast_task::task::create(
                 [] {},
                 nullptr,
-                std::chrono::high_resolution_clock::time_point::min(),
+                fast_task::time_point::min(),
                 fast_task::task_priority::high,
                 true
             )
@@ -86,7 +86,7 @@ BENCHMARK_MEM(memory_per_task_overhead, scales_xxl_large) {
             fast_task::task::run(
                 [] {},
                 nullptr,
-                std::chrono::high_resolution_clock::time_point::min(),
+                fast_task::time_point::min(),
                 fast_task::task_priority::high,
                 true
             )
