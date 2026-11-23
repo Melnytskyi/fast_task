@@ -158,9 +158,6 @@ namespace fast_task {
         hashed_timing_wheel(const hashed_timing_wheel&) = delete;
         hashed_timing_wheel& operator=(const hashed_timing_wheel&) = delete;
 
-        // Returns the inserted node. Callers must always wake the driver after
-        // inserting: the driver reads next_deadline() and then parks, and those
-        // two steps are not atomic with this insert.
         timing* insert(uint64_t wait_ticks, task awake_task, uint16_t check_id, bool is_cold);
 
         void remove(timing* handle);
@@ -171,19 +168,20 @@ namespace fast_task {
         template <typename F>
         void collect_expired(fast_task::time_point now, F&& handler) {
             uint64_t target = to_ticks(now);
-            if (target <= current_tick_)
-                return;
+            if (target > current_tick_) {
+                while (current_tick_ < target) {
+                    uint64_t next_tick = current_tick_ + 1;
+                    if ((next_tick & 0xFFFFFFFFULL) == 0)
+                        drain_overflow();
 
-            while (current_tick_ < target) {
-                uint64_t next_tick = current_tick_ + 1;
-                if ((next_tick & 0xFFFFFFFFULL) == 0)
-                    drain_overflow();
+                    advance_one_tick(handler);
+                }
 
-                advance_one_tick(handler);
+                collect_slot(static_cast<size_t>(current_tick_ & (SLOTS - 1)), handler);
+                drain_expired_overflow(now, handler);
             }
 
-            collect_slot(static_cast<size_t>(current_tick_ & (SLOTS - 1)), handler);
-            drain_expired_overflow(now, handler);
+            collect_overdue(handler);
         }
 
         void drain_overflow();
@@ -222,12 +220,24 @@ namespace fast_task {
             }
             has_overflow_.store(false, std::memory_order_relaxed);
 
+            for (auto& word : level0_occupancy_)
+                word.store(0, std::memory_order_relaxed);
+            for (auto& level : overdue_mask_)
+                for (auto& word : level)
+                    word.store(0, std::memory_order_relaxed);
+
             epoch_ = fast_task::clock::now();
             current_tick_ = 0;
         }
 
     private:
+        static constexpr size_t OCCUPANCY_WORDS = SLOTS / 64;
+
         std::atomic<timing*> slots_[LEVELS][SLOTS];
+
+        std::atomic<uint64_t> level0_occupancy_[OCCUPANCY_WORDS];
+
+        std::atomic<uint64_t> overdue_mask_[LEVELS][OCCUPANCY_WORDS];
 
         uint64_t current_tick_ = 0;
         fast_task::time_point epoch_;
@@ -256,8 +266,51 @@ namespace fast_task {
 
         void cascade_from(size_t level);
 
+        static int next_occupied_slot(const uint64_t* occupancy, size_t from) noexcept;
+
+        template <typename F>
+        void collect_overdue(F& handler) {
+            for (size_t level = 0; level < LEVELS; ++level) {
+                for (size_t word = 0; word < OCCUPANCY_WORDS; ++word) {
+                    uint64_t bits = overdue_mask_[level][word].load(std::memory_order_acquire);
+                    while (bits != 0) {
+                        const size_t slot = word * 64 + static_cast<size_t>(__builtin_ctzll(bits));
+                        bits &= bits - 1;
+                        overdue_mask_[level][word].fetch_and(
+                            ~(uint64_t(1) << (slot & (64 - 1))), std::memory_order_relaxed
+                        );
+                        sweep_slot(level, slot, handler);
+                    }
+                }
+            }
+        }
+
+        template <typename F>
+        void sweep_slot(size_t level, size_t slot, F& handler) {
+            if (level == 0)
+                level0_occupancy_[slot >> 6].fetch_and(
+                    ~(uint64_t(1) << (slot & (64 - 1))), std::memory_order_relaxed
+                );
+            timing* chain = slots_[level][slot].exchange(nullptr, std::memory_order_acquire);
+            while (chain) {
+                timing* next = chain->wheel_next.load(std::memory_order_relaxed);
+                chain->wheel_next.store(nullptr, std::memory_order_relaxed);
+                if (chain->get_is_canceled())
+                    deallocate_node(chain);
+                else if (chain->wait_ticks <= current_tick_) {
+                    handler(*chain);
+                    deallocate_node(chain);
+                } else
+                    push_slot(level, slot_of(chain->wait_ticks, level), chain);
+                chain = next;
+            }
+        }
+
         template <typename F>
         void collect_slot(size_t slot, F& handler) {
+            level0_occupancy_[slot >> 6].fetch_and(
+                ~(uint64_t(1) << (slot & 63)), std::memory_order_relaxed
+            );
             timing* chain = slots_[0][slot].exchange(nullptr, std::memory_order_acquire);
             while (chain) {
                 timing* next =

@@ -179,7 +179,7 @@ namespace fast_task {
     }
 
     void tl_task_alloc_cache::allocate_batch() {
-        auto* batch = glob.gba.pop_batch(global_task_allocator::init_batch);
+        auto* batch = glob.allocators.gba.pop_batch(global_task_allocator::init_batch);
         if (!batch)
             throw std::bad_alloc();
 
@@ -227,7 +227,7 @@ namespace fast_task {
             for (size_t i = 1; i < count; ++i)
                 tail = tail->next;
 
-            glob.gba.push_batch(head, tail, count);
+            glob.allocators.gba.push_batch(head, tail, count);
         }
     }
 
@@ -238,7 +238,7 @@ namespace fast_task {
             while (cur->next)
                 cur = cur->next;
 
-            glob.gba.push_batch(head, cur, free_count);
+            glob.allocators.gba.push_batch(head, cur, free_count);
             free_list = nullptr;
             free_count = 0;
         }

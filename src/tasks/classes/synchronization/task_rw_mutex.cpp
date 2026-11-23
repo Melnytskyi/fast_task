@@ -9,34 +9,60 @@
 #include <tasks/_internal.hpp>
 
 namespace fast_task {
-    inline bool writer_can_acquire(uint64_t writer, uint32_t readers) {
-        return writer == 0 && readers == 0;
+    bool rw_mutex::read_probe(void* state_address) noexcept {
+        private_values& values = values_of(state_address);
+        uint64_t state = values.state.load(std::memory_order_relaxed);
+        if (reader_can_acquire(state))
+            return true;
+        state = values.state.fetch_or(private_values::HAS_READER_WAITERS, std::memory_order_acq_rel) |
+                private_values::HAS_READER_WAITERS;
+        return reader_can_acquire(state);
     }
 
-    template <uint8_t Key, uint8_t Transition>
-    size_t rw_mutex::wake_waiters(rw_mutex::private_values& values, size_t count) {
+    bool rw_mutex::write_probe(void* state_address) noexcept {
+        private_values& values = values_of(state_address);
+        uint64_t state = values.state.load(std::memory_order_relaxed);
+        if (writer_can_acquire(state))
+            return true;
+        state = values.state.fetch_or(private_values::HAS_WRITER_WAITERS, std::memory_order_acq_rel) |
+                private_values::HAS_WRITER_WAITERS;
+        return writer_can_acquire(state);
+    }
+
+    size_t rw_mutex::wake_writers(private_values& values, size_t count) {
         return futex::wake_and_requeue_on_address_select(
             &values.state,
             [](void* address, size_t, bool has_remaining) {
-                auto& v = values_of(address);
-                if (Transition == 1)
-                    v.state.store(0, std::memory_order_release);
-                else if (Transition == 2)
-                    v.readers.fetch_sub(1, std::memory_order_release);
-
-                if (!has_remaining) {
-                    const uint32_t clear_mask = (Key == private_values::READER_KEY)
-                                                    ? private_values::HAS_READER_WAITERS
-                                                    : private_values::HAS_WRITER_WAITERS;
-                    v.waiters.fetch_and(~clear_mask, std::memory_order_release);
-                }
+                if (has_remaining)
+                    return;
+                values_of(address).state.fetch_and(~private_values::HAS_WRITER_WAITERS, std::memory_order_release);
             },
-            [](void*, futex::node_data node, bool) {
-                return node.data == Key;
-            },
+            [](void*, futex::node_data node, bool) { return node.data == private_values::WRITER_KEY; },
             count,
             count
         );
+    }
+
+    size_t rw_mutex::wake_readers(private_values& values) {
+        return futex::wake_and_requeue_on_address_select(
+            &values.state,
+            [](void* address, size_t, bool has_remaining) {
+                if (has_remaining)
+                    return;
+                values_of(address).state.fetch_and(~private_values::HAS_READER_WAITERS, std::memory_order_release);
+            },
+            [](void*, futex::node_data node, bool) { return node.data == private_values::READER_KEY; },
+            SIZE_MAX,
+            SIZE_MAX
+        );
+    }
+
+    void rw_mutex::reader_left(private_values& values, uint64_t state) noexcept {
+        if ((state & private_values::READER_COUNT_MASK) != private_values::READER_ONE)
+            return;
+        if ((state & private_values::HAS_WRITER_WAITERS) == 0)
+            return;
+        wake_writers(values, 1);
     }
 
     rw_mutex::rw_mutex() {
@@ -45,7 +71,7 @@ namespace fast_task {
 
     rw_mutex::~rw_mutex() {
         FT_DEBUG_ONLY(unregister_object(this));
-        if (values.state.load(std::memory_order_relaxed) != 0 || values.readers.load(std::memory_order_relaxed) != 0) {
+        if ((values.state.load(std::memory_order_relaxed) & private_values::OWNERSHIP_MASK) != 0) {
             assert(false && "Mutex destroyed while locked");
             std::terminate();
         }
@@ -59,75 +85,45 @@ namespace fast_task {
         interrupt_unsafe_region region;
 
         while (true) {
-            uint64_t writer = values.state.load(std::memory_order_relaxed);
-            uint32_t w = values.waiters.load(std::memory_order_relaxed);
-            if (reader_can_acquire(writer, w)) {
-                values.readers.fetch_add(1, std::memory_order_acquire);
+            uint64_t previous = values.state.fetch_add(private_values::READER_ONE, std::memory_order_acq_rel);
+            if ((previous & (private_values::WRITER_LOCKED | private_values::HAS_WRITER_WAITERS)) == 0)
+                return;
 
-                if ((values.waiters.load(std::memory_order_relaxed) & rw_mutex::private_values::HAS_WRITER_WAITERS) == 0)
-                    return;
-                if (values.readers.fetch_sub(1, std::memory_order_release) == 1)
-                    wake_waiters<rw_mutex::private_values::WRITER_KEY, 0>(values, 1);
-            }
+            reader_left(values, values.state.fetch_sub(private_values::READER_ONE, std::memory_order_acq_rel));
 
             futex::wait_on_address(
                 &values.state,
-                [](void* address) {
-                    auto& v = values_of(address);
-                    if (reader_can_acquire(
-                            v.state.load(std::memory_order_relaxed),
-                            v.waiters.load(std::memory_order_relaxed)
-                        ))
-                        return true;
-                    v.waiters.fetch_or(rw_mutex::private_values::HAS_READER_WAITERS, std::memory_order_release);
-                    return false;
-                },
-                {rw_mutex::private_values::READER_KEY}
+                &rw_mutex::read_probe,
+                {private_values::READER_KEY}
             );
         }
     }
 
     bool rw_mutex::try_read_lock() {
         interrupt_unsafe_region region;
-        uint64_t writer = values.state.load(std::memory_order_relaxed);
-        uint32_t w = values.waiters.load(std::memory_order_relaxed);
-        if (!reader_can_acquire(writer, w))
-            return false;
-        values.readers.fetch_add(1, std::memory_order_acquire);
-        if ((values.waiters.load(std::memory_order_relaxed) & rw_mutex::private_values::HAS_WRITER_WAITERS) != 0) {
-            values.readers.fetch_sub(1, std::memory_order_release);
-            return false;
-        }
-        return true;
+        uint64_t previous = values.state.fetch_add(private_values::READER_ONE, std::memory_order_acq_rel);
+        if ((previous & (private_values::WRITER_LOCKED | private_values::HAS_WRITER_WAITERS)) == 0)
+            return true;
+
+        reader_left(values, values.state.fetch_sub(private_values::READER_ONE, std::memory_order_acq_rel));
+        return false;
     }
 
     bool rw_mutex::try_read_lock_until(fast_task::time_point time_point) {
         interrupt_unsafe_region region;
+
         while (true) {
-            uint64_t writer = values.state.load(std::memory_order_relaxed);
-            uint32_t w = values.waiters.load(std::memory_order_relaxed);
-            if (reader_can_acquire(writer, w)) {
-                values.readers.fetch_add(1, std::memory_order_acquire);
-                if ((values.waiters.load(std::memory_order_relaxed) & rw_mutex::private_values::HAS_WRITER_WAITERS) == 0)
-                    return true;
-                if (values.readers.fetch_sub(1, std::memory_order_release) == 1)
-                    wake_waiters<rw_mutex::private_values::WRITER_KEY, 0>(values, 1);
-            }
+            uint64_t previous = values.state.fetch_add(private_values::READER_ONE, std::memory_order_acq_rel);
+            if ((previous & (private_values::WRITER_LOCKED | private_values::HAS_WRITER_WAITERS)) == 0)
+                return true;
+
+            reader_left(values, values.state.fetch_sub(private_values::READER_ONE, std::memory_order_acq_rel));
 
             if (!futex::wait_on_address_until(
                     &values.state,
-                    [](void* address) {
-                        auto& v = values_of(address);
-                        if (reader_can_acquire(
-                                v.state.load(std::memory_order_relaxed),
-                                v.waiters.load(std::memory_order_relaxed)
-                            ))
-                            return true;
-                        v.waiters.fetch_or(rw_mutex::private_values::HAS_READER_WAITERS, std::memory_order_release);
-                        return false;
-                    },
+                    &rw_mutex::read_probe,
                     time_point,
-                    {rw_mutex::private_values::READER_KEY}
+                    {private_values::READER_KEY}
                 ))
                 return false;
         }
@@ -135,19 +131,16 @@ namespace fast_task {
 
     void rw_mutex::read_unlock() {
         interrupt_unsafe_region region;
-        uint32_t prev = values.readers.load(std::memory_order_acquire);
-        if (prev == 0)
+        uint64_t previous = values.state.fetch_sub(private_values::READER_ONE, std::memory_order_acq_rel);
+        if ((previous & private_values::READER_COUNT_MASK) == 0) {
+            values.state.fetch_add(private_values::READER_ONE, std::memory_order_relaxed);
             throw std::logic_error("Tried unlock non owned mutex");
-
-        if (prev == 1) {
-            wake_waiters<rw_mutex::private_values::WRITER_KEY, 2>(values, 1);
-        } else {
-            values.readers.fetch_sub(1, std::memory_order_release);
         }
+        reader_left(values, previous);
     }
 
     bool rw_mutex::is_read_locked() {
-        return values.readers.load(std::memory_order_relaxed) != 0;
+        return (values.state.load(std::memory_order_relaxed) & private_values::READER_COUNT_MASK) != 0;
     }
 
     void rw_mutex::lifecycle_read_lock(task&& lock_task) {
@@ -171,28 +164,24 @@ namespace fast_task {
         size_t self = this_task::get_id();
 
         while (true) {
-            uint64_t writer = values.state.load(std::memory_order_relaxed);
-            uint32_t readers = values.readers.load(std::memory_order_relaxed);
-            if (writer_can_acquire(writer, readers)) {
-                uint64_t expected = 0;
-                if (values.state.compare_exchange_weak(expected, self, std::memory_order_acquire, std::memory_order_relaxed))
+            uint64_t state = values.state.load(std::memory_order_relaxed);
+            if (writer_can_acquire(state)) {
+                if (values.state.compare_exchange_weak(
+                        state,
+                        state | private_values::WRITER_LOCKED,
+                        std::memory_order_acquire,
+                        std::memory_order_relaxed
+                    )) {
+                    values.writer_owner.store(self, std::memory_order_relaxed);
                     return;
+                }
                 continue;
             }
 
             futex::wait_on_address(
                 &values.state,
-                [](void* address) {
-                    auto& v = values_of(address);
-                    if (writer_can_acquire(
-                            v.state.load(std::memory_order_relaxed),
-                            v.readers.load(std::memory_order_relaxed)
-                        ))
-                        return true;
-                    v.waiters.fetch_or(rw_mutex::private_values::HAS_WRITER_WAITERS, std::memory_order_release);
-                    return false;
-                },
-                {rw_mutex::private_values::WRITER_KEY}
+                &rw_mutex::write_probe,
+                {private_values::WRITER_KEY}
             );
         }
     }
@@ -200,41 +189,44 @@ namespace fast_task {
     bool rw_mutex::try_write_lock() {
         interrupt_unsafe_region region;
         size_t self = this_task::get_id();
-        uint64_t writer = values.state.load(std::memory_order_relaxed);
-        uint32_t readers = values.readers.load(std::memory_order_relaxed);
-        if (!writer_can_acquire(writer, readers))
+        uint64_t state = values.state.load(std::memory_order_relaxed);
+        if (!writer_can_acquire(state))
             return false;
-        uint64_t expected = 0;
-        return values.state.compare_exchange_strong(expected, self, std::memory_order_acquire, std::memory_order_relaxed);
+        if (!values.state.compare_exchange_strong(
+                state,
+                state | private_values::WRITER_LOCKED,
+                std::memory_order_acquire,
+                std::memory_order_relaxed
+            ))
+            return false;
+        values.writer_owner.store(self, std::memory_order_relaxed);
+        return true;
     }
 
     bool rw_mutex::try_write_lock_until(fast_task::time_point time_point) {
         interrupt_unsafe_region region;
         size_t self = this_task::get_id();
+
         while (true) {
-            uint64_t writer = values.state.load(std::memory_order_relaxed);
-            uint32_t readers = values.readers.load(std::memory_order_relaxed);
-            if (writer_can_acquire(writer, readers)) {
-                uint64_t expected = 0;
-                if (values.state.compare_exchange_weak(expected, self, std::memory_order_acquire, std::memory_order_relaxed))
+            uint64_t state = values.state.load(std::memory_order_relaxed);
+            if (writer_can_acquire(state)) {
+                if (values.state.compare_exchange_weak(
+                        state,
+                        state | private_values::WRITER_LOCKED,
+                        std::memory_order_acquire,
+                        std::memory_order_relaxed
+                    )) {
+                    values.writer_owner.store(self, std::memory_order_relaxed);
                     return true;
+                }
                 continue;
             }
 
             if (!futex::wait_on_address_until(
                     &values.state,
-                    [](void* address) {
-                        auto& v = values_of(address);
-                        if (writer_can_acquire(
-                                v.state.load(std::memory_order_relaxed),
-                                v.readers.load(std::memory_order_relaxed)
-                            ))
-                            return true;
-                        v.waiters.fetch_or(rw_mutex::private_values::HAS_WRITER_WAITERS, std::memory_order_release);
-                        return false;
-                    },
+                    &rw_mutex::write_probe,
                     time_point,
-                    {rw_mutex::private_values::WRITER_KEY}
+                    {private_values::WRITER_KEY}
                 ))
                 return false;
         }
@@ -243,16 +235,29 @@ namespace fast_task {
     void rw_mutex::write_unlock() {
         interrupt_unsafe_region region;
         size_t self = this_task::get_id();
-        if (values.state.load(std::memory_order_relaxed) != self)
+        uint64_t state = values.state.load(std::memory_order_relaxed);
+        if ((state & private_values::WRITER_LOCKED) == 0 || values.writer_owner.load(std::memory_order_relaxed) != self)
             throw std::logic_error("Tried unlock non owned mutex");
 
-        if (wake_waiters<rw_mutex::private_values::WRITER_KEY, 1>(values, 1) == 0) {
-            wake_waiters<rw_mutex::private_values::READER_KEY, 0>(values, SIZE_MAX);
+        values.writer_owner.store(0, std::memory_order_relaxed);
+
+        uint64_t expected = state;
+        while (!values.state.compare_exchange_weak(
+            expected,
+            expected & ~private_values::WRITER_LOCKED,
+            std::memory_order_release,
+            std::memory_order_relaxed
+        )) {
         }
+
+        if ((expected & private_values::HAS_WRITER_WAITERS) != 0)
+            wake_writers(values, 1);
+        else if ((expected & private_values::HAS_READER_WAITERS) != 0)
+            wake_readers(values);
     }
 
     bool rw_mutex::is_write_locked() {
-        return values.state.load(std::memory_order_relaxed) != 0;
+        return (values.state.load(std::memory_order_relaxed) & private_values::WRITER_LOCKED) != 0;
     }
 
     void rw_mutex::lifecycle_write_lock(task&& lock_task) {
@@ -272,10 +277,12 @@ namespace fast_task {
     }
 
     bool rw_mutex::is_own() {
-        size_t self = this_task::get_id();
-        if (values.state.load(std::memory_order_relaxed) == self)
+        uint64_t state = values.state.load(std::memory_order_relaxed);
+        if ((state & private_values::READER_COUNT_MASK) != 0)
             return true;
-        return values.readers.load(std::memory_order_relaxed) != 0;
+        if ((state & private_values::WRITER_LOCKED) == 0)
+            return false;
+        return values.writer_owner.load(std::memory_order_relaxed) == this_task::get_id();
     }
 
     bool rw_mutex::enter_read_wait(const task& task_obj, enter_state& state) {
@@ -283,20 +290,26 @@ namespace fast_task {
         return futex::enter_wait_on_address_lock(
             task_obj,
             &values.state,
-            [](void* address) {
-                auto& v = values_of(address);
-                return reader_can_acquire(
-                    v.state.load(std::memory_order_relaxed),
-                    v.waiters.load(std::memory_order_relaxed)
-                );
-            },
+            &rw_mutex::read_probe,
             [](void* address, const task&, futex::node_data) {
-                auto& v = values_of(address);
-                v.waiters.fetch_or(rw_mutex::private_values::HAS_READER_WAITERS, std::memory_order_release);
-                v.readers.fetch_add(1, std::memory_order_acquire);
+                private_values& values = values_of(address);
+                uint64_t current = values.state.load(std::memory_order_relaxed);
+                while (true) {
+                    if (!reader_can_acquire(current)) {
+                        current = values.state.load(std::memory_order_relaxed);
+                        continue;
+                    }
+                    if (values.state.compare_exchange_weak(
+                            current,
+                            current + private_values::READER_ONE,
+                            std::memory_order_acquire,
+                            std::memory_order_relaxed
+                        ))
+                        return;
+                }
             },
             state,
-            {rw_mutex::private_values::READER_KEY}
+            {private_values::READER_KEY}
         );
     }
 
@@ -305,21 +318,27 @@ namespace fast_task {
         return futex::enter_wait_on_address_lock_until(
             task_obj,
             &values.state,
-            [](void* address) {
-                auto& v = values_of(address);
-                return reader_can_acquire(
-                    v.state.load(std::memory_order_relaxed),
-                    v.waiters.load(std::memory_order_relaxed)
-                );
-            },
+            &rw_mutex::read_probe,
             [](void* address, const task&, futex::node_data) {
-                auto& v = values_of(address);
-                v.waiters.fetch_or(rw_mutex::private_values::HAS_READER_WAITERS, std::memory_order_release);
-                v.readers.fetch_add(1, std::memory_order_acquire);
+                private_values& values = values_of(address);
+                uint64_t current = values.state.load(std::memory_order_relaxed);
+                while (true) {
+                    if (!reader_can_acquire(current)) {
+                        current = values.state.load(std::memory_order_relaxed);
+                        continue;
+                    }
+                    if (values.state.compare_exchange_weak(
+                            current,
+                            current + private_values::READER_ONE,
+                            std::memory_order_acquire,
+                            std::memory_order_relaxed
+                        ))
+                        return;
+                }
             },
             state,
             time_point,
-            {rw_mutex::private_values::READER_KEY}
+            {private_values::READER_KEY}
         );
     }
 
@@ -328,20 +347,28 @@ namespace fast_task {
         return futex::enter_wait_on_address_lock(
             task_obj,
             &values.state,
-            [](void* address) {
-                auto& v = values_of(address);
-                return writer_can_acquire(
-                    v.state.load(std::memory_order_relaxed),
-                    v.readers.load(std::memory_order_relaxed)
-                );
-            },
-            [](void* address, const task& t, futex::node_data) {
-                auto& v = values_of(address);
-                v.waiters.fetch_or(rw_mutex::private_values::HAS_WRITER_WAITERS, std::memory_order_release);
-                v.state.store(t.get_id(), std::memory_order_acquire);
+            &rw_mutex::write_probe,
+            [](void* address, const task& task_obj, futex::node_data) {
+                private_values& values = values_of(address);
+                uint64_t current = values.state.load(std::memory_order_relaxed);
+                while (true) {
+                    if (writer_can_acquire(current)) {
+                        if (values.state.compare_exchange_weak(
+                                current,
+                                current | private_values::WRITER_LOCKED,
+                                std::memory_order_acquire,
+                                std::memory_order_relaxed
+                            )) {
+                            values.writer_owner.store(task_obj.get_id(), std::memory_order_relaxed);
+                            return;
+                        }
+                        continue;
+                    }
+                    current = values.state.load(std::memory_order_relaxed);
+                }
             },
             state,
-            {rw_mutex::private_values::WRITER_KEY}
+            {private_values::WRITER_KEY}
         );
     }
 
@@ -350,21 +377,29 @@ namespace fast_task {
         return futex::enter_wait_on_address_lock_until(
             task_obj,
             &values.state,
-            [](void* address) {
-                auto& v = values_of(address);
-                return writer_can_acquire(
-                    v.state.load(std::memory_order_relaxed),
-                    v.readers.load(std::memory_order_relaxed)
-                );
-            },
-            [](void* address, const task& t, futex::node_data) {
-                auto& v = values_of(address);
-                v.waiters.fetch_or(rw_mutex::private_values::HAS_WRITER_WAITERS, std::memory_order_release);
-                v.state.store(t.get_id(), std::memory_order_acquire);
+            &rw_mutex::write_probe,
+            [](void* address, const task& task_obj, futex::node_data) {
+                private_values& values = values_of(address);
+                uint64_t current = values.state.load(std::memory_order_relaxed);
+                while (true) {
+                    if (writer_can_acquire(current)) {
+                        if (values.state.compare_exchange_weak(
+                                current,
+                                current | private_values::WRITER_LOCKED,
+                                std::memory_order_acquire,
+                                std::memory_order_relaxed
+                            )) {
+                            values.writer_owner.store(task_obj.get_id(), std::memory_order_relaxed);
+                            return;
+                        }
+                        continue;
+                    }
+                    current = values.state.load(std::memory_order_relaxed);
+                }
             },
             state,
             time_point,
-            {rw_mutex::private_values::WRITER_KEY}
+            {private_values::WRITER_KEY}
         );
     }
 }

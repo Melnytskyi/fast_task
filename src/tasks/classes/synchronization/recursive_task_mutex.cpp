@@ -23,52 +23,48 @@ namespace fast_task {
     void recursive_mutex::lock() {
         if (!mut.is_own()) {
             mut.lock();
+            recursive_count.store(0, std::memory_order_relaxed);
             return;
         }
-        ++recursive_count;
-        if (recursive_count == 0) {
-            recursive_count--;
+        uint32_t count = recursive_count.load(std::memory_order_relaxed);
+        if (count == UINT32_MAX)
             throw std::logic_error("Recursive mutex overflow");
-        }
+        recursive_count.store(count + 1, std::memory_order_relaxed);
     }
 
     bool recursive_mutex::try_lock() {
         if (!mut.is_own())
             return mut.try_lock();
-        ++recursive_count;
-        if (recursive_count == 0) {
-            recursive_count--;
+        uint32_t count = recursive_count.load(std::memory_order_relaxed);
+        if (count == UINT32_MAX)
             return false;
-        }
+        recursive_count.store(count + 1, std::memory_order_relaxed);
         return true;
     }
 
     bool recursive_mutex::try_lock_until(fast_task::time_point time_point) {
         if (!mut.is_own())
             return mut.try_lock_until(time_point);
-        ++recursive_count;
-        if (recursive_count == 0) {
-            recursive_count--;
+        uint32_t count = recursive_count.load(std::memory_order_relaxed);
+        if (count == UINT32_MAX)
             return false;
-        }
+        recursive_count.store(count + 1, std::memory_order_relaxed);
         return true;
     }
 
     void recursive_mutex::unlock() {
-        if (mut.is_own()) {
-            if (recursive_count-- == 0) {
-                mut.unlock();
-                recursive_count = 0;
-            }
-        } else
+        if (!mut.is_own())
             throw std::logic_error("Mutex not owned");
+        uint32_t count = recursive_count.load(std::memory_order_relaxed);
+        if (count != 0) {
+            recursive_count.store(count - 1, std::memory_order_relaxed);
+            return;
+        }
+        mut.unlock();
     }
 
     bool recursive_mutex::is_locked() {
-        if (recursive_count)
-            return true;
-        else
-            return false;
+        return mut.is_locked();
     }
 
     void recursive_mutex::lifecycle_lock(task&& task) {
@@ -81,11 +77,10 @@ namespace fast_task {
 
     bool recursive_mutex::enter_wait(const task& task, enter_state& state) {
         if (mut.is_own()) {
-            recursive_count++;
-            if (recursive_count == 0) {
-                recursive_count--;
+            uint32_t count = recursive_count.load(std::memory_order_relaxed);
+            if (count == UINT32_MAX)
                 throw std::logic_error("Recursive mutex overflow");
-            }
+            recursive_count.store(count + 1, std::memory_order_relaxed);
             return true;
         } else if (mut.try_lock()) {
             return true;
@@ -95,11 +90,10 @@ namespace fast_task {
 
     bool recursive_mutex::enter_wait_until(const task& task, enter_state& state, fast_task::time_point time_point) {
         if (mut.is_own()) {
-            recursive_count++;
-            if (recursive_count == 0) {
-                recursive_count--;
+            uint32_t count = recursive_count.load(std::memory_order_relaxed);
+            if (count == UINT32_MAX)
                 throw std::logic_error("Recursive mutex overflow");
-            }
+            recursive_count.store(count + 1, std::memory_order_relaxed);
             return true;
         } else if (mut.try_lock()) {
             return true;

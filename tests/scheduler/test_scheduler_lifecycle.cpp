@@ -7,41 +7,32 @@
 #include <helpers.hpp>
 #include <atomic>
 
-// Each test manages its own scheduler lifecycle to test the APIs directly.
-
 TEST(SchedulerLifecycle, CreateAndShutDown) {
-    fast_task::scheduler::create_executor(1);
-    while (fast_task::scheduler::total_executors() < 1u)
-        std::this_thread::yield();
+    ensure_global_workers(1);
     fast_task::scheduler::shut_down();
 }
 
 TEST(SchedulerLifecycle, TotalExecutors) {
-    fast_task::scheduler::create_executor(2);
-    while (fast_task::scheduler::total_executors() < 2u)
-        std::this_thread::yield();
-    EXPECT_GE(fast_task::scheduler::total_executors(), 2u);
+    ensure_global_workers(2);
+    EXPECT_GE(fast_task::scheduler::worker_pool::global().stats().active_workers, 2u);
     fast_task::scheduler::shut_down();
 }
 
 TEST(SchedulerLifecycle, ReduceExecutor) {
-    fast_task::scheduler::create_executor(3);
-    while (fast_task::scheduler::total_executors() < 3u)
+    ensure_global_workers(3);
+    auto& pool = fast_task::scheduler::worker_pool::global();
+    const uint16_t before = pool.stats().active_workers;
+
+    pool.remove_workers(1);
+    const auto deadline = fast_task::clock::now() + std::chrono::seconds(5);
+    while (pool.stats().active_workers >= before && fast_task::clock::now() < deadline)
         std::this_thread::yield();
-    size_t before = fast_task::scheduler::total_executors();
-    fast_task::scheduler::reduce_executor(1);
-    // Wait for the executor count to decrease
-    while (fast_task::scheduler::total_executors() >= before)
-        std::this_thread::yield();
-    size_t after = fast_task::scheduler::total_executors();
-    EXPECT_LT(after, before);
+    EXPECT_LT(pool.stats().active_workers, before);
     fast_task::scheduler::shut_down();
 }
 
 TEST(SchedulerLifecycle, AwaitNoTasks) {
-    fast_task::scheduler::create_executor(2);
-    while (fast_task::scheduler::total_executors() < 2u)
-        std::this_thread::yield();
+    ensure_global_workers(2);
     std::atomic<int> done{0};
 
     auto t1 = fast_task::task::create([&] {
@@ -61,9 +52,7 @@ TEST(SchedulerLifecycle, AwaitNoTasks) {
 }
 
 TEST(SchedulerLifecycle, AwaitEndTasks) {
-    fast_task::scheduler::create_executor(2);
-    while (fast_task::scheduler::total_executors() < 2u)
-        std::this_thread::yield();
+    ensure_global_workers(2);
     std::atomic<int> done{0};
 
     auto t = fast_task::task::create([&] {
@@ -78,9 +67,7 @@ TEST(SchedulerLifecycle, AwaitEndTasks) {
 }
 
 TEST(SchedulerLifecycle, Schedule) {
-    fast_task::scheduler::create_executor(2);
-    while (fast_task::scheduler::total_executors() < 2u)
-        std::this_thread::yield();
+    ensure_global_workers(2);
     fast_task::scheduler::explicit_start_timer();
     std::atomic<bool> ran{false};
 

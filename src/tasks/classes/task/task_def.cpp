@@ -98,30 +98,12 @@ namespace fast_task {
         return t;
     }
 
-    void task::set_auto_bind_worker(bool enable) const noexcept {
+    void task::set_priority(task_priority p) const noexcept {
         if (!obj)
             return;
-        // Transitional: "auto bind" is now a property of the pools that allow
-        // implicit start (worker_pool_options::allow_implicit_start), so the
-        // task only has to be unassigned for route_task() to consider them.
-        if (enable)
-            obj->set_pool_assigned(false);
-        else
-            obj->set_pool_assigned(true);
-    }
-
-    void task::set_worker_id(uint16_t id) const noexcept {
-        if (!obj)
-            return;
-        obj->pool_index = bind_pool_index(id);
-        obj->set_pool_assigned(true);
-    }
-
-    void task::set_priority([[maybe_unused]] task_priority p) const noexcept {
-        if (!obj)
-            return;
+        obj->set_priority(p);
 #ifdef FT_ENABLE_PREEMPTIVE_SCHEDULER
-        if (!get_data(*this).exdata && p == task_priority::semi_realtime)
+        if (!obj->exdata.load(std::memory_order_acquire) && p == task_priority::semi_realtime)
             return;
         get_execution_data(*this).priority = p;
 #endif
@@ -138,12 +120,7 @@ namespace fast_task {
     task_priority task::get_priority() const noexcept {
         if (!obj)
             return task_priority::semi_realtime;
-#ifdef FT_ENABLE_PREEMPTIVE_SCHEDULER
-        auto* ex = obj->exdata.load(std::memory_order_acquire);
-        return ex ? ex->priority : task_priority::semi_realtime;
-#else
-        return task_priority::semi_realtime;
-#endif
+        return obj->get_priority();
     }
 
     size_t task::get_counter_interrupt() const noexcept {
@@ -197,8 +174,7 @@ namespace fast_task {
     void task::await_task() const {
         if (!obj)
             return;
-        if (!scheduler::total_executors())
-            scheduler::create_executor(1);
+        scheduler::ensure_global_worker();
 
         if (!obj->is_scheduled() && obj->vtable && obj->vtable->on_start)
             scheduler::start(*this);
@@ -305,8 +281,7 @@ namespace fast_task {
     void task::start() const {
         if (!obj)
             return;
-        if (!scheduler::total_executors())
-            scheduler::create_executor(1);
+        scheduler::ensure_global_worker();
         if (!obj->is_scheduled())
             scheduler::start(*this);
     }
@@ -335,8 +310,7 @@ namespace fast_task {
     }
 
     void task::await_task(const task& lgr_task, bool make_start) {
-        if (!scheduler::total_executors())
-            scheduler::create_executor(1);
+        scheduler::ensure_global_worker();
 
         auto& d = get_data(lgr_task);
         if (d.is_created() && make_start)
@@ -353,8 +327,7 @@ namespace fast_task {
     bool task::await_task_until(fast_task::time_point time_point) const {
         if (!obj)
             return true;
-        if (!scheduler::total_executors())
-            scheduler::create_executor(1);
+        scheduler::ensure_global_worker();
 
         if (obj->vtable && obj->vtable->on_await)
             obj->vtable->on_await(obj->user_data());

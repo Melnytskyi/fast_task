@@ -73,19 +73,25 @@ export namespace fast_task {
 }
 
 export namespace fast_task::scheduler {
+    using ::fast_task::scheduler::idle_policy;
+    using ::fast_task::scheduler::pool_affinity_mode;
     using ::fast_task::scheduler::preemption_policy;
+    using ::fast_task::scheduler::queue_policy;
+    using ::fast_task::scheduler::worker_balancer;
+
+    using ::fast_task::scheduler::runtime_stats;
+    using ::fast_task::scheduler::worker_affinity_options;
+    using ::fast_task::scheduler::worker_context_options;
+    using ::fast_task::scheduler::worker_hooks;
+    using ::fast_task::scheduler::worker_pool_options;
+    using ::fast_task::scheduler::worker_pool_stats;
+
+    using ::fast_task::scheduler::worker_context;
+    using ::fast_task::scheduler::worker_pool;
 
     using ::fast_task::scheduler::schedule;
     using ::fast_task::scheduler::schedule_until;
     using ::fast_task::scheduler::start;
-
-    using ::fast_task::scheduler::create_bind_only_executor;
-    using ::fast_task::scheduler::assign_bind_only_executor;
-    using ::fast_task::scheduler::close_bind_only_executor;
-
-    using ::fast_task::scheduler::create_executor;
-    using ::fast_task::scheduler::total_executors;
-    using ::fast_task::scheduler::reduce_executor;
 
     using ::fast_task::scheduler::become_task_executor;
     using ::fast_task::scheduler::await_no_tasks;
@@ -104,21 +110,24 @@ export namespace fast_task::scheduler {
 
 
 export namespace fast_task::this_task {
-    using ::fast_task::this_task::get_id;
-    using ::fast_task::this_task::yield;
-    using ::fast_task::this_task::sleep_until;
-    using ::fast_task::this_task::sleep_for;
-    using ::fast_task::this_task::check_cancellation;
-    using ::fast_task::this_task::is_cancellation_requested;
-    using ::fast_task::this_task::self_cancel;
-    using ::fast_task::this_task::is_task;
-    using ::fast_task::this_task::the_coroutine_ended;
-    using ::fast_task::this_task::transfer_to;
-    using ::fast_task::this_task::enter_sleep_until;
-    using ::fast_task::this_task::enter_yield;
-    using ::fast_task::this_task::async_yield;
     using ::fast_task::this_task::async_sleep_for;
     using ::fast_task::this_task::async_sleep_until;
+    using ::fast_task::this_task::async_yield;
+    using ::fast_task::this_task::check_cancellation;
+    using ::fast_task::this_task::current_pool;
+    using ::fast_task::this_task::enter_sleep_until;
+    using ::fast_task::this_task::enter_yield;
+    using ::fast_task::this_task::get_id;
+    using ::fast_task::this_task::is_cancellation_requested;
+    using ::fast_task::this_task::is_task;
+    using ::fast_task::this_task::self_cancel;
+    using ::fast_task::this_task::set_pool;
+    using ::fast_task::this_task::sleep_for;
+    using ::fast_task::this_task::sleep_until;
+    using ::fast_task::this_task::switch_to;
+    using ::fast_task::this_task::the_coroutine_ended;
+    using ::fast_task::this_task::transfer_to;
+    using ::fast_task::this_task::yield;
 }
 
 

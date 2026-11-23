@@ -14,6 +14,11 @@ namespace fast_task {
         virtual ~to_start_override() = default;
     };
 
+    // `task_object::priority` is stored in the byte that used to be
+    // `pool_padding`; a wider enum would shift every member after it and the
+    // whole layout (this shipped once as nine SEGFAULTs in the future tests).
+    static_assert(sizeof(task_priority) == 1, "task_priority must stay one byte wide: task_object::priority relies on it");
+
     struct alignas(64) FT_API_LOCAL task_object {
         struct FT_API_LOCAL execution_data;
         enum class status_e : uint8_t {
@@ -32,10 +37,7 @@ namespace fast_task {
                 is_on_scheduler = 0x2,
                 time_end = 0x4,
                 awaked = 0x8,
-                // The task is assigned to a pool; `pool_index` is then valid.
-                // Reuses the bit the removed `auto_bind` flag occupied, so the
-                // layout and `0x800` stay unchanged (plans/pool-architecture.md
-                // §2.4).
+
                 pool_assigned = 0x10,
                 is_sbo = 0x20,
                 spin_lock_locked = 0x40,
@@ -43,7 +45,7 @@ namespace fast_task {
                 invalid_switch_caught = 0x100,
                 completed = 0x200,
                 relock_action_as_unlock = 0x400,
-                //has_waiters = 0x800,
+                // 0x800 has_waiters
             };
         };
 
@@ -64,7 +66,7 @@ namespace fast_task {
         const task_vtable* vtable;           // 8
         void* relock;                        // 8
         uint8_t pool_index;                  // 1 0..254 user pool, 255 global; valid when pool_assigned
-        uint8_t pool_padding;                // 1 keeps the following fields aligned
+        task_priority priority;
         uint16_t tls_capacity;               // 2
         uint16_t awake_check;                // 2
         uint16_t arena_offset_pages;         // 2[also used for allocator, do not modify!]
@@ -76,6 +78,7 @@ namespace fast_task {
         void set_time_end(bool state) noexcept;
         bool get_awaked() const noexcept;
         void set_awaked(bool state) noexcept;
+        void reset_wait_flags() noexcept;
         bool get_pool_assigned() const noexcept;
         void set_pool_assigned(bool state) noexcept;
         bool get_is_restartable() const noexcept;
@@ -91,6 +94,9 @@ namespace fast_task {
         bool get_completed() const noexcept;
         void set_completed(bool state) noexcept;
         execution_mode get_execution_mode() const noexcept;
+
+        task_priority get_priority() const noexcept;
+        void set_priority(task_priority p) noexcept;
 
         void set_status(status_e) noexcept;
 

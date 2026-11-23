@@ -12,10 +12,18 @@
 #if __cplusplus >= 202002
     #include "../coroutine/core.hpp"
 #endif
+namespace fast_task::scheduler {
+    class worker_pool;
+}
+
 namespace fast_task::this_task {
     size_t FT_API get_id() noexcept;
     void FT_API yield();
     void FT_API sleep_until(fast_task::time_point time_point);
+
+    void FT_API switch_to(scheduler::worker_pool& target_pool);
+    void FT_API set_pool(scheduler::worker_pool& target_pool) noexcept;
+    scheduler::worker_pool& FT_API current_pool() noexcept;
 
     template <class Dur_resolution, class Dur_type>
     void sleep_for(std::chrono::duration<Dur_resolution, Dur_type> duration) {
@@ -51,6 +59,26 @@ namespace fast_task::this_task {
         };
 
         return awaiter{};
+    }
+
+    [[nodiscard]] inline auto async_switch_to(scheduler::worker_pool& target_pool) {
+        struct awaiter {
+            enter_state state;
+            scheduler::worker_pool* target;
+
+            bool await_ready() noexcept {
+                return false;
+            }
+
+            bool await_suspend(const base_coro_handle&) {
+                set_pool(*target);
+                return !enter_yield(state);
+            }
+
+            void await_resume() {}
+        };
+
+        return awaiter{{}, &target_pool};
     }
 
     [[nodiscard]] inline auto async_sleep_until(fast_task::time_point time_point) {

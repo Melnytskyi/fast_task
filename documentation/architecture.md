@@ -5,27 +5,45 @@ timer management, preemption mechanics, and scheduler-aware synchronization.
 
 ## Work-Stealing Scheduler
 
-To minimize scheduling overhead and lock contention, Fast Task uses a multi-tiered
-queue system:
+There is no process-wide task queue. Every worker pool owns its queues, and the
+queue policy is fixed when the pool is constructed: the pool storage is a
+[`configured_worker_pool_storage<Q, I, B, IsGlobal, Scale>`](../src/tasks/core/pool/pool.hpp:101)
+and `Q` decides which queues exist.
 
-- `loc.local_tasks` — a lock-free, thread-local work-stealing deque. Prioritizes
-  cache locality, since a worker usually resumes its own most recently pushed task.
-- `glob.tasks` — a global queue for hot tasks ready to be picked up by any
-  available scheduler thread.
-- `glob.cold_tasks` — a fallback queue for uninitialized tasks (for example,
-  stackful tasks waiting for stack allocation).
+- `executors_local::local_tasks` — a lock-free, thread-local work-stealing deque, one
+  per worker. A worker pops its own most recently pushed task first, which keeps the
+  hot path cache-local.
+- `queue_storage<Q>::tasks` — the pool queue. With `queue_policy::work_stealing_lifo`
+  it is a single concurrent queue; with `queue_policy::priority_fifo` it is one queue
+  per priority level.
+- `queue_storage<Q>::cold_tasks` — the pool's fallback queue for timer wake-ups that
+  were armed while no hot scheduler slot was free. Only the global pool produces and
+  consumes it: the driver parks such wake-ups there, and a worker drains the queue once
+  [`can_be_scheduled_task_to_hot()`](../src/tasks/core/pool/router.cpp:12) reports that
+  a slot is free again.
 
-Workers prefer their local deque, then steal from the global queue, and finally
-attempt to steal from random peers. The number of steal attempts is bounded by
-`FAST_TASK_MAX_STEAL_ATTEMPTS` (see [Getting Started](getting-started.md#tuning-parameters)).
+A worker prefers its local deque, then the pool queue, and only then steals from a
+random peer. Stealing goes through the pool's executor registry, which publishes one
+slot per worker; the number of attempts is bounded by `FAST_TASK_MAX_STEAL_ATTEMPTS`
+(see [Getting Started](getting-started.md#tuning-parameters)).
 
 ## Time and Awake Management
 
-Task timeouts and deadlines are handled by a dedicated `taskTimer` thread. To
-prevent race conditions and redundant wake-ups, each task maintains an
-`awake_check` counter. If a task is awakened via synchronization before its timer
-expires, this counter invalidates the pending timed event, so the stale timer
-callback is ignored.
+There is no dedicated timer thread. Deadlines live in a shared hashed timing wheel,
+`glob.timing.wheel` ([`hashed_timing_wheel`](../src/tasks/util/hashed_timing_wheel.hpp:147)).
+`startTimeController()` only flips `glob.timing.enabled` and wakes the driver; the
+wheel is armed on first use.
+
+The wheel is advanced by the floating driver: whichever worker has no work calls
+`driver_context::poll()`, which collects the expired entries and re-queues their tasks
+into the owning pool. `notify_driver_of_timer()` tells the driver the earliest tick it
+must not sleep past, so a sleeping driver wakes for the next deadline instead of
+spinning.
+
+Each task carries an `awake_check` counter, and every wheel entry stores the value it
+saw at insertion. Waking a task through a synchronization primitive resets the task's
+wait flags, so the stale entry fails the `check_id != awake_check` comparison and is
+dropped instead of waking the task a second time.
 
 The timer wheel precision is configurable via `FAST_TASK_TIMER_PRECISION`
 (`1us`, `1ms`, or `10ms`). See [Getting Started](getting-started.md#tuning-parameters).
@@ -98,6 +116,8 @@ buffer size is [`task::sbo_size`](../include/fast_task/task/task.hpp:97) (64 byt
 
 ## Related Pages
 
+- [Scheduler Core](scheduler-core.md) — where each part of the scheduler lives and which
+  invariants it keeps.
 - [Scheduler](scheduler.md) — the public scheduler API.
 - [Synchronization](synchronization.md) — the primitives referenced above.
 - [Coroutines](task/coroutines.md) — the stackless execution model.

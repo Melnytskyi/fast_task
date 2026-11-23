@@ -15,7 +15,7 @@
 #include <exception>
 
 namespace fast_task {
-    enum class task_priority {
+    enum class task_priority : uint8_t {
         background,
         low,
         lower,
@@ -24,20 +24,6 @@ namespace fast_task {
         high,
         semi_realtime,
     };
-
-    //TODO UPDATE this doc
-    //The task class internally uses callbacks like on_start, on_exception, on_await and on_cancel
-    //  the on_await and on_cancel executed on calling thread and could be used for example, to wrap the sockets in the task interface
-    //  the on_start executed on its own stack like normal one and allows using all synchronization primitives
-    //    when is_restartable is set the task could be restarted, to disable use this_task::the_coroutine_ended
-    //    but when the is_on_scheduler variable is set, the task would be executed on scheduler stack which would reduce the memory usage
-    //      and the task should be aware, the scheduler could not interrupt itself, so the task effectively becomes cooperative only,
-    //      the task on scheduler should never consume too much time to prevent the task overloading the whole scheduler system
-    //      and the task should use enter_* methods for synchronization, the regular operations would throw exception
-    //      for c++20 coroutines use the functions from coroutines/*.hpp headers, if you want to implement own coroutines use these as an example of how to use the enter_* methods
-    //      this flag allows to create stackless coroutines like in c++ or other language
-    //  the task has is_sbo optimization to reduce the memory consumption on the simple tasks whose have only on_start and on_exception callbacks
-
     struct alignas(64) FT_API_LOCAL task_object;
 
     struct FT_API task_vtable {
@@ -124,8 +110,6 @@ namespace fast_task {
         static task adopt(task_object* raw) noexcept;
 
 
-        void set_auto_bind_worker(bool enable = true) const noexcept;
-        void set_worker_id(uint16_t id) const noexcept;
         void set_priority(task_priority) const noexcept;
         void set_timeout(fast_task::time_point timeout) const noexcept;
         task_priority get_priority() const noexcept;

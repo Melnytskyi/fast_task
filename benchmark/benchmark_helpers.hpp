@@ -23,7 +23,10 @@
 #include <iomanip>
 #include <iostream>
 #include <string>
+#include <thread>
 #include <vector>
+
+#include <fast_task/task.hpp>
 // Benchmark wall-clock measurements stay independent of the library clock: the
 // harness measures wall time, the scheduler itself uses fast_task::clock.
 using Clock = std::chrono::steady_clock;
@@ -199,6 +202,15 @@ inline size_t avg_bench_mem(size_t (&usage)[size]) {
     return res / size;
 }
 
+inline void ensure_workers(size_t n) {
+    auto& pool = fast_task::scheduler::worker_pool::global();
+    const auto st = pool.stats();
+    if (st.target_workers < n)
+        pool.add_workers(static_cast<uint16_t>(n - st.target_workers));
+    while (pool.stats().active_workers < n)
+        std::this_thread::yield();
+}
+
 #define BENCH_MAKE_CALL ()
 
 #define BENCH_MAKE_CUSTOM_CALL (sp.iterations)
@@ -208,9 +220,7 @@ inline size_t avg_bench_mem(size_t (&usage)[size]) {
         void run(size_t scale);                                                  \
         name() {                                                                 \
             size_t n = std::max(2u, std::thread::hardware_concurrency());        \
-            fast_task::scheduler::create_executor(n);                            \
-            while (fast_task::scheduler::total_executors() < n)                  \
-                std::this_thread::yield();                                       \
+            ensure_workers(n);                                                   \
             print_bench_header(#name);                                           \
             warm_up();                                                           \
             for (auto const& sp : (scales)) {                                    \
@@ -237,9 +247,7 @@ inline size_t avg_bench_mem(size_t (&usage)[size]) {
         void run(size_t scale);                                           \
         name() {                                                          \
             size_t n = std::max(2u, std::thread::hardware_concurrency()); \
-            fast_task::scheduler::create_executor(n);                     \
-            while (fast_task::scheduler::total_executors() < n)           \
-                std::this_thread::yield();                                \
+            ensure_workers(n);                                            \
             print_bench_header(#name);                                    \
             warm_up();                                                    \
             for (auto const& sp : (scales)) {                             \
@@ -263,9 +271,7 @@ inline size_t avg_bench_mem(size_t (&usage)[size]) {
         void run(size_t scale, const std::filesystem::path& path);        \
         name() {                                                          \
             size_t n = std::max(2u, std::thread::hardware_concurrency()); \
-            fast_task::scheduler::create_executor(n);                     \
-            while (fast_task::scheduler::total_executors() < n)           \
-                std::this_thread::yield();                                \
+            ensure_workers(n);                                            \
             print_bench_header(#name);                                    \
             warm_up();                                                    \
             for (auto const& sp : (scales)) {                             \
@@ -292,9 +298,7 @@ inline size_t avg_bench_mem(size_t (&usage)[size]) {
         void run(size_t scale, T&& item);                                 \
         name() {                                                          \
             size_t n = std::max(2u, std::thread::hardware_concurrency()); \
-            fast_task::scheduler::create_executor(n);                     \
-            while (fast_task::scheduler::total_executors() < n)           \
-                std::this_thread::yield();                                \
+            ensure_workers(n);                                            \
             print_bench_header(#name);                                    \
             warm_up();                                                    \
             for (auto const& sp : (scales)) {                             \
@@ -322,15 +326,11 @@ inline size_t avg_bench_mem(size_t (&usage)[size]) {
             fast_task::scheduler::shut_down();                                                          \
             fast_task::scheduler::clean_up();                                                           \
             size_t n = std::max(2u, std::thread::hardware_concurrency());                               \
-            fast_task::scheduler::create_executor(n);                                                   \
-            while (fast_task::scheduler::total_executors() < n)                                         \
-                std::this_thread::yield();                                                              \
+            ensure_workers(n);                                                                          \
         }                                                                                               \
         name() {                                                                                        \
             size_t n = std::max(2u, std::thread::hardware_concurrency());                               \
-            fast_task::scheduler::create_executor(n);                                                   \
-            while (fast_task::scheduler::total_executors() < n)                                         \
-                std::this_thread::yield();                                                              \
+            ensure_workers(n);                                                                          \
             print_bench_header(#name, true);                                                            \
             warm_up();                                                                                  \
             size_t baseline_kb = current_rss_kb();                                                      \

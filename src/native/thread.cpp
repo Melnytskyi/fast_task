@@ -35,14 +35,22 @@ namespace fast_task::native {
 
     void thread::init_dat() {}
 
-    void* thread::create(void (*function)(void*), void* arg, unsigned long& id, size_t stack_size, bool stack_reservation, int& error_code) {
+    namespace {
+        bool apply_thread_affinity(HANDLE thread, std::span<const uint32_t> cpus);
+        std::vector<uint32_t> read_thread_affinity(HANDLE thread);
+    }
+
+    void* thread::create(void (*function)(void*), void* arg, unsigned long& id, size_t stack_size, bool stack_reservation, const cpu_affinity* affinity, bool& affinity_applied, int& error_code) {
         error_code = 0;
+        affinity_applied = true;
         interrupt_unsafe_region region;
         void* handle = (void*)_beginthreadex(nullptr, (uint32_t)std::min<size_t>(stack_size, UINT32_MAX), reinterpret_cast<_beginthreadex_proc_type>(reinterpret_cast<void*>(function)), arg, CREATE_SUSPENDED | (stack_reservation ? STACK_SIZE_PARAM_IS_A_RESERVATION : 0), (unsigned int*)&id);
         if (!handle) {
             error_code = GetLastError();
             return nullptr;
         }
+        if (affinity && !affinity->cpus.empty() && !apply_thread_affinity((HANDLE)handle, affinity->cpus))
+            affinity_applied = false;
         ResumeThread(handle);
         return handle;
     }
@@ -101,6 +109,46 @@ namespace fast_task::native {
         }
     };
 
+    namespace {
+        bool apply_thread_affinity(HANDLE thread, std::span<const uint32_t> cpus) {
+    #if defined(_WIN32_WINNT) && _WIN32_WINNT >= 0x0601
+            GROUP_AFFINITY group{};
+            group.Group = static_cast<WORD>(cpus.front() / 64);
+            for (uint32_t cpu : cpus) {
+                if (cpu / 64 != group.Group)
+                    continue;
+                group.Mask |= (KAFFINITY(1) << (cpu % 64));
+            }
+            if (group.Mask == 0)
+                return false;
+            return SetThreadGroupAffinity(thread, &group, nullptr) != 0;
+    #else
+            DWORD_PTR mask = 0;
+            for (uint32_t cpu : cpus)
+                if (cpu < 64)
+                    mask |= (DWORD_PTR(1) << cpu);
+            if (mask == 0)
+                return false;
+            return SetThreadAffinityMask(thread, mask) != 0;
+    #endif
+        }
+
+        std::vector<uint32_t> read_thread_affinity(HANDLE thread) {
+            std::vector<uint32_t> cpus;
+    #if defined(_WIN32_WINNT) && _WIN32_WINNT >= 0x0601
+            GROUP_AFFINITY group{};
+            if (!GetThreadGroupAffinity(thread, &group))
+                return cpus;
+            for (int bit = 0; bit < 64; ++bit)
+                if (group.Mask & (KAFFINITY(1) << bit))
+                    cpus.push_back(static_cast<uint32_t>(group.Group) * 64 + static_cast<uint32_t>(bit));
+    #else
+            (void)thread;
+    #endif
+            return cpus;
+        }
+    }
+
     bool thread::suspend(id id) {
         interrupt_unsafe_region region;
         HANDLE_CLOSER thread_handle(OpenThread(THREAD_SUSPEND_RESUME | THREAD_QUERY_INFORMATION, false, id._id));
@@ -152,10 +200,42 @@ namespace fast_task::native {
     #endif
     }
 
+    bool thread::set_affinity(std::span<const uint32_t> cpus) {
+        interrupt_unsafe_region region;
+        if (!_thread || cpus.empty())
+            return false;
+        HANDLE_CLOSER thread_handle(OpenThread(THREAD_SET_LIMITED_INFORMATION, false, _id));
+        if (!thread_handle.handle)
+            return false;
+        return apply_thread_affinity(thread_handle.handle, cpus);
+    }
+
+    std::vector<uint32_t> thread::get_affinity() const {
+        interrupt_unsafe_region region;
+        if (!_thread)
+            return {};
+        HANDLE_CLOSER thread_handle(OpenThread(THREAD_QUERY_LIMITED_INFORMATION, false, _id));
+        if (!thread_handle.handle)
+            return {};
+        return read_thread_affinity(thread_handle.handle);
+    }
+
     namespace this_thread {
         thread::id get_id() noexcept {
             interrupt_unsafe_region region;
             return thread::id(GetCurrentThreadId());
+        }
+
+        bool set_affinity(std::span<const uint32_t> cpus) {
+            interrupt_unsafe_region region;
+            if (cpus.empty())
+                return false;
+            return apply_thread_affinity(GetCurrentThread(), cpus);
+        }
+
+        std::vector<uint32_t> get_affinity() {
+            interrupt_unsafe_region region;
+            return read_thread_affinity(GetCurrentThread());
         }
 
         void yield() noexcept {
@@ -189,9 +269,32 @@ namespace fast_task::native {
     void thread::init_dat() {
     }
 
-    void* thread::create(void (*function)(void*), void* arg, unsigned long& id, size_t stack_size, bool stack_reservation, int& error_code) {
+    namespace {
+        bool fill_cpu_set(std::span<const uint32_t> cpus, cpu_set_t& mask) {
+            CPU_ZERO(&mask);
+            bool any = false;
+            for (uint32_t cpu : cpus) {
+                if (cpu < static_cast<uint32_t>(CPU_SETSIZE)) {
+                    CPU_SET(static_cast<int>(cpu), &mask);
+                    any = true;
+                }
+            }
+            return any;
+        }
+
+        std::vector<uint32_t> cpu_set_to_vector(const cpu_set_t& mask) {
+            std::vector<uint32_t> cpus;
+            for (int cpu = 0; cpu < CPU_SETSIZE; ++cpu)
+                if (CPU_ISSET(cpu, &mask))
+                    cpus.push_back(static_cast<uint32_t>(cpu));
+            return cpus;
+        }
+    }
+
+    void* thread::create(void (*function)(void*), void* arg, unsigned long& id, size_t stack_size, bool stack_reservation, const cpu_affinity* affinity, bool& affinity_applied, int& error_code) {
         interrupt_unsafe_region region;
         error_code = 0;
+        affinity_applied = true;
         pthread_attr_t attr;
         if (int err = pthread_attr_init(&attr); err) {
             error_code = err;
@@ -206,6 +309,12 @@ namespace fast_task::native {
                 error_code = err;
                 return nullptr;
             }
+        }
+        if (affinity && !affinity->cpus.empty()) {
+            cpu_set_t mask;
+            if (!fill_cpu_set(affinity->cpus, mask) ||
+                pthread_attr_setaffinity_np(&attr, sizeof(mask), &mask) != 0)
+                affinity_applied = false;
         }
         pthread_t thread;
         if (int err = pthread_create(&thread, &attr, reinterpret_cast<void* (*)(void*)>(function), arg); err) {
@@ -286,10 +395,50 @@ namespace fast_task::native {
         return false;
     }
 
+    bool thread::set_affinity(std::span<const uint32_t> cpus) {
+        interrupt_unsafe_region region;
+        if (!_thread || cpus.empty())
+            return false;
+        cpu_set_t mask;
+        if (!fill_cpu_set(cpus, mask))
+            return false;
+        return pthread_setaffinity_np(reinterpret_cast<pthread_t>(_id), sizeof(mask), &mask) == 0;
+    }
+
+    std::vector<uint32_t> thread::get_affinity() const {
+        interrupt_unsafe_region region;
+        if (!_thread)
+            return {};
+        cpu_set_t mask;
+        CPU_ZERO(&mask);
+        if (pthread_getaffinity_np(reinterpret_cast<pthread_t>(_id), sizeof(mask), &mask) != 0)
+            return {};
+        return cpu_set_to_vector(mask);
+    }
+
     namespace this_thread {
         thread::id get_id() noexcept {
             interrupt_unsafe_region region;
             return thread::id(pthread_self());
+        }
+
+        bool set_affinity(std::span<const uint32_t> cpus) {
+            interrupt_unsafe_region region;
+            if (cpus.empty())
+                return false;
+            cpu_set_t mask;
+            if (!fill_cpu_set(cpus, mask))
+                return false;
+            return pthread_setaffinity_np(pthread_self(), sizeof(mask), &mask) == 0;
+        }
+
+        std::vector<uint32_t> get_affinity() {
+            interrupt_unsafe_region region;
+            cpu_set_t mask;
+            CPU_ZERO(&mask);
+            if (pthread_getaffinity_np(pthread_self(), sizeof(mask), &mask) != 0)
+                return {};
+            return cpu_set_to_vector(mask);
         }
 
         void yield() noexcept {

@@ -6,6 +6,7 @@
 // http://www.boost.org/LICENSE_1_0.txt)
 #ifndef SRC_TASKS_UTIL_NATIVE_WORKERS_SINGLETON_LINUX
 #define SRC_TASKS_UTIL_NATIVE_WORKERS_SINGLETON_LINUX
+#include <atomic>
 #include <chrono>
 #include <concurrentqueue/moodycamel/concurrentqueue.h>
 #include <cstring>
@@ -22,6 +23,8 @@
 #include <unistd.h>
 
 namespace fast_task::util {
+    void driver_notify_io_submission() noexcept;
+
     class FT_API_LOCAL native_worker_manager {
     public:
         virtual void handle(class native_worker_handle* overlapped, int32_t res, uint32_t flags) = 0;
@@ -134,13 +137,13 @@ namespace fast_task::util {
     };
 
     class FT_API_LOCAL native_workers_singleton {
-        // A single ring driven by driver_context. There is no dispatcher thread
-        // and therefore no reason to shard: the driver is the only consumer of
-        // completions, so spreading submissions across N rings would only add
-        // wake-up fan-out without adding parallelism.
         io_uring ring;
         moodycamel::ConcurrentQueue<native_worker_handle*> queue;
         int wakeup_eventfd = -1;
+        bool wake_armed = false;
+
+        std::atomic<uint32_t> pending_submissions{0};
+        static inline std::atomic<bool> ring_live{false};
 
         native_workers_singleton() {
             wakeup_eventfd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
@@ -169,7 +172,6 @@ namespace fast_task::util {
                 size_t available = static_cast<size_t>(mem_rl.rlim_cur) > locked_kb * 1024
                                        ? static_cast<size_t>(mem_rl.rlim_cur) - locked_kb * 1024
                                        : 0;
-                // One ring now gets the whole budget instead of a 1/N slice.
                 start_idx = num_candidates - 1;
                 for (unsigned int ci = 0; ci < num_candidates; ++ci) {
                     if (ring_bytes_estimate(candidates[ci]) <= available) {
@@ -211,10 +213,8 @@ namespace fast_task::util {
                 std::terminate();
             }
 
-            // Arm directly on `this`: calling arm_wakeup() here would re-enter
-            // get_instance() while the function-local static guard is still
-            // held by this very constructor, deadlocking on __cxa_guard_acquire.
             arm_wakeup_on(*this);
+            ring_live.store(true, std::memory_order_release);
         }
 
         static void arm_wakeup_on(native_workers_singleton& self) {
@@ -223,10 +223,13 @@ namespace fast_task::util {
                 io_uring_submit(&self.ring);
                 sqe = io_uring_get_sqe(&self.ring);
             }
-            if (!sqe)
+            if (!sqe) {
+                self.wake_armed = false;
                 return;
+            }
             io_uring_prep_poll_add(sqe, self.wakeup_eventfd, POLLIN);
             io_uring_sqe_set_data(sqe, reinterpret_cast<void*>(1));
+            self.wake_armed = true;
         }
 
         static void arm_wakeup() {
@@ -321,9 +324,6 @@ namespace fast_task::util {
             io_uring_sqe_set_data(sqe, h);
         }
 
-        // Reap every completion currently queued on the ring and dispatch it to
-        // the owning manager. Non-looping: the caller (driver_context) decides
-        // how long to block and how often to call this.
         static void drain() {
             auto& self = get_instance();
             io_uring_cqe* cqe;
@@ -337,9 +337,8 @@ namespace fast_task::util {
                 if (user_data == 1) {
                     uint64_t val;
                     read(self.wakeup_eventfd, &val, sizeof(val));
-                    // Re-arm unconditionally: there is no dispatcher thread to
-                    // stop, and dropping the poll would make wake() a no-op.
-                    arm_wakeup();
+                    self.wake_armed = false;
+                    arm_wakeup_on(self);
                     continue;
                 }
 
@@ -353,15 +352,17 @@ namespace fast_task::util {
             io_uring_cq_advance(&self.ring, cqe_count);
         }
 
-        // Move every queued request into the submission queue, then submit.
-        static void flush() {
+        static void build_submissions() {
             auto& self = get_instance();
             native_worker_handle* handles[256];
             size_t count;
-            while ((count = self.queue.try_dequeue_bulk(handles, 256)) > 0)
+            while ((count = self.queue.try_dequeue_bulk(handles, 256)) > 0) {
                 for (size_t i = 0; i < count; ++i)
                     prepare_handle_sqe(handles[i]);
-            io_uring_submit(&self.ring);
+                self.pending_submissions.fetch_sub(
+                    static_cast<uint32_t>(count), std::memory_order_release
+                );
+            }
         }
 
         static native_workers_singleton& get_instance() {
@@ -372,11 +373,8 @@ namespace fast_task::util {
         static void sumbmit(native_worker_handle* handle, int /*hFile*/) {
             auto& self = get_instance();
             self.queue.enqueue(handle);
-            // Always poke the eventfd. With no dispatcher thread the driver is
-            // either inside poll_all() (and will see the completion) or not
-            // parked at all, so there is no "asleep" state to test for.
-            uint64_t val = 1;
-            write(self.wakeup_eventfd, &val, sizeof(val));
+            self.pending_submissions.fetch_add(1, std::memory_order_release);
+            driver_notify_io_submission();
         }
 
     public:
@@ -386,12 +384,24 @@ namespace fast_task::util {
                 close(wakeup_eventfd);
         }
 
-        // Submit pending work and block up to timeout_ms for at least one
-        // completion, then drain. A negative timeout blocks indefinitely.
-        // Returns true if any completion was processed.
+        static bool has_ready_work() {
+            if (!ring_live.load(std::memory_order_acquire))
+                return false;
+            auto& self = get_instance();
+            if (self.pending_submissions.load(std::memory_order_acquire) != 0)
+                return true;
+            return io_uring_cq_ready(&self.ring) != 0;
+        }
+
         static bool poll_all(int timeout_ms) {
             auto& self = get_instance();
-            flush();
+            if (!self.wake_armed)
+                arm_wakeup_on(self);
+            build_submissions();
+
+            if (timeout_ms == 0 && io_uring_sq_ready(&self.ring) == 0 &&
+                io_uring_cq_ready(&self.ring) == 0)
+                return true;
 
             io_uring_cqe* cqe = nullptr;
             __kernel_timespec ts{};
@@ -410,7 +420,6 @@ namespace fast_task::util {
             return true;
         }
 
-        // Wake a driver blocked in poll_all(). Safe from any thread.
         static void wake_all() {
             auto& self = get_instance();
             uint64_t val = 1;

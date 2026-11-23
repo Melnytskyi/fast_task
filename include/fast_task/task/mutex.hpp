@@ -73,7 +73,7 @@ namespace fast_task {
         friend struct debug::_debug_collect;
         friend class mutex_unify;
         mutex mut;
-        uint32_t recursive_count = 0;
+        std::atomic<uint32_t> recursive_count{0};
 
     public:
         recursive_mutex();
@@ -117,37 +117,51 @@ namespace fast_task {
         friend class mutex_unify;
 
         struct FT_API_LOCAL private_values {
-            static constexpr inline uint32_t HAS_READER_WAITERS = 1 << 0;
-            static constexpr inline uint32_t HAS_WRITER_WAITERS = 1 << 1;
+            static constexpr inline uint64_t READER_ONE = 1;
+            static constexpr inline uint64_t HAS_READER_WAITERS = uint64_t(1) << 61;
+            static constexpr inline uint64_t HAS_WRITER_WAITERS = uint64_t(1) << 62;
+            static constexpr inline uint64_t WRITER_LOCKED = uint64_t(1) << 63;
+            static constexpr inline uint64_t READER_COUNT_MASK = HAS_READER_WAITERS - 1;
+            static constexpr inline uint64_t OWNERSHIP_MASK = WRITER_LOCKED | READER_COUNT_MASK;
 
             static constexpr inline uint8_t READER_KEY = 1;
             static constexpr inline uint8_t WRITER_KEY = 0;
+            static constexpr inline size_t cache_line_size = 64;
 
-            std::atomic<uint64_t> state{0};
-            std::atomic<uint32_t> readers{0};
-            std::atomic<uint32_t> waiters{0};
+            alignas(cache_line_size) std::atomic<uint64_t> state{0};
+            std::atomic<size_t> writer_owner{0};
         };
 
         private_values values;
 
         inline size_t debug_writer_owner() const noexcept {
-            return size_t(values.state.load(std::memory_order_relaxed));
+            if ((values.state.load(std::memory_order_relaxed) & private_values::WRITER_LOCKED) == 0)
+                return 0;
+            return values.writer_owner.load(std::memory_order_relaxed);
         }
 
         inline size_t debug_reader_count() const noexcept {
-            return values.readers.load(std::memory_order_relaxed);
+            return size_t(values.state.load(std::memory_order_relaxed) & private_values::READER_COUNT_MASK);
         }
 
         static rw_mutex::private_values& values_of(void* state_address) {
             return *reinterpret_cast<rw_mutex::private_values*>(reinterpret_cast<char*>(state_address) - offsetof(rw_mutex::private_values, state));
         }
 
-        static bool reader_can_acquire(uint64_t writer, uint32_t waiters) {
-            return writer == 0 && (waiters & rw_mutex::private_values::HAS_WRITER_WAITERS) == 0;
+        static bool reader_can_acquire(uint64_t state) {
+            return (state & (private_values::WRITER_LOCKED | private_values::HAS_WRITER_WAITERS)) == 0;
         }
 
-        template <uint8_t Key, uint8_t Transition>
-        static size_t wake_waiters(rw_mutex::private_values& values, size_t count);
+        static bool writer_can_acquire(uint64_t state) {
+            return (state & private_values::OWNERSHIP_MASK) == 0;
+        }
+
+        static bool read_probe(void* state_address) noexcept;
+        static bool write_probe(void* state_address) noexcept;
+
+        static size_t wake_writers(private_values& values, size_t count);
+        static size_t wake_readers(private_values& values);
+        static void reader_left(private_values& values, uint64_t state) noexcept;
 
 
     public:

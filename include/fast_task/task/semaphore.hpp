@@ -10,8 +10,9 @@
 #include "../native.hpp"
 #include "enter_state.hpp"
 #include "fwd.hpp"
+#include <array>
 #include <atomic>
-#include <list>
+#include <vector>
 
 #if __cplusplus >= 202002
     #include "../coroutine/core.hpp"
@@ -68,8 +69,49 @@ namespace fast_task {
         friend struct debug::_debug_collect;
         friend class mutex_unify;
 
+        struct holder_set {
+            static constexpr size_t inline_capacity = 32;
+            static constexpr size_t npos = size_t(-1);
+
+            size_t at(size_t index) const noexcept {
+                return index < inline_capacity ? inline_holders[index] : spilled[index - inline_capacity];
+            }
+
+            size_t& at(size_t index) noexcept {
+                return index < inline_capacity ? inline_holders[index] : spilled[index - inline_capacity];
+            }
+
+            size_t find(size_t id) const noexcept {
+                for (size_t i = 0; i < count; ++i)
+                    if (at(i) == id)
+                        return i;
+                return npos;
+            }
+
+            void push(size_t id) {
+                if (count < inline_capacity)
+                    inline_holders[count] = id;
+                else
+                    spilled.push_back(id);
+                ++count;
+            }
+
+            void erase(size_t index) {
+                size_t last = count - 1;
+                if (index != last)
+                    at(index) = at(last);
+                if (last >= inline_capacity)
+                    spilled.pop_back();
+                --count;
+            }
+
+            std::array<size_t, inline_capacity> inline_holders{};
+            std::vector<size_t> spilled;
+            size_t count = 0;
+        };
+
         struct private_values {
-            std::list<size_t> lock_check;
+            holder_set lock_check;
             fast_task::native::spin_lock lock_check_lock;
             std::atomic_size_t state;
             std::atomic_size_t max_threshold;

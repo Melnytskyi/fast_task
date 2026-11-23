@@ -49,46 +49,69 @@ namespace fast_task::this_task {
     }
 
     bool transfer_to(const task& target) {
-        if (get_loc()) {
-            if (!target || !get_loc()->curr_task)
-                return false;
-            if (get_loc()->ex_ptr)
-                return false;
-            if (get_loc()->transfer_state.pending)
-                return false;
-            if (!(
-                    get_data(get_loc()->curr_task).get_is_on_scheduler() == true &&
-                    get_data(target).get_is_on_scheduler() == true &&
-                    (get_data(target).is_scheduled() == false || (get_data(target).is_suspended() == true && get_data(target).get_is_restartable() == true))
-                ))
-                return false;
+        auto* loc = get_loc();
+        if (!loc)
+            return false;
+        if (!target || !loc->curr_task)
+            return false;
+        if (loc->ex_ptr)
+            return false;
+        if (loc->transfer_state.pending)
+            return false;
 
-            // The target must be runnable by *this* worker: an assigned task
-            // must already belong to the worker's pool (§2.11). An unassigned
-            // one is adopted into it below.
-            if (get_data(target).get_pool_assigned() && get_data(target).pool_index != get_loc()->pool_index)
-                return false;
-
+        task_object& target_data = get_data(target);
+        if (!(get_data(loc->curr_task).get_is_on_scheduler() == true &&
+              target_data.get_is_on_scheduler() == true &&
+              (target_data.is_scheduled() == false ||
+               (target_data.is_suspended() == true && target_data.get_is_restartable() == true))))
+            return false;
+        if (target_data.get_pool_assigned() && target_data.pool_index != loc->pool_index)
+            return false;
 
 #if FT_TASK_TRANSFERS_LIMIT > 0
-            if (get_loc()->transfer_state.transfers >= FT_TASK_TRANSFERS_LIMIT)
-                return false;
-            ++get_loc()->transfer_state.transfers;
-#endif
-            // A freshly created target was never counted; count it now on the
-            // worker's pool so its completion cannot underflow.
-            if (get_data(target).is_created())
-                task_mark_created(get_data(target));
-            get_data(target).set_status(task_object::status_e::scheduled);
-            get_loc()->transfer_state.pending = target;
-            return true;
-        } else
+        if (loc->transfer_state.transfers >= FT_TASK_TRANSFERS_LIMIT)
             return false;
+        ++loc->transfer_state.transfers;
+#endif
+        if (target_data.is_created())
+            task_mark_created(target_data);
+        target_data.set_status(task_object::status_e::scheduled);
+        loc->transfer_state.pending = target;
+        return true;
+    }
+
+    void set_pool(scheduler::worker_pool& target_pool) noexcept {
+        auto* loc = get_loc();
+        if (!loc || !loc->curr_task)
+            return;
+        retarget_task(get_data(loc->curr_task), scheduler::storage_of(target_pool));
+    }
+
+    void switch_to(scheduler::worker_pool& target_pool) {
+        auto* loc = get_loc();
+        if (!loc || !loc->curr_task)
+            throw invalid_context{};
+        auto& target = scheduler::storage_of(target_pool);
+        if (loc->pool_index == target.pool_index)
+            return;
+        if (get_data(loc->curr_task).get_is_on_scheduler())
+            throw std::logic_error("this_task::switch_to: a stackless coroutine cannot change pools while it runs");
+        retarget_task(get_data(loc->curr_task), target);
+        loc->yield_request = true;
+        swapCtx();
+    }
+
+    scheduler::worker_pool& current_pool() noexcept {
+        auto* loc = get_loc();
+        worker_pool_storage* pool = (loc && loc->owner_pool) ? loc->owner_pool : &global_storage();
+        if (auto* handle = pool->public_handle)
+            return *handle;
+        return scheduler::worker_pool::global();
     }
 
     void sleep_until(fast_task::time_point time_point) {
-        if (get_loc()) {
-            get_loc()->pending_timer = time_point;
+        if (auto* loc = get_loc()) {
+            loc->pending_timer = time_point;
             swapCtx();
             resetTimeWait();
         } else
@@ -96,13 +119,13 @@ namespace fast_task::this_task {
     }
 
     bool FT_API enter_sleep_until(enter_state&, fast_task::time_point time_point) {
-        if (get_loc()) {
-            if (fast_task::clock::now() >= time_point)
-                return true;
-            get_loc()->pending_timer = time_point;
-            return false;
-        } else
+        auto* loc = get_loc();
+        if (!loc)
             return true;
+        if (fast_task::clock::now() >= time_point)
+            return true;
+        loc->pending_timer = time_point;
+        return false;
     }
 
     bool FT_API enter_yield(enter_state&) {
@@ -113,8 +136,8 @@ namespace fast_task::this_task {
     }
 
     void yield() {
-        if (get_loc()) {
-            get_loc()->yield_request = true;
+        if (auto* loc = get_loc()) {
+            loc->yield_request = true;
             swapCtx();
         } else
             native::this_thread::yield();

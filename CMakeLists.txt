@@ -16,6 +16,8 @@ target_link_libraries(fast_task PRIVATE fast_task_dependencies)
 target_include_directories(fast_task PUBLIC "include")
 target_include_directories(fast_task PRIVATE "src")
 
+target_compile_options(fast_task PUBLIC -g )
+
 include(cmake/Module.cmake)
 
 if(FAST_TASK_BUILD_TESTS)

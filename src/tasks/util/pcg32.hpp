@@ -4,12 +4,6 @@
 #include <random>
 
 namespace fast_task {
-    // A small, fast PCG32 generator (plans/pool-architecture.md §2.2).
-    //
-    // It exposes the subset of the UniformRandomBitGenerator interface that
-    // `std::uniform_int_distribution` needs (`result_type`, `min`, `max`,
-    // `operator()`), so it can replace `std::mt19937` wherever a distribution
-    // is used, while `next()` stays the raw 32-bit primitive.
     class pcg32 {
         static inline constexpr uint64_t pcg32_mult = 0x5851f42d4c957f2d;
 

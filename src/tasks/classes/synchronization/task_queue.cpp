@@ -4,10 +4,23 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
+#include <list>
+
 #include <fast_task/task.hpp>
 #include <tasks/_internal.hpp>
 
 namespace fast_task {
+    struct queue_handle {
+        std::list<task> tasks;
+        condition_variable_any end_of_queue;
+        fast_task::native::spin_lock no_race;
+        queue* tq = nullptr;
+        size_t now_at_execution = 0;
+        size_t at_execution_max = 0;
+        bool destructed = false;
+        bool is_running = false;
+    };
+
     queue::queue(size_t at_execution_max) {
         FT_DEBUG_ONLY(register_object(this));
         handle = new queue_handle{.tasks{}, .end_of_queue{}, .no_race{}, .tq = this, .at_execution_max = at_execution_max};

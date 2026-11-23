@@ -63,9 +63,7 @@ static void task_spawn_empty_task_create_start_await() {
 struct task_spawn_empty_task_create_start_await_wrapper {
     task_spawn_empty_task_create_start_await_wrapper() {
         size_t n = std::max(2u, std::thread::hardware_concurrency());
-        fast_task::scheduler::create_executor(n);
-        while (fast_task::scheduler::total_executors() < n)
-            std::this_thread::yield();
+        ensure_workers(n);
         task_spawn_empty_task_create_start_await();
         fast_task::scheduler::shut_down();
         fast_task::scheduler::clean_up();

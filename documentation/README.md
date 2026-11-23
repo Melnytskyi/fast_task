@@ -10,6 +10,7 @@ provides a compact overview; the pages below cover each subsystem in depth.
 |----------|-------------|
 | [Getting Started](getting-started.md) | Prerequisites, building, integration, CMake options, model comparison, and compatibility |
 | [Architecture](architecture.md) | Work-stealing scheduler, timer management, preemption, and synchronization internals |
+| [Scheduler Core](scheduler-core.md) | Map of `src/tasks/core`: which directory answers which question, reading order, include rules, and the invariants |
 | [Tasks](tasks.md) | The stackful `fast_task::task` API, lifecycle, priorities, timeouts, and cancellation |
 | [Coroutines](task/coroutines.md) | Stackless `task_coro`, generators, and coroutine helpers |
 | [Synchronization](synchronization.md) | `mutex`, `recursive_mutex`, `rw_mutex`, `condition_variable`, `semaphore`, `limiter`, and `mutex_unify` |

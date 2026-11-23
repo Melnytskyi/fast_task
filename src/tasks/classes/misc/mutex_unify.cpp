@@ -493,18 +493,9 @@ namespace fast_task {
             break;
         case mutex_unify_type::urwmut_r:
             break;
-        case mutex_unify_type::urwmut_w: {
-            auto& values = urwmut->values;
-            uint64_t expected = values.state.load(std::memory_order_relaxed);
-            while (!values.state.compare_exchange_weak(
-                expected,
-                target_owner->get_id(),
-                std::memory_order_release,
-                std::memory_order_relaxed
-            )) {
-            }
+        case mutex_unify_type::urwmut_w:
+            urwmut->values.writer_owner.store(target_owner->get_id(), std::memory_order_release);
             break;
-        }
         case mutex_unify_type::mmut:
             mmut->donate_ownership(target_owner);
             break;
@@ -512,4 +503,5 @@ namespace fast_task {
             break;
         }
     }
+
 }

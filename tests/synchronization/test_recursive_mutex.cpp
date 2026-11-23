@@ -66,6 +66,21 @@ TEST_F(TaskRecursiveMutexTest, ContentionFromDifferentTask) {
     EXPECT_EQ(counter.load(), per_task * 2);
 }
 
+TEST_F(TaskRecursiveMutexTest, IsLockedReflectsHoldState) {
+    fast_task::recursive_mutex m;
+    run_task([&] {
+        EXPECT_FALSE(m.is_locked());
+        m.lock();
+        EXPECT_TRUE(m.is_locked());
+        m.lock();
+        EXPECT_TRUE(m.is_locked());
+        m.unlock();
+        EXPECT_TRUE(m.is_locked());
+        m.unlock();
+        EXPECT_FALSE(m.is_locked());
+    });
+}
+
 TEST_F(TaskRecursiveMutexTest, IsOwn) {
     fast_task::recursive_mutex m;
     run_task([&] {

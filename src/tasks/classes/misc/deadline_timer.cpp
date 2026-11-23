@@ -1,8 +1,37 @@
 
+#include <list>
+#include <unordered_set>
+
 #include <fast_task/task.hpp>
 #include <tasks/_internal.hpp>
 
 namespace fast_task {
+    struct deadline_timer::handle {
+        std::atomic_size_t usage_count{1};
+        mutex no_race;
+        fast_task::time_point time_point;
+        std::unordered_set<size_t> canceled_tasks;
+        std::list<task> scheduled_tasks;
+        std::list<task> sleeping_tasks;
+        bool shutdown = false;
+
+        static handle* create() {
+            return new handle{};
+        }
+
+        handle* acquire() {
+            usage_count.fetch_add(1, std::memory_order_relaxed);
+            return this;
+        }
+
+        void release() {
+            if (usage_count.fetch_sub(1, std::memory_order_release) == 1) {
+                std::atomic_thread_fence(std::memory_order_acquire);
+                delete this;
+            }
+        }
+    };
+
     template <class T>
     struct holder {
         T* res;
@@ -29,7 +58,6 @@ namespace fast_task {
             res = copy.res->acquire();
             return *this;
         }
-
 
         ~holder() {
             if (res)

@@ -89,14 +89,14 @@ namespace fast_task {
             return create_stack(size__);
     }
 
-    void unlimited_buffer(stack_context& sctx) {
+    static void unlimited_buffer(stack_context& sctx) {
         if (!stack_allocations.enqueue(sctx))
             ::VirtualFree(static_cast<char*>(sctx.sp) - sctx.size, 0, MEM_RELEASE);
         else
             stack_allocations_buffer++;
     }
 
-    void limited_buffer(stack_context& sctx) {
+    static void limited_buffer(stack_context& sctx) {
         if (++stack_allocations_buffer < light_stack::max_buffer_size) {
             if (!stack_allocations.enqueue(sctx)) {
                 ::VirtualFree(static_cast<char*>(sctx.sp) - sctx.size, 0, MEM_RELEASE);
@@ -194,14 +194,14 @@ namespace fast_task {
             return create_stack(size__);
     }
 
-    void unlimited_buffer(stack_context& sctx) {
+    static void unlimited_buffer(stack_context& sctx) {
         if (!stack_allocations.enqueue(sctx))
             destroy_stack(sctx);
         else
             stack_allocations_buffer++;
     }
 
-    void limited_buffer(stack_context& sctx) {
+    static void limited_buffer(stack_context& sctx) {
         if (++stack_allocations_buffer < light_stack::max_buffer_size) {
             if (!stack_allocations.enqueue(sctx)) {
                 destroy_stack(sctx);

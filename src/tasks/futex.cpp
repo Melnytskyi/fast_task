@@ -18,18 +18,6 @@ namespace fast_task {
     }
 
     bool native_futex_wait_until(std::atomic<uint32_t>* address, uint32_t expected_value, fast_task::time_point time_point) {
-        // FUTEX_WAIT_BITSET without FUTEX_CLOCK_REALTIME treats the timeout as an
-        // absolute CLOCK_MONOTONIC value, which is exactly the fast_task::clock
-        // base. Asking for FUTEX_CLOCK_REALTIME made the kernel compare a
-        // monotonic deadline against the wall clock, so every timed futex wait
-        // returned immediately after a clock step.
-        //
-        // The clock is only read for a bounded wait. An unbounded park (the
-        // idle worker's normal state) passes time_point::max(), and reading the
-        // clock there was a wasted vDSO round-trip on the parking *and* on the
-        // waking side of every park: the AMD uProf profile of the 1M empty-task
-        // stream showed __clock_gettime inside scheduler_event::wait even though
-        // no waiter ever had a deadline.
         struct timespec ts;
         const struct timespec* timeout = nullptr;
         if (time_point != fast_task::time_point::max()) {
@@ -65,12 +53,6 @@ namespace fast_task {
     }
 
     void native_futex_wake(std::atomic_uint32_t* address, uint32_t count) {
-        // The kernel takes FUTEX_WAKE's count as a *signed* int, so a caller
-        // asking for "everybody" with UINT32_MAX arrives as -1 and futex_wake()
-        // stops after a single waiter (measured: it wakes exactly one, and
-        // returns 1). Clamping to INT32_MAX keeps "unbounded" unbounded; the
-        // kernel never wakes more threads than are actually parked, so the
-        // value only has to exceed any possible sleeper count.
         const long wake_count = count > static_cast<uint32_t>(INT32_MAX)
                                     ? static_cast<long>(INT32_MAX)
                                     : static_cast<long>(count);
@@ -91,8 +73,6 @@ namespace fast_task {
         if (now >= time_point)
             return false;
 
-        // WaitOnAddress takes a relative timeout, so an "infinite" deadline maps
-        // to INFINITE instead of an overflowing DWORD.
         DWORD wait_ms = INFINITE;
         if (time_point != fast_task::time_point::max()) {
             auto ms = std::chrono::ceil<std::chrono::milliseconds>(time_point - now);

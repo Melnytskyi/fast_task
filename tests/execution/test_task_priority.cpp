@@ -1,4 +1,4 @@
-// Copyright Danyil Melnytskyi 2025-Present
+// Copyright Danyil Melnytskyi 2026-Present
 //
 // Distributed under the Boost Software License, Version 1.0.
 // (See accompanying file LICENSE or copy at
@@ -10,13 +10,22 @@
 class TaskPriorityTest : public SchedulerFixture {};
 
 TEST_F(TaskPriorityTest, SetAndGetPriority) {
-    // Without FT_ENABLE_PREEMPTIVE_SCHEDULER, set_priority is a no-op
-    // and get_priority always returns semi_realtime (= 6).
-    GTEST_SKIP() << "Skipped: requires FT_ENABLE_PREEMPTIVE_SCHEDULER";
+    auto t = fast_task::task::create([] {});
+    EXPECT_EQ(t.get_priority(), fast_task::task_priority::high);
+
+    for (auto prio : {fast_task::task_priority::background, fast_task::task_priority::lower, fast_task::task_priority::semi_realtime}) {
+        t.set_priority(prio);
+        EXPECT_EQ(t.get_priority(), prio);
+    }
+
+    fast_task::scheduler::start(t);
+    t.await_task();
+
+    fast_task::task empty;
+    EXPECT_EQ(empty.get_priority(), fast_task::task_priority::semi_realtime);
 }
 
 TEST_F(TaskPriorityTest, AllPrioritiesRun) {
-    // Just verify all priority levels complete successfully
     using tp = fast_task::task_priority;
     const tp priorities[] = {
         tp::background, tp::low, tp::lower,
@@ -34,20 +43,16 @@ TEST_F(TaskPriorityTest, AllPrioritiesRun) {
 }
 
 TEST_F(TaskPriorityTest, HighPriorityRunsBeforeBackground) {
-    // Queue a high-priority task while a background one is sleeping.
-    // The high-priority one should finish first.
     std::atomic<int> order_bg{0};
     std::atomic<int> order_hi{0};
     std::atomic<int> seq{0};
 
-    // background: sleep then record order
     auto bg = fast_task::task::create([&] {
         fast_task::this_task::sleep_for(std::chrono::milliseconds(50));
         order_bg = ++seq;
     });
     bg.set_priority(fast_task::task_priority::background);
 
-    // high: just record order (no sleep)
     auto hi = fast_task::task::create([&] {
         order_hi = ++seq;
     });

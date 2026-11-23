@@ -13,8 +13,6 @@
 #include <utility>
 #include <vector>
 
-// Guarded so another internal header (tasks/core/event.hpp) can provide the
-// same constant when it is included first, without a redefinition error.
 #ifndef FAST_TASK_HDI_SIZE
     #define FAST_TASK_HDI_SIZE
     #ifdef __cpp_lib_hardware_interference_size

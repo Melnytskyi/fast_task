@@ -28,7 +28,7 @@ namespace fast_task {
         ~future() = default;
 
         template <class FN>
-        static std::shared_ptr<future> start(FN&& fn, uint16_t bind_id = (uint16_t)-1)
+        static std::shared_ptr<future> start(FN&& fn, scheduler::worker_pool* pool = nullptr)
             requires std::is_same_v<std::invoke_result_t<FN>, T>
         {
             std::shared_ptr<future> future_ = std::make_shared<future>();
@@ -43,14 +43,14 @@ namespace fast_task {
                         self->ex_ptr = ex;
                 }
             );
-            if (bind_id != (uint16_t)-1)
-                future_->task_.set_worker_id(bind_id);
+            if (pool)
+                pool->bind(future_->task_);
             scheduler::start(future_->task_);
             return future_;
         }
 
         template <class FN>
-        static std::shared_ptr<future> start(fast_task::queue& queue, FN&& fn, uint16_t bind_id = (uint16_t)-1)
+        static std::shared_ptr<future> start(fast_task::queue& queue, FN&& fn, scheduler::worker_pool* pool = nullptr)
             requires std::is_same_v<std::invoke_result_t<FN>, T>
         {
             std::shared_ptr<future> future_ = std::make_shared<future>();
@@ -65,17 +65,17 @@ namespace fast_task {
                         self->ex_ptr = ex;
                 }
             );
-            if (bind_id != (uint16_t)-1)
-                future_->task_.set_worker_id(bind_id);
+            if (pool)
+                pool->bind(future_->task_);
             queue.add(future_->task_);
             return future_;
         }
 
         template <class FN>
-        std::shared_ptr<future<std::invoke_result_t<FN, T>>> chain(FN&& fn, uint16_t bind_id = (uint16_t)-1) &;
+        std::shared_ptr<future<std::invoke_result_t<FN, T>>> chain(FN&& fn, scheduler::worker_pool* pool = nullptr) &;
 
         template <class FN>
-        std::shared_ptr<future<std::invoke_result_t<FN, T>>> chain(FN&& fn, uint16_t bind_id = (uint16_t)-1) &&;
+        std::shared_ptr<future<std::invoke_result_t<FN, T>>> chain(FN&& fn, scheduler::worker_pool* pool = nullptr) &&;
 
         static std::shared_ptr<future> make_ready(const T& value) {
             std::shared_ptr<future> future_ = std::make_shared<future>();
@@ -219,7 +219,7 @@ namespace fast_task {
         ~future() = default;
 
         template <class FN>
-        static std::shared_ptr<future> start(FN&& fn, uint16_t bind_id = (uint16_t)-1)
+        static std::shared_ptr<future> start(FN&& fn, scheduler::worker_pool* pool = nullptr)
             requires std::is_same_v<std::invoke_result_t<FN>, void>
         {
             std::shared_ptr<future> future_ = std::make_shared<future>();
@@ -234,14 +234,14 @@ namespace fast_task {
                         self->ex_ptr = ex;
                 }
             );
-            if (bind_id != (uint16_t)-1)
-                future_->task_.set_worker_id(bind_id);
+            if (pool)
+                pool->bind(future_->task_);
             scheduler::start(future_->task_);
             return future_;
         }
 
         template <class FN>
-        static std::shared_ptr<future> start(fast_task::queue& queue, FN&& fn, uint16_t bind_id = (uint16_t)-1)
+        static std::shared_ptr<future> start(fast_task::queue& queue, FN&& fn, scheduler::worker_pool* pool = nullptr)
             requires std::is_same_v<std::invoke_result_t<FN>, void>
         {
             std::shared_ptr<future> future_ = std::make_shared<future>();
@@ -256,17 +256,17 @@ namespace fast_task {
                         self->ex_ptr = ex;
                 }
             );
-            if (bind_id != (uint16_t)-1)
-                future_->task_.set_worker_id(bind_id);
+            if (pool)
+                pool->bind(future_->task_);
             queue.add(future_->task_);
             return future_;
         }
 
         template <class FN>
-        std::shared_ptr<future<std::invoke_result_t<FN, void>>> chain(FN&& fn, uint16_t bind_id = (uint16_t)-1) &;
+        std::shared_ptr<future<std::invoke_result_t<FN, void>>> chain(FN&& fn, scheduler::worker_pool* pool = nullptr) &;
 
         template <class FN>
-        std::shared_ptr<future<std::invoke_result_t<FN, void>>> chain(FN&& fn, uint16_t bind_id = (uint16_t)-1) &&;
+        std::shared_ptr<future<std::invoke_result_t<FN, void>>> chain(FN&& fn, scheduler::worker_pool* pool = nullptr) &&;
 
         static std::shared_ptr<future> make_ready();
         void get();
@@ -328,11 +328,11 @@ namespace fast_task {
 
     template <class T>
     template <class FN>
-    future_ptr<std::invoke_result_t<FN, T>> future<T>::chain(FN&& fn, uint16_t bind_id) & {
+    future_ptr<std::invoke_result_t<FN, T>> future<T>::chain(FN&& fn, scheduler::worker_pool* pool) & {
         using ResT = std::invoke_result_t<FN, T>;
-        std::shared_ptr<future> future_ = std::make_shared<future>();
+        std::shared_ptr<future<ResT>> future_ = std::make_shared<future<ResT>>();
         future_->task_ = task::create(
-            [fn = std::move(fn), weak_future = std::weak_ptr<future>(future_), prev_future = this->shared_from_this()]() mutable {
+            [fn = std::move(fn), weak_future = std::weak_ptr<future<ResT>>(future_), prev_future = this->shared_from_this()]() mutable {
                 if constexpr (std::is_same_v<ResT, void>) {
                     fn(prev_future->get());
                     if (auto self = weak_future.lock())
@@ -343,41 +343,97 @@ namespace fast_task {
                         self->result = result;
                 }
             },
-            [weak_future = std::weak_ptr<future>(future_)](const std::exception_ptr& ex) {
+            [weak_future = std::weak_ptr<future<ResT>>(future_)](const std::exception_ptr& ex) {
                 if (auto self = weak_future.lock())
                     self->ex_ptr = ex;
             }
         );
-        if (bind_id != (uint16_t)-1)
-            future_->task_.set_worker_id(bind_id);
+        if (pool)
+            pool->bind(future_->task_);
         callback(future_->task_);
         return future_;
     }
 
     template <class T>
     template <class FN>
-    future_ptr<std::invoke_result_t<FN, T>> future<T>::chain(FN&& fn, uint16_t bind_id) && {
+    future_ptr<std::invoke_result_t<FN, T>> future<T>::chain(FN&& fn, scheduler::worker_pool* pool) && {
         using ResT = std::invoke_result_t<FN, T>;
-        std::shared_ptr<future> future_ = std::make_shared<future>();
+        std::shared_ptr<future<ResT>> future_ = std::make_shared<future<ResT>>();
         future_->task_ = task::create(
-            [fn = std::move(fn), weak_future = std::weak_ptr<future>(future_), prev_future = this->shared_from_this()]() mutable {
+            [fn = std::move(fn), weak_future = std::weak_ptr<future<ResT>>(future_), prev_future = this->shared_from_this()]() mutable {
                 if constexpr (std::is_same_v<ResT, void>) {
                     fn(prev_future->take());
                     if (auto self = weak_future.lock())
                         self->has_result = true;
                 } else {
-                    auto result = std::make_optional<ResT>(fn(prev_future->get()));
+                    auto result = std::make_optional<ResT>(fn(prev_future->take()));
                     if (auto self = weak_future.lock())
                         self->result = result;
                 }
             },
-            [weak_future = std::weak_ptr<future>(future_)](const std::exception_ptr& ex) {
+            [weak_future = std::weak_ptr<future<ResT>>(future_)](const std::exception_ptr& ex) {
                 if (auto self = weak_future.lock())
                     self->ex_ptr = ex;
             }
         );
-        if (bind_id != (uint16_t)-1)
-            future_->task_.set_worker_id(bind_id);
+        if (pool)
+            pool->bind(future_->task_);
+        callback(future_->task_);
+        return future_;
+    }
+
+    template <class FN>
+    future_ptr<std::invoke_result_t<FN, void>> future<void>::chain(FN&& fn, scheduler::worker_pool* pool) & {
+        using ResT = std::invoke_result_t<FN, void>;
+        std::shared_ptr<future<ResT>> future_ = std::make_shared<future<ResT>>();
+        future_->task_ = task::create(
+            [fn = std::move(fn), weak_future = std::weak_ptr<future<ResT>>(future_), prev_future = this->shared_from_this()]() mutable {
+                prev_future->get();
+                if constexpr (std::is_same_v<ResT, void>) {
+                    fn();
+                    if (auto self = weak_future.lock())
+                        self->has_result = true;
+                } else {
+                    auto result = std::make_optional<ResT>(fn());
+                    if (auto self = weak_future.lock())
+                        self->result = result;
+                }
+            },
+            [weak_future = std::weak_ptr<future<ResT>>(future_)](const std::exception_ptr& ex) {
+                if (auto self = weak_future.lock())
+                    self->ex_ptr = ex;
+            }
+        );
+        if (pool)
+            pool->bind(future_->task_);
+        callback(future_->task_);
+        return future_;
+    }
+
+    template <class FN>
+    future_ptr<std::invoke_result_t<FN, void>> future<void>::chain(FN&& fn, scheduler::worker_pool* pool) && {
+        using ResT = std::invoke_result_t<FN, void>;
+        std::shared_ptr<future<ResT>> future_ = std::make_shared<future<ResT>>();
+        future_->task_ = task::create(
+            [fn = std::move(fn), weak_future = std::weak_ptr<future<ResT>>(future_), prev_future = this->shared_from_this()]() mutable {
+                prev_future->get();
+                if constexpr (std::is_same_v<ResT, void>) {
+                    fn();
+                    if (auto self = weak_future.lock())
+                        self->has_result = true;
+                } else {
+                    auto result = std::make_optional<ResT>(fn());
+                    if (auto self = weak_future.lock())
+                        self->result = result;
+                }
+            },
+            [weak_future = std::weak_ptr<future<ResT>>(future_)](const std::exception_ptr& ex) {
+                if (auto self = weak_future.lock())
+                    self->ex_ptr = ex;
+            }
+        );
+        if (pool)
+            pool->bind(future_->task_);
         callback(future_->task_);
         return future_;
     }

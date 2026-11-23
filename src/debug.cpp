@@ -211,7 +211,7 @@ namespace fast_task::debug {
 
         static void collect_task_inst(program_state_dump& dump_z, debug_registry& reg_z) {
             size_t size = 0;
-            fast_task::glob.gba.iterate_all(
+            fast_task::glob.allocators.gba.iterate_all(
                 [](fast_task::task_object* obj, void* d) {
                     if (!obj->is_released())
                         ++(*reinterpret_cast<size_t*>(d));
@@ -228,7 +228,7 @@ namespace fast_task::debug {
                 size_t i = 0;
             } lambda_data(dump_z, reg_z);
 
-            fast_task::glob.gba.iterate_all(
+            fast_task::glob.allocators.gba.iterate_all(
                 [](fast_task::task_object* task_data, void* d) {
                     if (task_data->is_released())
                         return;
@@ -1049,7 +1049,7 @@ namespace fast_task::debug {
             d.callback = callback;
             d.data = data;
 
-            glob.gba.iterate_all(
+            glob.allocators.gba.iterate_all(
                 [](fast_task::task_object* obj, void* d) {
                     auto dat = reinterpret_cast<iterate_task_objects_data*>(d);
                     if (!obj->is_released())
@@ -1065,7 +1065,7 @@ __attribute__((used, retain))
 #endif
 std::vector<fast_task::task_object*> collect_task_objects() {
     std::vector<fast_task::task_object*> collect;
-    fast_task::glob.gba.iterate_all(
+    fast_task::glob.allocators.gba.iterate_all(
         [](fast_task::task_object* obj, void* d) {
             auto dat = reinterpret_cast<std::vector<fast_task::task_object*>*>(d);
             if (!obj->is_released() && !obj->is_ended())

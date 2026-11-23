@@ -11,15 +11,22 @@
 #include <cstdint>
 #include <functional> //std::invoke
 #include <memory>
+#include <span>
 #include <tuple>
 #include <type_traits>
+#include <vector>
 
 namespace fast_task::native {
+    struct cpu_affinity {
+        std::vector<uint32_t> cpus;
+    };
+
     class FT_API thread {
         unsigned long _id;
         void* _thread;
+        bool _affinity_applied = true;
         static void init_dat();
-        static void* create(void (*function)(void*), void* arg, unsigned long& id, size_t stack_size, bool stack_reservation, int& error_code);
+        static void* create(void (*function)(void*), void* arg, unsigned long& id, size_t stack_size, bool stack_reservation, const cpu_affinity* affinity, bool& affinity_applied, int& error_code);
 
         template <class Tuple, size_t... Indexes>
         static void execute(void* arguments) {
@@ -35,19 +42,23 @@ namespace fast_task::native {
         }
 
         template <class F, class... Args>
-        void start(size_t stack_allocation, bool as_reserved, F&& f, Args&&... args) {
+        void start(size_t stack_allocation, bool as_reserved, const cpu_affinity* affinity, F&& f, Args&&... args) {
             using Tuple = std::tuple<std::decay_t<F>, std::decay_t<Args>...>;
 
             auto stored_args = std::make_unique<Tuple>(std::forward<F>(f), std::forward<Args>(args)...);
             int error_code;
+            bool affinity_applied = true;
             _thread = create(
                 create_executor<Tuple>(std::make_index_sequence<1 + sizeof...(Args)>{}),
                 stored_args.get(),
                 _id,
                 stack_allocation,
                 as_reserved,
+                affinity,
+                affinity_applied,
                 error_code
             );
+            _affinity_applied = affinity_applied;
             if (_thread)
                 stored_args.release();
             else
@@ -73,17 +84,23 @@ namespace fast_task::native {
 
         template <class F, class... Args>
         thread(stack_size size, F&& f, Args&&... args) {
-            start(size._size, false, std::forward<F>(f), std::forward<Args>(args)...);
+            start(size._size, false, nullptr, std::forward<F>(f), std::forward<Args>(args)...);
         }
 
         template <class F, class... Args>
         thread(reserved_stack_size size, F&& f, Args&&... args) {
-            start(size._size, true, std::forward<F>(f), std::forward<Args>(args)...);
+            start(size._size, true, nullptr, std::forward<F>(f), std::forward<Args>(args)...);
         }
 
         template <class F, class... Args>
+        thread(cpu_affinity affinity, F&& f, Args&&... args) {
+            start(0, false, &affinity, std::forward<F>(f), std::forward<Args>(args)...);
+        }
+
+        template <class F, class... Args>
+            requires(!std::is_same_v<std::remove_cvref_t<F>, cpu_affinity> && !std::is_same_v<std::remove_cvref_t<F>, stack_size> && !std::is_same_v<std::remove_cvref_t<F>, reserved_stack_size> && !std::is_same_v<std::remove_cvref_t<F>, thread>)
         thread(F&& f, Args&&... args) {
-            start(0, false, std::forward<F>(f), std::forward<Args>(args)...);
+            start(0, false, nullptr, std::forward<F>(f), std::forward<Args>(args)...);
         }
 
         thread() {
@@ -92,7 +109,7 @@ namespace fast_task::native {
         }
 
         thread(thread&& other) noexcept
-            : _id(other._id), _thread(other._thread) {
+            : _id(other._id), _thread(other._thread), _affinity_applied(other._affinity_applied) {
             other._id = 0;
             other._thread = nullptr;
         }
@@ -102,6 +119,7 @@ namespace fast_task::native {
                 detach();
             _id = other._id;
             _thread = other._thread;
+            _affinity_applied = other._affinity_applied;
             other._id = 0;
             other._thread = nullptr;
             return *this;
@@ -120,6 +138,13 @@ namespace fast_task::native {
 
         [[nodiscard]] static unsigned int hardware_concurrency() noexcept;
 
+        [[nodiscard]] bool affinity_applied() const noexcept {
+            return _affinity_applied;
+        }
+
+        bool set_affinity(std::span<const uint32_t> cpus);
+        std::vector<uint32_t> get_affinity() const;
+
         void join();
         void detach();
         [[nodiscard]] bool joinable() const noexcept;
@@ -137,6 +162,8 @@ namespace fast_task::native {
         void FT_API yield() noexcept;
         void FT_API sleep_for(std::chrono::milliseconds ms);
         void FT_API sleep_until(fast_task::time_point time);
+        bool FT_API set_affinity(std::span<const uint32_t> cpus);
+        std::vector<uint32_t> FT_API get_affinity();
     }
 
     struct FT_API thread::id {

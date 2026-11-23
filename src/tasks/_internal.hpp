@@ -3,11 +3,6 @@
 // Distributed under the Boost Software License, Version 1.0.
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
-//
-// Internal umbrella header. After S0b (plans/pool-architecture.md §4) the
-// scheduler internals live in tasks/core/*; this header aggregates them so the
-// rest of the tree keeps a single internal include, and keeps the thread-local
-// context accessors.
 
 #pragma once
 #ifndef FAST_TASK_INTERNAL
@@ -29,27 +24,49 @@
     #include <fast_task/shared.hpp>
     #include <fast_task/task.hpp>
     #include <tasks/util/_dbg_macro.hpp>
+    #include <tasks/util/cpu_relax.hpp>
     #include <tasks/util/fixed_task_allocator.hpp>
     #include <tasks/util/hashed_timing_wheel.hpp>
     #include <tasks/util/macro.hpp>
     #include <tasks/util/pcg32.hpp>
     #include <tasks/util/work_stealing_deque.hpp>
 
-    // Core layers, in dependency order.
-    #include <tasks/core/driver.hpp>
-    #include <tasks/core/event.hpp>
-    #include <tasks/core/pool.hpp>
-    #include <tasks/core/queue.hpp>
-    #include <tasks/core/router.hpp>
-    #include <tasks/core/runtime.hpp>
-    #include <tasks/core/worker.hpp>
+    #include <tasks/core/execution/preemption.hpp>
+    #include <tasks/core/pool/dormant_broker.hpp>
+    #include <tasks/core/runtime/allocators.hpp>
+    #include <tasks/core/runtime/debug_objects.hpp>
+    #include <tasks/core/runtime/hdi.hpp>
+    #include <tasks/core/runtime/thread_identity.hpp>
 
-namespace fast_task {
-    // Thread-local worker context accessors. The storage itself is defined in
-    // tasks/_internal.cpp so the definition order relative to the allocator
-    // caches and `glob` is unchanged from the pre-split build.
-    NOINLINE executors_local* get_loc() noexcept;
-    void set_loc(executors_local*) noexcept;
-}
+    #include <tasks/core/notify/driver.hpp>
+    #include <tasks/core/notify/event.hpp>
+    #include <tasks/core/notify/notifier.hpp>
+
+    #include <tasks/core/pool/executor_registry.hpp>
+    #include <tasks/core/pool/pool.hpp>
+    #include <tasks/core/pool/pool_balancer.hpp>
+    #include <tasks/core/pool/pool_dormant.hpp>
+    #include <tasks/core/pool/pool_impl.hpp>
+    #include <tasks/core/pool/pool_lifecycle.hpp>
+    #include <tasks/core/pool/pool_ops.hpp>
+    #include <tasks/core/pool/pool_storage.hpp>
+    #include <tasks/core/pool/pool_table.hpp>
+    #include <tasks/core/pool/queue_storage.hpp>
+    #include <tasks/core/pool/router.hpp>
+    #include <tasks/core/pool/threads_manager.hpp>
+
+    #include <tasks/core/runtime/pool_manager.hpp>
+    #include <tasks/core/runtime/runtime.hpp>
+    #include <tasks/core/runtime/stw.hpp>
+
+    #include <tasks/core/execution/context_impl.hpp>
+    #include <tasks/core/execution/context_switch.hpp>
+    #include <tasks/core/execution/executor_wake.hpp>
+    #include <tasks/core/execution/executors_local.hpp>
+    #include <tasks/core/execution/task_access.hpp>
+    #include <tasks/core/execution/task_accounting.hpp>
+    #include <tasks/core/execution/worker.hpp>
+
+    #include <tasks/core/notify/pool_wake.hpp>
 
 #endif

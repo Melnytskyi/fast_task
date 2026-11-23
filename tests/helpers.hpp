@@ -16,6 +16,21 @@
 #include <thread>
 
 // ---------------------------------------------------------------------------
+// ensure_global_workers(n)
+// Starts `n` workers on the global pool and waits until they serve. S2c
+// removed scheduler::create_executor()/total_executors(); the pool itself is
+// now the only way to grow the worker set.
+// ---------------------------------------------------------------------------
+inline void ensure_global_workers(size_t n) {
+    auto& pool = fast_task::scheduler::worker_pool::global();
+    const auto st = pool.stats();
+    if (st.target_workers < n)
+        pool.add_workers(static_cast<uint16_t>(n - st.target_workers));
+    while (pool.stats().active_workers < n)
+        std::this_thread::yield();
+}
+
+// ---------------------------------------------------------------------------
 // SchedulerFixture
 // Base class for tests that require the task scheduler.
 // SetUpTestSuite / TearDownTestSuite run once per test executable.
@@ -23,11 +38,7 @@
 class SchedulerFixture : public ::testing::Test {
 public:
     static void SetUpTestSuite() {
-        size_t n = std::max(2u, std::thread::hardware_concurrency());
-        fast_task::scheduler::create_executor(n);
-        // Spin-wait until all executor threads have actually started
-        while (fast_task::scheduler::total_executors() < n)
-            std::this_thread::yield();
+        ensure_global_workers(std::max(2u, std::thread::hardware_concurrency()));
     }
 
     static void TearDownTestSuite() {

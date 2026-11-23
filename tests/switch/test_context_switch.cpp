@@ -76,3 +76,57 @@ TEST_F(ContextSwitchTest, InterruptCounterTracked) {
     EXPECT_TRUE(cancelled.load());
     EXPECT_GE(t_ref.get_counter_interrupt(), 0u);
 }
+
+namespace {
+    struct transfer_end_state {
+        fast_task::task partner;
+        int64_t remaining = 0;
+        bool yield = false;
+        fast_task::enter_state state;
+    };
+
+    fast_task::task_vtable transfer_end_vt{
+        nullptr,
+        nullptr,
+        [](void* ptr) {
+            auto* s = static_cast<transfer_end_state*>(ptr);
+            if (s->remaining > 0) {
+                if (!s->yield)
+                    --s->remaining;
+                else
+                    s->yield = false;
+                if (!fast_task::this_task::transfer_to(s->partner)) {
+                    s->yield = true;
+                    fast_task::this_task::enter_yield(s->state);
+                }
+                if (s->remaining == 0)
+                    fast_task::this_task::the_coroutine_ended(fast_task::scheduler::current_context_task());
+            } else
+                fast_task::this_task::the_coroutine_ended(fast_task::scheduler::current_context_task());
+        },
+        nullptr,
+        nullptr,
+        false
+    };
+}
+
+TEST_F(ContextSwitchTest, EndedTaskThatHandsOverIsAccounted) {
+    transfer_end_state a, b;
+    a.remaining = 1000;
+    b.remaining = 1000;
+
+    auto task_a = fast_task::task(&a, &transfer_end_vt, true, true);
+    auto task_b = fast_task::task(&b, &transfer_end_vt, true, true);
+    a.partner = fast_task::task(task_b);
+    b.partner = fast_task::task(task_a);
+
+    task_a.await_task();
+    fast_task::task::await_task(task_b, false);
+
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (fast_task::scheduler::get_runtime_stats().executing_tasks != 0 &&
+           std::chrono::steady_clock::now() < deadline)
+        fast_task::native::this_thread::sleep_for(std::chrono::milliseconds(1));
+
+    EXPECT_EQ(fast_task::scheduler::get_runtime_stats().executing_tasks, 0u);
+}

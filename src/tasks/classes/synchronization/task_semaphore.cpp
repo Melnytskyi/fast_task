@@ -12,6 +12,22 @@ namespace fast_task {
     constexpr size_t SEM_COUNT_MASK = ~native_thread_data;
     constexpr size_t SEM_HAS_WAITER = native_thread_data;
 
+    namespace {
+        void semaphore_release_waiter_bit(void* address, size_t, bool has_remaining) {
+            auto& state = *reinterpret_cast<std::atomic_size_t*>(address);
+            if (has_remaining)
+                state.fetch_or(SEM_HAS_WAITER, std::memory_order_release);
+            else
+                state.fetch_and(SEM_COUNT_MASK, std::memory_order_release);
+        }
+
+        size_t semaphore_wake_some(std::atomic_size_t& state, size_t count) {
+            if (count == 0)
+                return 0;
+            return futex::wake_on_address(&state, semaphore_release_waiter_bit, count);
+        }
+    }
+
     semaphore::semaphore() : values{.state = 0, .max_threshold = 0} {
         FT_DEBUG_ONLY(register_object(this));
     }
@@ -26,13 +42,21 @@ namespace fast_task {
 
     void semaphore::set_max_threshold(size_t val) {
         values.max_threshold.store(val, std::memory_order_release);
-        values.state.store(val, std::memory_order_release);
+
+        size_t expected = values.state.load(std::memory_order_relaxed);
+        while (!values.state.compare_exchange_weak(
+            expected,
+            (expected & SEM_HAS_WAITER) | val,
+            std::memory_order_release,
+            std::memory_order_relaxed
+        )) {
+        }
+
+        if ((expected & SEM_HAS_WAITER) == 0)
+            return;
+
         size_t waiters = futex::wait_items_on(&values.state);
-        size_t to_wake = std::min(val, waiters);
-        futex::wake_on_address(&values.state, [](void* addr, size_t, bool has_remaining) {
-            auto& state = *reinterpret_cast<std::atomic_size_t*>(addr);
-            size_t cur = state.load(std::memory_order_relaxed);
-            state.store(has_remaining ? (cur | SEM_HAS_WAITER) : (cur & SEM_COUNT_MASK), std::memory_order_release); }, to_wake);
+        semaphore_wake_some(values.state, std::min(val, waiters));
     }
 
     void semaphore::lock() {
@@ -97,23 +121,30 @@ namespace fast_task {
             if (values.state.compare_exchange_weak(cached, cached + 1, std::memory_order_release, std::memory_order_relaxed))
                 break;
         }
-        futex::wake_on_address(&values.state, [](void* addr, size_t, bool has_remaining) {
-            auto& state = *reinterpret_cast<std::atomic_size_t*>(addr);
-            size_t cur = state.load(std::memory_order_relaxed);
-            state.store(has_remaining ? (cur | SEM_HAS_WAITER) : (cur & SEM_COUNT_MASK), std::memory_order_release);
-        });
+
+        if ((cached & SEM_HAS_WAITER) == 0)
+            return;
+
+        semaphore_wake_some(values.state, 1);
     }
 
     void semaphore::release_all() {
         size_t max = values.max_threshold.load(std::memory_order_relaxed);
-        values.state.store(max, std::memory_order_release);
+
+        size_t expected = values.state.load(std::memory_order_relaxed);
+        while (!values.state.compare_exchange_weak(
+            expected,
+            (expected & SEM_HAS_WAITER) | max,
+            std::memory_order_release,
+            std::memory_order_relaxed
+        )) {
+        }
+
+        if ((expected & SEM_HAS_WAITER) == 0)
+            return;
 
         size_t waiters = futex::wait_items_on(&values.state);
-        size_t to_wake = std::min(max, waiters);
-        futex::wake_on_address(&values.state, [](void* addr, size_t, bool has_remaining) {
-            auto& state = *reinterpret_cast<std::atomic_size_t*>(addr);
-            size_t cur = state.load(std::memory_order_relaxed);
-            state.store(has_remaining ? (cur | SEM_HAS_WAITER) : (cur & SEM_COUNT_MASK), std::memory_order_release); }, to_wake);
+        semaphore_wake_some(values.state, std::min(max, waiters));
     }
 
     bool semaphore::is_locked() {

@@ -47,9 +47,6 @@ namespace fast_task::util {
     };
 
     class FT_API_LOCAL native_workers_singleton {
-        // Completion key reserved for driver wake-ups. Real handles are
-        // registered with a native_worker_manager* as their key, which is never
-        // null, so this sentinel cannot collide.
         static constexpr ULONG_PTR WAKEUP_KEY = 0;
 
         std::shared_ptr<void> m_hCompletionPort;
@@ -62,9 +59,6 @@ namespace fast_task::util {
             m_entries.resize(std::min<size_t>(fast_task::native::thread::hardware_concurrency(), INT32_MAX));
         }
 
-        // Block up to timeout_ms for completions, then dispatch them. A negative
-        // timeout means block indefinitely. Non-looping: driver_context decides
-        // when to call this. Returns true if any completion was dispatched.
         bool poll_once(int timeout_ms) {
             ULONG entries_count = 0;
             DWORD wait_ms = timeout_ms < 0 ? INFINITE : static_cast<DWORD>(timeout_ms);
@@ -109,6 +103,10 @@ namespace fast_task::util {
 
     public:
         ~native_workers_singleton() = default;
+
+        static bool has_ready_work() {
+            return false;
+        }
 
         static bool poll_all(int timeout_ms) {
             return get_instance().poll_once(timeout_ms);

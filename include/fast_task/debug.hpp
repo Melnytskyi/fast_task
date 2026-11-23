@@ -249,7 +249,7 @@ namespace fast_task::debug {
         size_t counter_context_switch;
         task_priority priority;
         uint16_t awake_check; //if check does not match with check from awake_item the awake is invalid and would be ignored by scheduler. This is intended behavior.
-        uint8_t pool_slot;    //0..254 user pool, 255 global (plans/pool-architecture.md §2.4)
+        uint8_t pool_slot;    //0..254 user pool, 255 global
 
         uintptr_t created_by_id;
         bool created_by_is_native; //defines meaning of the created_by_id field, if false the id means the task id
