@@ -76,6 +76,9 @@ namespace fast_task {
     }
 
     template <class T>
+    class [[nodiscard]] task_coro;
+
+    template <class T>
     struct task_promise : public task_promise_base {
         task_promise() noexcept {}
 
@@ -104,9 +107,7 @@ namespace fast_task {
             );
         }
 
-        task get_return_object() {
-            return create_task_for(std::coroutine_handle<task_promise<T>>::from_promise(*this));
-        }
+        task_coro<T> get_return_object();
 
         void unhandled_exception() noexcept {
             results.template emplace<1>(std::current_exception());
@@ -171,9 +172,7 @@ namespace fast_task {
             );
         }
 
-        task get_return_object() {
-            return create_task_for(std::coroutine_handle<task_promise<T&>>::from_promise(*this));
-        }
+        task_coro<T&> get_return_object();
 
         void unhandled_exception() noexcept {
             results.template emplace<1>(std::current_exception());
@@ -226,9 +225,7 @@ namespace fast_task {
             );
         }
 
-        task get_return_object() {
-            return create_task_for(std::coroutine_handle<task_promise<void>>::from_promise(*this));
-        }
+        task_coro<void> get_return_object();
 
         void unhandled_exception() noexcept {
             results.template emplace<1>(std::current_exception());
@@ -404,6 +401,20 @@ namespace fast_task {
             return sync_get_impl<promise_type>(task_handle);
         }
     };
+
+    template <class T>
+    inline task_coro<T> task_promise<T>::get_return_object() {
+        return task_coro<T>{create_task_for(std::coroutine_handle<task_promise<T>>::from_promise(*this))};
+    }
+
+    template <class T>
+    inline task_coro<T&> task_promise<T&>::get_return_object() {
+        return task_coro<T&>{create_task_for(std::coroutine_handle<task_promise<T&>>::from_promise(*this))};
+    }
+
+    inline task_coro<void> task_promise<void>::get_return_object() {
+        return task_coro<void>{create_task_for(std::coroutine_handle<task_promise<void>>::from_promise(*this))};
+    }
 
     inline auto operator co_await(const task& t) noexcept {
         return detail::task_result_awaiter{{}, t};
