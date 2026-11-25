@@ -57,40 +57,62 @@ namespace fast_task::util {
         friend class native_workers_singleton;
         native_worker_manager* manager;
 
+        struct iov_args {
+            const iovec* iov;
+            uint32_t iovcnt;
+        };
+
+        struct buf_args {
+            const void* buf;
+            uint32_t len;
+            int32_t buf_index;
+        };
+
+        struct open_args {
+            const char* pPath;
+            mode_t mode;
+        };
+
+        struct splice_args {
+            int file_fd;
+            int pipe_rfd;
+            int pipe_wfd;
+            uint32_t len;
+        };
+
+        struct vector_args {
+            struct iovec* iovs;
+            uint32_t iovcnt;
+        };
+
+        struct addr_recv_args {
+            sockaddr* addr;
+            socklen_t* len;
+        };
+
+        struct addr_target_args {
+            const sockaddr* addr;
+            socklen_t len;
+        };
+
+        struct send_file_v_args {
+            const void* prefix;
+            uint32_t prefix_len;
+            const void* postfix;
+            uint32_t postfix_len;
+        };
+
         struct {
             operations opcode = operations::nop;
             int fd = 0;
             uint64_t offset = 0;
 
             union {
-                struct {
-                    const iovec* iov;
-                    uint32_t iovcnt;
-                } v;
-
-                struct {
-                    const void* buf;
-                    uint32_t len;
-                    int32_t buf_index;
-                } b;
-
-                struct {
-                    const char* pPath;
-                    mode_t mode;
-                } f_o;
-
-                struct {
-                    int file_fd;
-                    int pipe_rfd;
-                    int pipe_wfd;
-                    uint32_t len;
-                } splice_fds;
-
-                struct {
-                    struct iovec* iovs;
-                    uint32_t iovcnt;
-                } vector;
-
+                iov_args v;
+                buf_args b;
+                open_args f_o;
+                splice_args splice_fds;
+                vector_args vector;
                 msghdr* pMsg;
                 uint64_t range;
                 short mask;
@@ -99,23 +121,9 @@ namespace fast_task::util {
             };
 
             union {
-                struct {
-                    sockaddr* addr;
-                    socklen_t* len;
-                } addr_recv;
-
-                struct {
-                    const sockaddr* addr;
-                    socklen_t len;
-                } addr_target;
-
-                struct {
-                    const void* prefix;
-                    uint32_t prefix_len;
-                    const void* postfix;
-                    uint32_t postfix_len;
-                } send_file_v;
-
+                addr_recv_args addr_recv;
+                addr_target_args addr_target;
+                send_file_v_args send_file_v;
                 struct statx* pStatxbuf;
                 uint64_t user_data;
             };
@@ -132,7 +140,7 @@ namespace fast_task::util {
             request_data.b.len = 0;
             request_data.addr_recv.addr = nullptr;
             request_data.addr_recv.len = nullptr;
-        };
+        }
 
         native_worker_handle() = delete;
         native_worker_handle(const native_worker_handle&) = delete;

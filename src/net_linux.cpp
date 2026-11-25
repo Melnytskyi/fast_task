@@ -277,7 +277,9 @@ namespace fast_task::net {
             if (state->awaiting_task) {
                 if (state->out_processed_bytes)
                     *state->out_processed_bytes = res > -1 ? res : -1;
-                fast_task::lock_guard guard(get_data(state->awaiting_task));
+                {
+                    fast_task::lock_guard guard(get_data(state->awaiting_task));
+                }
                 transfer_task(std::move(state->awaiting_task));
             }
         }
@@ -1258,7 +1260,9 @@ namespace fast_task::net {
             if (state->on_complete)
                 state->on_complete(static_cast<void*>(state));
             if (state->awaiting_task) {
-                fast_task::lock_guard guard(get_data(state->awaiting_task));
+                {
+                    fast_task::lock_guard guard(get_data(state->awaiting_task));
+                }
                 transfer_task(std::move(state->awaiting_task));
             }
         }
@@ -1481,7 +1485,9 @@ namespace fast_task::net {
             if (state->on_complete)
                 state->on_complete(static_cast<void*>(state));
             if (state->awaiting_task) {
-                fast_task::lock_guard guard(get_data(state->awaiting_task));
+                {
+                    fast_task::lock_guard guard(get_data(state->awaiting_task));
+                }
                 transfer_task(std::move(state->awaiting_task));
             }
         }
@@ -2299,7 +2305,9 @@ namespace fast_task::net {
                 processing.clear(std::memory_order_release);
 
                 if (to_resume) {
-                    fast_task::lock_guard guard(get_data(to_resume));
+                    {
+                        fast_task::lock_guard guard(get_data(to_resume));
+                    }
                     transfer_task(std::move(to_resume));
                 }
                 return;

@@ -9,6 +9,7 @@
 #if PLATFORM_WINDOWS
     #define NOMINMAX
     #include <Windows.h>
+    #include <intrin.h>
     #include <locale>
     #include <vector>
 #elif PLATFORM_LINUX
@@ -23,7 +24,13 @@ namespace fast_task {
     }
 
     NOINLINE executors_local* get_loc() noexcept {
-        return _get_loc();
+        executors_local* p = _get_loc();
+#if defined(_MSC_VER)
+        _ReadWriteBarrier();
+#elif defined(__GNUC__) || defined(__clang__)
+        asm volatile("" : "+r"(p) : : "memory");
+#endif
+        return p;
     }
 
     void set_loc(executors_local* loc) noexcept {
@@ -32,7 +39,13 @@ namespace fast_task {
 
     NOINLINE allocators_local_t& get_alloc_loc() noexcept {
         static thread_local allocators_local_t loc;
-        return loc;
+        allocators_local_t* p = &loc;
+#if defined(_MSC_VER)
+        _ReadWriteBarrier();
+#elif defined(__GNUC__) || defined(__clang__)
+        asm volatile("" : "+r"(p) : : "memory");
+#endif
+        return *p;
     }
 
     scheduler_runtime glob;

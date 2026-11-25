@@ -11,6 +11,9 @@
 #include <tasks/util/light_stack.hpp>
 
 namespace fast_task {
+#if defined(_MSC_VER) && defined(_M_ARM64)
+    #pragma optimize("", off)
+#endif
     void swapCtx() {
         auto pre_switch_loc = get_loc();
         if (pre_switch_loc) {
@@ -202,4 +205,7 @@ namespace fast_task {
         task_run_exit(get_loc());
         return std::move(stack_current_context);
     }
+#if defined(_MSC_VER) && defined(_M_ARM64)
+    #pragma optimize("", on)
+#endif
 }

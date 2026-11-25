@@ -124,6 +124,9 @@ namespace fast_task {
         }
     }
 
+#if defined(_MSC_VER) && defined(_M_ARM64)
+    #pragma optimize("", off)
+#endif
     void in_stackfull_run(executors_local& loc, task_object* data) {
         auto& stack_current_context = get_execution_data(data).context;
         if (stack_current_context) {
@@ -156,6 +159,9 @@ namespace fast_task {
             loc.ex_ptr = nullptr;
         }
     }
+#if defined(_MSC_VER) && defined(_M_ARM64)
+    #pragma optimize("", on)
+#endif
 
     bool execute_task() {
         auto* loc_ptr = get_loc();

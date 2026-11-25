@@ -59,7 +59,12 @@ namespace fast_task::net {
         read_write
     };
 
+#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ < 14
+    // GCC < 14 can emit aligned movaps to 8-byte-aligned coroutine frame slots on x86_64.
+    struct alignas(void*) opaque_network_state {
+#else
     struct alignas(std::max_align_t) opaque_network_state {
+#endif
         std::byte data[384];
         void (*destruct)(void*) = nullptr;
 

@@ -38,6 +38,16 @@ jobs:
             config: Preempt
             build_type: Release
             cmake_args: "-DFAST_TASK_ENABLE_PREEMPTIVE_SCHEDULER=ON"
+          - os: ubuntu-latest
+            arch: x64
+            config: Clang-Debug
+            build_type: Debug
+            cmake_args: "-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++"
+          - os: ubuntu-latest
+            arch: x64
+            config: Clang-Release
+            build_type: Release
+            cmake_args: "-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++"
           - os: ubuntu-24.04-arm
             arch: arm64
             config: Debug
@@ -55,7 +65,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build pkg-config liburing-dev libc-ares-dev libboost-context-dev
+          sudo apt-get install -y ninja-build pkg-config liburing-dev libc-ares-dev libboost-context-dev clang
 
       - name: Check scheduler layer includes
         run: bash scripts/check_layers.sh
@@ -96,6 +106,11 @@ jobs:
             config: Preempt
             build_type: Release
             cmake_args: "-DFAST_TASK_ENABLE_PREEMPTIVE_SCHEDULER=ON"
+          - os: windows-latest
+            arch: x64
+            config: ClangCL-Release
+            build_type: Release
+            cmake_args: "-T ClangCL"
           - os: windows-11-arm
             arch: arm64
             config: Debug

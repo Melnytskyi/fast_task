@@ -10,8 +10,10 @@
 
 namespace fast_task {
     pool_ref acquire_pool_ref(uint8_t index) noexcept {
-        if (index >= pool_table_size)
-            return {};
+        if constexpr (pool_table_size <= 255) {
+            if (index >= pool_table_size)
+                return {};
+        }
         fast_task::shared_lock guard(glob.pools.safety);
         auto* pool = glob.pools.slots[index].load(std::memory_order_acquire);
         if (!pool)
