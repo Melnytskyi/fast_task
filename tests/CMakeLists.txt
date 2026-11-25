@@ -2,16 +2,13 @@ enable_testing()
 
 find_package(GTest CONFIG)
 if(NOT GTest_FOUND)
-  FetchContent_Declare(
-    GTest
-    GIT_REPOSITORY https://github.com/google/googletest.git
-    GIT_TAG        v1.16.0
-  )
-  FetchContent_MakeAvailable(GTest)
-  file(GLOB _gtest_public_headers "${GTest_SOURCE_DIR}/*.h")
-  file(MAKE_DIRECTORY "${GTest_SOURCE_DIR}/gtest")
-  file(COPY ${_gtest_public_headers} DESTINATION "${GTest_SOURCE_DIR}/gtest")
-  set(GTEST_EXTRA_INCLUDE_DIR "${GTest_SOURCE_DIR}")
+    set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+    FetchContent_Declare(
+        GTest
+        GIT_REPOSITORY https://github.com/google/googletest.git
+        GIT_TAG        v1.16.0
+    )
+    FetchContent_MakeAvailable(GTest)
 endif()
 include(GoogleTest)
 

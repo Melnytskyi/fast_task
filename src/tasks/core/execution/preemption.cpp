@@ -26,8 +26,8 @@ namespace fast_task {
         interrupt::itimerval timer;
         timer.it_interval.tv_sec = 0;
         timer.it_interval.tv_usec = 0;
-        timer.it_value.tv_sec = interval.count() / 1000000000;
-        timer.it_value.tv_usec = (interval.count() % 1000000000) / 1000;
+        timer.it_value.tv_sec = static_cast<decltype(timer.it_value.tv_sec)>(interval.count() / 1000000000);
+        timer.it_value.tv_usec = static_cast<decltype(timer.it_value.tv_usec)>((interval.count() % 1000000000) / 1000);
         interrupt::setitimer(&timer, nullptr);
     }
 

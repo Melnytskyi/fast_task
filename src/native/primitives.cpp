@@ -201,7 +201,9 @@ namespace fast_task::native {
     }
 
     timed_mutex::timed_mutex()
-        : _cond(static_cast<void*>(CONDITION_VARIABLE_INIT)) {}
+        : _cond(nullptr) {
+        InitializeConditionVariable(reinterpret_cast<PCONDITION_VARIABLE>(&_cond));
+    }
 
     timed_mutex::~timed_mutex() noexcept {
         assert(locked == 0 && "Thread tried to destroy locked mutex");
