@@ -511,12 +511,12 @@ namespace fast_task {
         validate_policies(queue, idle);
     }
 
-    worker_pool_storage* FT_API_LOCAL construct_pool_storage(void* buffer, scheduler::queue_policy queue, scheduler::idle_policy idle, scheduler::worker_balancer balancer, bool single_worker) {
+    FT_API_LOCAL worker_pool_storage* construct_pool_storage(void* buffer, scheduler::queue_policy queue, scheduler::idle_policy idle, scheduler::worker_balancer balancer, bool single_worker) {
         validate_policies(queue, idle);
         return make_pool_storage_for<false>(buffer, queue, idle, balancer, single_worker);
     }
 
-    worker_pool_storage* FT_API_LOCAL construct_global_pool_storage(void* buffer, scheduler::queue_policy queue, scheduler::idle_policy idle, scheduler::worker_balancer balancer, bool single_worker) {
+    FT_API_LOCAL worker_pool_storage* construct_global_pool_storage(void* buffer, scheduler::queue_policy queue, scheduler::idle_policy idle, scheduler::worker_balancer balancer, bool single_worker) {
         validate_policies(queue, idle);
         return make_pool_storage_for<true>(buffer, queue, idle, balancer, single_worker);
     }

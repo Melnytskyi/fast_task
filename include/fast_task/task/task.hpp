@@ -169,13 +169,13 @@ namespace fast_task {
         template <class FN>
         void access_dummy(FN&& fn) const {
             fn(user_data());
-        };
+        }
 
         template <class FN>
         void end_dummy(FN&& fn) const {
             fn(user_data());
             end_of_life_notify();
-        };
+        }
 
         bool enter_wait(const task&, enter_state&) const;
         bool enter_wait_until(const task&, enter_state&, fast_task::time_point) const;

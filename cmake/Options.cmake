@@ -8,7 +8,13 @@ option(FAST_TASK_ENABLE_DEBUG_API "Enable the debugging and introspection API" O
 option(FAST_TASK_ENABLE_ABORT_IF_ALREADY_STARTED "Abort if the task already started" OFF)
 option(FAST_TASK_ENABLE_ABORT_IF_NEVER_STARTED "Abort if task's destructor called before the task even started" OFF)
 option(FAST_TASK_ENABLE_PREEMPTIVE_SCHEDULER "Enables time sliced preemption for tasks, the tasks should use interrupt_unsafe_region on regions where preemption should be disabled." OFF)
-option(FAST_TASK_INCLUDE_THREAD_INTERRUPT_CODE "Allows the code to stop the thread and execute custom function on top of its stack, doesn't have effect if FAST_TASK_ENABLE_PREEMPTIVE_SCHEDULER enabled" ON)
+if(WIN32 AND NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$")
+    set(_ft_default_thread_interrupt OFF)
+else()
+    set(_ft_default_thread_interrupt ON)
+endif()
+option(FAST_TASK_INCLUDE_THREAD_INTERRUPT_CODE "Allows the code to stop the thread and execute custom function on top of its stack, doesn't have effect if FAST_TASK_ENABLE_PREEMPTIVE_SCHEDULER enabled" ${_ft_default_thread_interrupt})
+unset(_ft_default_thread_interrupt)
 option(FAST_TASK_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
 
 set(FAST_TASK_GUARD_PAGE_COUNT 1 CACHE STRING

@@ -48,7 +48,7 @@ namespace fast_task {
         return *task->obj;
     }
 
-    task_object::execution_data* FT_API_LOCAL acquire_execution_data() noexcept;
+    FT_API_LOCAL task_object::execution_data* acquire_execution_data() noexcept;
     void FT_API_LOCAL release_execution_data(task_object::execution_data* data) noexcept;
 
     inline auto FT_API_LOCAL execution_data_of(std::atomic<task_object::execution_data*>& slot) -> task_object::execution_data& {

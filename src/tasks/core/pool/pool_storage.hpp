@@ -13,8 +13,8 @@
 
 namespace fast_task {
     void FT_API_LOCAL validate_pool_policies(scheduler::queue_policy queue, scheduler::idle_policy idle);
-    worker_pool_storage* FT_API_LOCAL construct_pool_storage(void* buffer, scheduler::queue_policy queue, scheduler::idle_policy idle, scheduler::worker_balancer balancer, bool single_worker);
-    worker_pool_storage* FT_API_LOCAL construct_global_pool_storage(void* buffer, scheduler::queue_policy queue, scheduler::idle_policy idle, scheduler::worker_balancer balancer, bool single_worker);
+    FT_API_LOCAL worker_pool_storage* construct_pool_storage(void* buffer, scheduler::queue_policy queue, scheduler::idle_policy idle, scheduler::worker_balancer balancer, bool single_worker);
+    FT_API_LOCAL worker_pool_storage* construct_global_pool_storage(void* buffer, scheduler::queue_policy queue, scheduler::idle_policy idle, scheduler::worker_balancer balancer, bool single_worker);
 }
 
 #endif /* FAST_TASK_CORE_POOL_STORAGE */

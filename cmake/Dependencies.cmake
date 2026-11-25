@@ -58,6 +58,9 @@ unset(CONCURRENTQUEUE_EXTRA_INCLUDE_DIR)
 
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    # 16-byte DWCAS atomics (std::atomic<tagged_node>) require libatomic on GCC without -mcx16
+    target_link_libraries(fast_task_dependencies INTERFACE atomic)
+
     #liburing
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(LIBURING IMPORTED_TARGET liburing)

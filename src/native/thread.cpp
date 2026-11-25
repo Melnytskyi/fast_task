@@ -225,20 +225,14 @@ namespace fast_task::native {
         interrupt_unsafe_region region;
         if (!_thread || cpus.empty())
             return false;
-        HANDLE_CLOSER thread_handle(OpenThread(THREAD_SET_LIMITED_INFORMATION, false, _id));
-        if (!thread_handle.handle)
-            return false;
-        return apply_thread_affinity(thread_handle.handle, cpus);
+        return apply_thread_affinity(static_cast<HANDLE>(_thread), cpus);
     }
 
     std::vector<uint32_t> thread::get_affinity() const {
         interrupt_unsafe_region region;
         if (!_thread)
             return {};
-        HANDLE_CLOSER thread_handle(OpenThread(THREAD_QUERY_LIMITED_INFORMATION, false, _id));
-        if (!thread_handle.handle)
-            return {};
-        return read_thread_affinity(thread_handle.handle);
+        return read_thread_affinity(static_cast<HANDLE>(_thread));
     }
 
     namespace this_thread {
