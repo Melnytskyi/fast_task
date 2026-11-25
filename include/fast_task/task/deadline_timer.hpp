@@ -66,92 +66,69 @@ namespace fast_task {
         }
 
 #if __cplusplus >= 202002
+    private:
+        struct wait_awaiter {
+            enter_state state;
+            deadline_timer& timer;
+            fast_task::time_point timeout_time;
+            task task_obj;
+
+            bool await_ready() noexcept {
+                return timer.timed_out();
+            }
+
+            template <std::derived_from<task_promise_base> Promise>
+            bool await_suspend(std::coroutine_handle<Promise> h) {
+                task_obj = h.promise().task_object;
+                return !timer.enter_wait(task_obj, state, timeout_time);
+            }
+
+            deadline_timer::status await_resume() noexcept {
+                if (!task_obj)
+                    return deadline_timer::status::timeouted;
+                return timer.get_status(task_obj, timeout_time);
+            }
+        };
+
+        struct locked_wait_awaiter {
+            enter_state state;
+            mutex_unify& mut;
+            deadline_timer& timer;
+            fast_task::time_point timeout_time;
+            task task_obj;
+            bool suspended = false;
+
+            bool await_ready() noexcept {
+                return timer.timed_out();
+            }
+
+            template <std::derived_from<task_promise_base> Promise>
+            bool await_suspend(std::coroutine_handle<Promise> h) {
+                task_obj = h.promise().task_object;
+                suspended = !timer.enter_wait(mut, task_obj, state, timeout_time);
+                return suspended;
+            }
+
+            deadline_timer::status await_resume() {
+                if (suspended)
+                    mut.lock();
+                if (!task_obj)
+                    return deadline_timer::status::timeouted;
+                return timer.get_status(task_obj, timeout_time);
+            }
+        };
+
+    public:
         [[nodiscard]] auto async_wait() {
-            struct awaiter {
-                enter_state state;
-                deadline_timer& timer;
-                fast_task::time_point timeout_time;
-                task task_obj;
-
-                bool await_ready() noexcept {
-                    return timer.timed_out();
-                }
-
-                bool await_suspend(std::coroutine_handle<>) {
-                    task_obj = scheduler::current_context_task();
-                    return !timer.enter_wait(task_obj, state, timeout_time);
-                }
-
-                deadline_timer::status await_resume() noexcept {
-                    if (!task_obj)
-                        return deadline_timer::status::timeouted;
-                    return timer.get_status(task_obj, timeout_time);
-                }
-            };
-
-            return awaiter{{}, *this, {}, {}};
+            return wait_awaiter{{}, *this, {}, {}};
         }
 
         [[nodiscard]] auto async_wait(fast_task::unique_lock<mutex_unify>& lock) {
-            struct awaiter {
-                enter_state state;
-                mutex_unify& mut;
-                deadline_timer& timer;
-                fast_task::time_point timeout_time;
-                task task_obj;
-                bool suspended = false;
-
-                bool await_ready() noexcept {
-                    return timer.timed_out();
-                }
-
-                bool await_suspend(std::coroutine_handle<>) {
-                    task_obj = scheduler::current_context_task();
-                    suspended = !timer.enter_wait(mut, task_obj, state, timeout_time);
-                    return suspended;
-                }
-
-                deadline_timer::status await_resume() {
-                    if (suspended)
-                        mut.lock();
-                    if (!task_obj)
-                        return deadline_timer::status::timeouted;
-                    return timer.get_status(task_obj, timeout_time);
-                }
-            };
-
-            return awaiter{{}, *lock.mutex(), *this, {}, {}, false};
+            return locked_wait_awaiter{{}, *lock.mutex(), *this, {}, {}, false};
         }
 
         [[nodiscard]] auto async_wait(std::unique_lock<mutex_unify>& lock) {
-            struct awaiter {
-                enter_state state;
-                mutex_unify& mut;
-                deadline_timer& timer;
-                fast_task::time_point timeout_time;
-                task task_obj;
-                bool suspended = false;
-
-                bool await_ready() noexcept {
-                    return timer.timed_out();
-                }
-
-                bool await_suspend(std::coroutine_handle<>) {
-                    task_obj = scheduler::current_context_task();
-                    suspended = !timer.enter_wait(mut, task_obj, state, timeout_time);
-                    return suspended;
-                }
-
-                deadline_timer::status await_resume() {
-                    if (suspended)
-                        mut.lock();
-                    if (!task_obj)
-                        return deadline_timer::status::timeouted;
-                    return timer.get_status(task_obj, timeout_time);
-                }
-            };
-
-            return awaiter{{}, *lock.mutex(), *this, {}, {}, false};
+            return locked_wait_awaiter{{}, *lock.mutex(), *this, {}, {}, false};
         }
 #endif
     };

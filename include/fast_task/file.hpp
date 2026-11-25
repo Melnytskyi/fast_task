@@ -190,8 +190,9 @@ namespace fast_task::file {
                     return self.op.is_done();
                 }
 
-                bool await_suspend(std::coroutine_handle<>) {
-                    return !self.op.enter_wait(scheduler::current_context_task(), state);
+                template <std::derived_from<task_promise_base> Promise>
+                bool await_suspend(std::coroutine_handle<Promise> h) {
+                    return !self.op.enter_wait(h.promise().task_object, state);
                 }
 
                 T await_resume() {
@@ -211,8 +212,9 @@ namespace fast_task::file {
                     return self.op.is_done();
                 }
 
-                bool await_suspend(std::coroutine_handle<>) {
-                    return !self.op.enter_cancel(scheduler::current_context_task(), state);
+                template <std::derived_from<task_promise_base> Promise>
+                bool await_suspend(std::coroutine_handle<Promise> h) {
+                    return !self.op.enter_cancel(h.promise().task_object, state);
                 }
 
                 void await_resume() {}
@@ -250,8 +252,9 @@ namespace fast_task::file {
                     return self.op.is_done();
                 }
 
-                bool await_suspend(std::coroutine_handle<>) {
-                    return !self.op.enter_wait(scheduler::current_context_task(), state);
+                template <std::derived_from<task_promise_base> Promise>
+                bool await_suspend(std::coroutine_handle<Promise> h) {
+                    return !self.op.enter_wait(h.promise().task_object, state);
                 }
 
                 void await_resume() {
@@ -271,8 +274,9 @@ namespace fast_task::file {
                     return self.op.is_done();
                 }
 
-                bool await_suspend(std::coroutine_handle<>) {
-                    return !self.op.enter_cancel(scheduler::current_context_task(), state);
+                template <std::derived_from<task_promise_base> Promise>
+                bool await_suspend(std::coroutine_handle<Promise> h) {
+                    return !self.op.enter_cancel(h.promise().task_object, state);
                 }
 
                 void await_resume() {}
@@ -311,8 +315,9 @@ namespace fast_task::file {
                     return self.op.is_done();
                 }
 
-                bool await_suspend(std::coroutine_handle<>) {
-                    return !self.op.enter_wait_until(scheduler::current_context_task(), state, self.tp);
+                template <std::derived_from<task_promise_base> Promise>
+                bool await_suspend(std::coroutine_handle<Promise> h) {
+                    return !self.op.enter_wait_until(h.promise().task_object, state, self.tp);
                 }
 
                 std::optional<T> await_resume() {
@@ -334,8 +339,9 @@ namespace fast_task::file {
                     return self.op.is_done();
                 }
 
-                bool await_suspend(std::coroutine_handle<>) {
-                    return !self.op.enter_cancel(scheduler::current_context_task(), state);
+                template <std::derived_from<task_promise_base> Promise>
+                bool await_suspend(std::coroutine_handle<Promise> h) {
+                    return !self.op.enter_cancel(h.promise().task_object, state);
                 }
 
                 void await_resume() {}
@@ -374,8 +380,9 @@ namespace fast_task::file {
                     return self.op.is_done();
                 }
 
-                bool await_suspend(std::coroutine_handle<>) {
-                    return !self.op.enter_wait_until(scheduler::current_context_task(), state, self.tp);
+                template <std::derived_from<task_promise_base> Promise>
+                bool await_suspend(std::coroutine_handle<Promise> h) {
+                    return !self.op.enter_wait_until(h.promise().task_object, state, self.tp);
                 }
 
                 bool await_resume() {
@@ -399,8 +406,9 @@ namespace fast_task::file {
                     return self.op.is_done();
                 }
 
-                bool await_suspend(std::coroutine_handle<>) {
-                    return !self.op.enter_cancel(scheduler::current_context_task(), state);
+                template <std::derived_from<task_promise_base> Promise>
+                bool await_suspend(std::coroutine_handle<Promise> h) {
+                    return !self.op.enter_cancel(h.promise().task_object, state);
                 }
 
                 void await_resume() {}
@@ -438,8 +446,9 @@ namespace fast_task::file {
                     return self.op.is_done();
                 }
 
-                bool await_suspend(std::coroutine_handle<>) {
-                    return !self.op.enter_wait(scheduler::current_context_task(), state);
+                template <std::derived_from<task_promise_base> Promise>
+                bool await_suspend(std::coroutine_handle<Promise> h) {
+                    return !self.op.enter_wait(h.promise().task_object, state);
                 }
 
                 polyfill::expected<T, file::io_errors> await_resume() {
@@ -461,8 +470,9 @@ namespace fast_task::file {
                     return self.op.is_done();
                 }
 
-                bool await_suspend(std::coroutine_handle<>) {
-                    return !self.op.enter_cancel(scheduler::current_context_task(), state);
+                template <std::derived_from<task_promise_base> Promise>
+                bool await_suspend(std::coroutine_handle<Promise> h) {
+                    return !self.op.enter_cancel(h.promise().task_object, state);
                 }
 
                 void await_resume() {}
@@ -500,8 +510,9 @@ namespace fast_task::file {
                     return self.op.is_done();
                 }
 
-                bool await_suspend(std::coroutine_handle<>) {
-                    return !self.op.enter_wait(scheduler::current_context_task(), state);
+                template <std::derived_from<task_promise_base> Promise>
+                bool await_suspend(std::coroutine_handle<Promise> h) {
+                    return !self.op.enter_wait(h.promise().task_object, state);
                 }
 
                 polyfill::expected<void, file::io_errors> await_resume() {
@@ -523,8 +534,9 @@ namespace fast_task::file {
                     return self.op.is_done();
                 }
 
-                bool await_suspend(std::coroutine_handle<>) {
-                    return !self.op.enter_cancel(scheduler::current_context_task(), state);
+                template <std::derived_from<task_promise_base> Promise>
+                bool await_suspend(std::coroutine_handle<Promise> h) {
+                    return !self.op.enter_cancel(h.promise().task_object, state);
                 }
 
                 void await_resume() {}
@@ -563,8 +575,9 @@ namespace fast_task::file {
                     return self.op.is_done();
                 }
 
-                bool await_suspend(std::coroutine_handle<>) {
-                    return !self.op.enter_wait_until(scheduler::current_context_task(), state, self.tp);
+                template <std::derived_from<task_promise_base> Promise>
+                bool await_suspend(std::coroutine_handle<Promise> h) {
+                    return !self.op.enter_wait_until(h.promise().task_object, state, self.tp);
                 }
 
                 polyfill::expected<std::optional<T>, file::io_errors> await_resume() {
@@ -586,8 +599,9 @@ namespace fast_task::file {
                     return self.op.is_done();
                 }
 
-                bool await_suspend(std::coroutine_handle<>) {
-                    return !self.op.enter_cancel(scheduler::current_context_task(), state);
+                template <std::derived_from<task_promise_base> Promise>
+                bool await_suspend(std::coroutine_handle<Promise> h) {
+                    return !self.op.enter_cancel(h.promise().task_object, state);
                 }
 
                 void await_resume() {}
@@ -626,8 +640,9 @@ namespace fast_task::file {
                     return self.op.is_done();
                 }
 
-                bool await_suspend(std::coroutine_handle<>) {
-                    return !self.op.enter_wait_until(scheduler::current_context_task(), state, self.tp);
+                template <std::derived_from<task_promise_base> Promise>
+                bool await_suspend(std::coroutine_handle<Promise> h) {
+                    return !self.op.enter_wait_until(h.promise().task_object, state, self.tp);
                 }
 
                 polyfill::expected<bool, file::io_errors> await_resume() {
@@ -649,8 +664,9 @@ namespace fast_task::file {
                     return self.op.is_done();
                 }
 
-                bool await_suspend(std::coroutine_handle<>) {
-                    return !self.op.enter_cancel(scheduler::current_context_task(), state);
+                template <std::derived_from<task_promise_base> Promise>
+                bool await_suspend(std::coroutine_handle<Promise> h) {
+                    return !self.op.enter_cancel(h.promise().task_object, state);
                 }
 
                 void await_resume() {}

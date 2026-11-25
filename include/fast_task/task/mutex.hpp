@@ -225,79 +225,116 @@ namespace fast_task {
             return try_write_lock_until(fast_task::clock::now() + duration);
         }
 #if __cplusplus >= 202002
+    private:
+        struct read_lock_awaiter {
+            enter_state state;
+            rw_mutex& mutex;
 
+            bool await_ready() noexcept {
+                return mutex.try_read_lock();
+            }
+
+            template <std::derived_from<task_promise_base> Promise>
+            bool await_suspend(std::coroutine_handle<Promise> h) {
+                return !mutex.enter_read_wait(h.promise().task_object, state);
+            }
+
+            void await_resume() noexcept {}
+        };
+
+        struct write_lock_awaiter {
+            enter_state state;
+            rw_mutex& mutex;
+
+            bool await_ready() noexcept {
+                return mutex.try_write_lock();
+            }
+
+            template <std::derived_from<task_promise_base> Promise>
+            bool await_suspend(std::coroutine_handle<Promise> h) {
+                return !mutex.enter_write_wait(h.promise().task_object, state);
+            }
+
+            void await_resume() noexcept {}
+        };
+
+        struct try_read_lock_until_awaiter {
+            enter_state state;
+            rw_mutex& mutex;
+            fast_task::time_point time_point;
+            fast_task::task task_obj;
+            bool successful = false;
+
+            bool await_ready() noexcept {
+                if (mutex.try_read_lock()) {
+                    successful = true;
+                    return true;
+                }
+                return false;
+            }
+
+            template <std::derived_from<task_promise_base> Promise>
+            bool await_suspend(std::coroutine_handle<Promise> h) {
+                task_obj = h.promise().task_object;
+                if (mutex.enter_read_wait_until(task_obj, state, time_point)) {
+                    successful = !task_obj.has_wait_timed_out();
+                    return false;
+                }
+                return true;
+            }
+
+            bool await_resume() noexcept {
+                if (successful)
+                    return true;
+                successful = !task_obj.has_wait_timed_out();
+                return successful;
+            }
+        };
+
+        struct try_write_lock_until_awaiter {
+            enter_state state;
+            rw_mutex& mutex;
+            fast_task::time_point time_point;
+            fast_task::task task_obj;
+            bool successful = false;
+
+            bool await_ready() noexcept {
+                if (mutex.try_write_lock()) {
+                    successful = true;
+                    return true;
+                }
+                return false;
+            }
+
+            template <std::derived_from<task_promise_base> Promise>
+            bool await_suspend(std::coroutine_handle<Promise> h) {
+                task_obj = h.promise().task_object;
+                if (mutex.enter_write_wait_until(task_obj, state, time_point)) {
+                    successful = !task_obj.has_wait_timed_out();
+                    return false;
+                }
+                return true;
+            }
+
+            bool await_resume() noexcept {
+                if (successful)
+                    return true;
+                successful = !task_obj.has_wait_timed_out();
+                return successful;
+            }
+        };
+
+    public:
         [[nodiscard]] auto async_read_lock() {
-            struct awaiter {
-                enter_state state;
-                rw_mutex& mutex;
-
-                bool await_ready() noexcept {
-                    return mutex.try_read_lock();
-                }
-
-                bool await_suspend(std::coroutine_handle<>) {
-                    return !mutex.enter_read_wait(scheduler::current_context_task(), state);
-                }
-
-                void await_resume() noexcept {}
-            };
-
-            return awaiter{{}, *this};
+            return read_lock_awaiter{{}, *this};
         }
 
         [[nodiscard]] auto async_write_lock() {
-            struct awaiter {
-                enter_state state;
-                rw_mutex& mutex;
-
-                bool await_ready() noexcept {
-                    return mutex.try_write_lock();
-                }
-
-                bool await_suspend(std::coroutine_handle<>) {
-                    return !mutex.enter_write_wait(scheduler::current_context_task(), state);
-                }
-
-                void await_resume() noexcept {}
-            };
-
-            return awaiter{{}, *this};
+            return write_lock_awaiter{{}, *this};
         }
 
         [[nodiscard]] auto async_try_read_lock_until(fast_task::time_point time_point) {
-            struct awaiter {
-                enter_state state;
-                rw_mutex& mutex;
-                fast_task::time_point time_point;
-                fast_task::task task_obj;
-                bool successful = false;
-
-                bool await_ready() noexcept {
-                    if (mutex.try_read_lock()) {
-                        successful = true;
-                        return true;
-                    }
-                    return false;
-                }
-
-                bool await_suspend(std::coroutine_handle<>) {
-                    task_obj = scheduler::current_context_task();
-                    if (mutex.enter_read_wait_until(scheduler::current_context_task(), state, time_point)) {
-                        successful = !task_obj.has_wait_timed_out();
-                        return false;
-                    }
-                    return true;
-                }
-
-                bool await_resume() noexcept {
-                    if (successful)
-                        return true;
-                    successful = !task_obj.has_wait_timed_out();
-                    return successful;
-                }
-            };
-
-            return awaiter{{}, *this, time_point, {}};
+            return try_read_lock_until_awaiter{{}, *this, time_point, {}};
         }
 
         template <class Rep, class Period>
@@ -306,39 +343,7 @@ namespace fast_task {
         }
 
         [[nodiscard]] auto async_try_write_lock_until(fast_task::time_point time_point) {
-            struct awaiter {
-                enter_state state;
-                rw_mutex& mutex;
-                fast_task::time_point time_point;
-                fast_task::task task_obj;
-                bool successful = false;
-
-                bool await_ready() noexcept {
-                    if (mutex.try_write_lock()) {
-                        successful = true;
-                        return true;
-                    }
-                    return false;
-                }
-
-                bool await_suspend(std::coroutine_handle<>) {
-                    task_obj = scheduler::current_context_task();
-                    if (mutex.enter_write_wait_until(scheduler::current_context_task(), state, time_point)) {
-                        successful = !task_obj.has_wait_timed_out();
-                        return false;
-                    }
-                    return true;
-                }
-
-                bool await_resume() noexcept {
-                    if (successful)
-                        return true;
-                    successful = !task_obj.has_wait_timed_out();
-                    return successful;
-                }
-            };
-
-            return awaiter{{}, *this, time_point, {}};
+            return try_write_lock_until_awaiter{{}, *this, time_point, {}};
         }
 
         template <class Rep, class Period>

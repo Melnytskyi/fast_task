@@ -11,57 +11,61 @@
 
 namespace fast_task::detail {
     template <class T>
+    struct async_lock_awaiter {
+        enter_state state;
+        T& mutex;
+
+        bool await_ready() {
+            return mutex.try_lock();
+        }
+
+        template <std::derived_from<task_promise_base> Promise>
+        bool await_suspend(std::coroutine_handle<Promise> h) {
+            return !mutex.enter_wait(h.promise().task_object, state);
+        }
+
+        void await_resume() {}
+    };
+
+    template <class T>
     [[nodiscard]] auto async_lock(T& mut) {
-        struct awaiter {
-            enter_state state;
-            T& mutex;
-
-            bool await_ready() {
-                return mutex.try_lock();
-            }
-
-            bool await_suspend(std::coroutine_handle<>) {
-                return !mutex.enter_wait(scheduler::current_context_task(), state);
-            }
-
-            void await_resume() {}
-        };
-
-        return awaiter{{}, mut};
+        return async_lock_awaiter<T>{{}, mut};
     }
 
     template <class T>
-    [[nodiscard]] auto async_try_lock_until(T& mut, fast_task::time_point time_point) {
-        struct awaiter {
-            enter_state state;
-            T& mutex;
-            fast_task::time_point time_point;
-            fast_task::task task_obj;
-            bool successful = false;
+    struct async_try_lock_until_awaiter {
+        enter_state state;
+        T& mutex;
+        fast_task::time_point time_point;
+        fast_task::task task_obj;
+        bool successful = false;
 
-            bool await_ready() {
-                successful = mutex.try_lock();
-                return successful;
+        bool await_ready() {
+            successful = mutex.try_lock();
+            return successful;
+        }
+
+        template <std::derived_from<task_promise_base> Promise>
+        bool await_suspend(std::coroutine_handle<Promise> h) {
+            task_obj = h.promise().task_object;
+            if (mutex.enter_wait_until(task_obj, state, time_point)) {
+                successful = true;
+                return false;
             }
+            return true;
+        }
 
-            bool await_suspend(std::coroutine_handle<>) {
-                task_obj = scheduler::current_context_task();
-                if (mutex.enter_wait_until(scheduler::current_context_task(), state, time_point)) {
-                    successful = true;
-                    return false;
-                }
+        bool await_resume() {
+            if (successful)
                 return true;
-            }
+            successful = !task_obj.has_wait_timed_out();
+            return successful;
+        }
+    };
 
-            bool await_resume() {
-                if (successful)
-                    return true;
-                successful = !task_obj.has_wait_timed_out();
-                return successful;
-            }
-        };
-
-        return awaiter{{}, mut, time_point, {}};
+    template <class T>
+    [[nodiscard]] auto async_try_lock_until(T& mut, fast_task::time_point time_point) {
+        return async_try_lock_until_awaiter<T>{{}, mut, time_point, {}};
     }
 }
 

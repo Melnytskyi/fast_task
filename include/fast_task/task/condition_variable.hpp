@@ -48,79 +48,85 @@ namespace fast_task {
         }
 
 #if __cplusplus >= 202002
-        [[nodiscard]] auto async_wait(fast_task::unique_lock<mutex>& lock) {
-            struct awaiter {
-                enter_state state;
-                fast_task::unique_lock<mutex>& lock;
-                mutex* mut = nullptr;
-                condition_variable& cv;
+    private:
+        template <class Lock, class AdoptTag>
+        struct wait_awaiter {
+            enter_state state;
+            Lock& lock;
+            mutex* mut = nullptr;
+            condition_variable& cv;
 
-                bool await_ready() noexcept {
+            bool await_ready() noexcept {
+                return false;
+            }
+
+            template <std::derived_from<task_promise_base> Promise>
+            bool await_suspend(std::coroutine_handle<Promise> h) {
+                mut = lock.release();
+                if (cv.enter_wait(*mut, h.promise().task_object, state)) {
+                    lock = Lock(*mut, AdoptTag{});
+                    mut = nullptr;
                     return false;
                 }
+                return true;
+            }
 
-                bool await_suspend(std::coroutine_handle<>) {
-                    mut = lock.release();
-                    if (cv.enter_wait(*mut, scheduler::current_context_task(), state)) {
-                        lock = {*mut, fast_task::adopt_lock};
-                        mut = nullptr;
-                        return false;
-                    }
+            void await_resume() noexcept {
+                if (mut) {
+                    lock = Lock(*mut, AdoptTag{});
+                    mut = nullptr;
+                }
+            }
+        };
+
+        template <class Lock, class AdoptTag>
+        struct wait_until_awaiter {
+            enter_state state;
+            Lock& lock;
+            mutex* mut = nullptr;
+            condition_variable& cv;
+            fast_task::time_point time_point;
+            fast_task::task task_obj;
+            bool timed_out_early = false;
+
+            bool await_ready() noexcept {
+                if (fast_task::is_no_deadline(time_point) || fast_task::clock::now() >= time_point) {
+                    timed_out_early = true;
                     return true;
                 }
+                return false;
+            }
 
-                void await_resume() noexcept {
-                    if (mut) {
-                        lock = {*mut, fast_task::adopt_lock};
-                        mut = nullptr;
-                    }
+            template <std::derived_from<task_promise_base> Promise>
+            bool await_suspend(std::coroutine_handle<Promise> h) {
+                task_obj = h.promise().task_object;
+                mut = lock.release();
+                if (cv.enter_wait_until(*mut, task_obj, state, time_point)) {
+                    lock = Lock(*mut, AdoptTag{});
+                    mut = nullptr;
+                    return false;
                 }
-            };
+                return true;
+            }
 
-            return awaiter{{}, lock, nullptr, *this};
+            bool await_resume() noexcept {
+                if (timed_out_early)
+                    return false;
+                if (mut) {
+                    lock = Lock(*mut, AdoptTag{});
+                    mut = nullptr;
+                }
+                return !task_obj.has_wait_timed_out();
+            }
+        };
+
+    public:
+        [[nodiscard]] auto async_wait(fast_task::unique_lock<mutex>& lock) {
+            return wait_awaiter<fast_task::unique_lock<mutex>, fast_task::adopt_lock_t>{{}, lock, nullptr, *this};
         }
 
         [[nodiscard]] auto async_wait_until(fast_task::unique_lock<mutex>& lock, fast_task::time_point time_point) {
-            struct awaiter {
-                enter_state state;
-                fast_task::unique_lock<mutex>& lock;
-                mutex* mut = nullptr;
-                condition_variable& cv;
-                fast_task::time_point time_point;
-                fast_task::task task_obj;
-                bool timed_out_early = false;
-
-                bool await_ready() noexcept {
-                    if (fast_task::is_no_deadline(time_point) || fast_task::clock::now() >= time_point) {
-                        timed_out_early = true;
-                        return true;
-                    }
-                    return false;
-                }
-
-                bool await_suspend(std::coroutine_handle<>) {
-                    task_obj = scheduler::current_context_task();
-                    mut = lock.release();
-                    if (cv.enter_wait_until(*mut, scheduler::current_context_task(), state, time_point)) {
-                        lock = {*mut, fast_task::adopt_lock};
-                        mut = nullptr;
-                        return false;
-                    }
-                    return true;
-                }
-
-                bool await_resume() noexcept {
-                    if (timed_out_early)
-                        return false;
-                    if (mut) {
-                        lock = {*mut, fast_task::adopt_lock};
-                        mut = nullptr;
-                    }
-                    return !task_obj.has_wait_timed_out();
-                }
-            };
-
-            return awaiter{{}, lock, nullptr, *this, time_point, {}};
+            return wait_until_awaiter<fast_task::unique_lock<mutex>, fast_task::adopt_lock_t>{{}, lock, nullptr, *this, time_point, {}};
         }
 
         template <class Rep, class Period>
@@ -129,78 +135,11 @@ namespace fast_task {
         }
 
         [[nodiscard]] auto async_wait(std::unique_lock<mutex>& lock) {
-            struct awaiter {
-                enter_state state;
-                std::unique_lock<mutex>& lock;
-                mutex* mut = nullptr;
-                condition_variable& cv;
-
-                bool await_ready() noexcept {
-                    return false;
-                }
-
-                bool await_suspend(std::coroutine_handle<>) {
-                    mut = lock.release();
-                    if (cv.enter_wait(*mut, scheduler::current_context_task(), state)) {
-                        lock = std::unique_lock<mutex>(*mut, std::adopt_lock);
-                        mut = nullptr;
-                        return false;
-                    }
-                    return true;
-                }
-
-                void await_resume() noexcept {
-                    if (mut) {
-                        lock = std::unique_lock<mutex>(*mut, std::adopt_lock);
-                        mut = nullptr;
-                    }
-                }
-            };
-
-            return awaiter{{}, lock, nullptr, *this};
+            return wait_awaiter<std::unique_lock<mutex>, std::adopt_lock_t>{{}, lock, nullptr, *this};
         }
 
         [[nodiscard]] auto async_wait_until(std::unique_lock<mutex>& lock, fast_task::time_point time_point) {
-            struct awaiter {
-                enter_state state;
-                std::unique_lock<mutex>& lock;
-                mutex* mut = nullptr;
-                condition_variable& cv;
-                fast_task::time_point time_point;
-                fast_task::task task_obj;
-                bool timed_out_early = false;
-
-                bool await_ready() noexcept {
-                    if (fast_task::is_no_deadline(time_point) || fast_task::clock::now() >= time_point) {
-                        timed_out_early = true;
-                        return true;
-                    }
-                    return false;
-                }
-
-                bool await_suspend(std::coroutine_handle<>) {
-                    task_obj = scheduler::current_context_task();
-                    mut = lock.release();
-                    if (cv.enter_wait_until(*mut, scheduler::current_context_task(), state, time_point)) {
-                        lock = std::unique_lock<mutex>(*mut, std::adopt_lock);
-                        mut = nullptr;
-                        return false;
-                    }
-                    return true;
-                }
-
-                bool await_resume() noexcept {
-                    if (timed_out_early)
-                        return false;
-                    if (mut) {
-                        lock = std::unique_lock<mutex>(*mut, std::adopt_lock);
-                        mut = nullptr;
-                    }
-                    return !task_obj.has_wait_timed_out();
-                }
-            };
-
-            return awaiter{{}, lock, nullptr, *this, time_point, {}};
+            return wait_until_awaiter<std::unique_lock<mutex>, std::adopt_lock_t>{{}, lock, nullptr, *this, time_point, {}};
         }
 
         template <class Rep, class Period>

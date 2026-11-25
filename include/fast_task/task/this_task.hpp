@@ -42,27 +42,23 @@ namespace fast_task::this_task {
     bool FT_API enter_yield(enter_state&);
 
 #if __cplusplus >= 202002
-
-    [[nodiscard]] inline auto async_yield() {
-        struct awaiter {
+    namespace detail {
+        struct yield_awaiter {
             enter_state state;
 
             bool await_ready() noexcept {
                 return false;
             }
 
-            bool await_suspend(std::coroutine_handle<>) {
+            template <std::derived_from<task_promise_base> Promise>
+            bool await_suspend(std::coroutine_handle<Promise>) {
                 return !enter_yield(state);
             }
 
             void await_resume() {}
         };
 
-        return awaiter{};
-    }
-
-    [[nodiscard]] inline auto async_switch_to(scheduler::worker_pool& target_pool) {
-        struct awaiter {
+        struct switch_to_awaiter {
             enter_state state;
             scheduler::worker_pool* target;
 
@@ -70,7 +66,8 @@ namespace fast_task::this_task {
                 return false;
             }
 
-            bool await_suspend(std::coroutine_handle<>) {
+            template <std::derived_from<task_promise_base> Promise>
+            bool await_suspend(std::coroutine_handle<Promise>) {
                 set_pool(*target);
                 return !enter_yield(state);
             }
@@ -78,11 +75,7 @@ namespace fast_task::this_task {
             void await_resume() {}
         };
 
-        return awaiter{{}, &target_pool};
-    }
-
-    [[nodiscard]] inline auto async_sleep_until(fast_task::time_point time_point) {
-        struct awaiter {
+        struct sleep_until_awaiter {
             enter_state state;
             fast_task::time_point time_point;
 
@@ -90,14 +83,25 @@ namespace fast_task::this_task {
                 return false;
             }
 
-            bool await_suspend(std::coroutine_handle<>) {
+            template <std::derived_from<task_promise_base> Promise>
+            bool await_suspend(std::coroutine_handle<Promise>) {
                 return !enter_sleep_until(state, time_point);
             }
 
             void await_resume() {}
         };
+    }
 
-        return awaiter{{}, time_point};
+    [[nodiscard]] inline auto async_yield() {
+        return detail::yield_awaiter{};
+    }
+
+    [[nodiscard]] inline auto async_switch_to(scheduler::worker_pool& target_pool) {
+        return detail::switch_to_awaiter{{}, &target_pool};
+    }
+
+    [[nodiscard]] inline auto async_sleep_until(fast_task::time_point time_point) {
+        return detail::sleep_until_awaiter{{}, time_point};
     }
 
     template <class Rep, class Period>

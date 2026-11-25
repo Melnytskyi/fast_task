@@ -108,8 +108,9 @@ namespace fast_task::net {
                 return false;
             }
 
-            bool await_suspend(std::coroutine_handle<>) {
-                return !start(scheduler::current_context_task(), state, result);
+            template <std::derived_from<task_promise_base> Promise>
+            bool await_suspend(std::coroutine_handle<Promise> h) {
+                return !start(h.promise().task_object, state, result);
             }
 
             Result await_resume() {
@@ -127,8 +128,9 @@ namespace fast_task::net {
                 return false;
             }
 
-            bool await_suspend(std::coroutine_handle<>) {
-                return !start(scheduler::current_context_task(), state, result);
+            template <std::derived_from<task_promise_base> Promise>
+            bool await_suspend(std::coroutine_handle<Promise> h) {
+                return !start(h.promise().task_object, state, result);
             }
 
             polyfill::expected<Result, std::error_code> await_resume() {
@@ -148,8 +150,9 @@ namespace fast_task::net {
                 return false;
             }
 
-            bool await_suspend(std::coroutine_handle<>) {
-                return !start(scheduler::current_context_task(), state);
+            template <std::derived_from<task_promise_base> Promise>
+            bool await_suspend(std::coroutine_handle<Promise> h) {
+                return !start(h.promise().task_object, state);
             }
 
             void await_resume() {}

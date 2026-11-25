@@ -42,62 +42,66 @@ namespace fast_task {
         bool enter_wait_until(const task&, enter_state& task, fast_task::time_point);
 
 #if __cplusplus >= 202002
-        [[nodiscard]] auto async_wait() {
-            struct awaiter {
-                enter_state state;
-                queue& q;
+    private:
+        struct wait_awaiter {
+            enter_state state;
+            queue& q;
 
-                bool await_ready() noexcept {
+            bool await_ready() noexcept {
+                return false;
+            }
+
+            template <std::derived_from<task_promise_base> Promise>
+            bool await_suspend(std::coroutine_handle<Promise> h) {
+                return !q.enter_wait(h.promise().task_object, state);
+            }
+
+            void await_resume() noexcept {}
+        };
+
+        struct wait_until_awaiter {
+            enter_state state;
+            queue& q;
+            fast_task::time_point time_point;
+            fast_task::task task_obj;
+            bool successful = false;
+            bool timed_out_early = false;
+
+            bool await_ready() noexcept {
+                if (fast_task::is_no_deadline(time_point) || fast_task::clock::now() >= time_point) {
+                    timed_out_early = true;
+                    return true;
+                }
+                return false;
+            }
+
+            template <std::derived_from<task_promise_base> Promise>
+            bool await_suspend(std::coroutine_handle<Promise> h) {
+                task_obj = h.promise().task_object;
+                if (q.enter_wait_until(task_obj, state, time_point)) {
+                    successful = !task_obj.has_wait_timed_out();
                     return false;
                 }
+                return true;
+            }
 
-                bool await_suspend(std::coroutine_handle<>) {
-                    return !q.enter_wait(scheduler::current_context_task(), state);
-                }
+            bool await_resume() noexcept {
+                if (timed_out_early)
+                    return false;
+                if (successful)
+                    return true;
+                successful = !task_obj.has_wait_timed_out();
+                return successful;
+            }
+        };
 
-                void await_resume() noexcept {}
-            };
-
-            return awaiter{{}, *this};
+    public:
+        [[nodiscard]] auto async_wait() {
+            return wait_awaiter{{}, *this};
         }
 
         [[nodiscard]] auto async_wait_until(fast_task::time_point time_point) {
-            struct awaiter {
-                enter_state state;
-                queue& q;
-                fast_task::time_point time_point;
-                fast_task::task task_obj;
-                bool successful = false;
-                bool timed_out_early = false;
-
-                bool await_ready() noexcept {
-                    if (fast_task::is_no_deadline(time_point) || fast_task::clock::now() >= time_point) {
-                        timed_out_early = true;
-                        return true;
-                    }
-                    return false;
-                }
-
-                bool await_suspend(std::coroutine_handle<>) {
-                    task_obj = scheduler::current_context_task();
-                    if (q.enter_wait_until(scheduler::current_context_task(), state, time_point)) {
-                        successful = !task_obj.has_wait_timed_out();
-                        return false;
-                    }
-                    return true;
-                }
-
-                bool await_resume() noexcept {
-                    if (timed_out_early)
-                        return false;
-                    if (successful)
-                        return true;
-                    successful = !task_obj.has_wait_timed_out();
-                    return successful;
-                }
-            };
-
-            return awaiter{{}, *this, time_point, {}};
+            return wait_until_awaiter{{}, *this, time_point, {}};
         }
 
         template <class Rep, class Period>

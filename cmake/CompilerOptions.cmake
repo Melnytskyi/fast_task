@@ -67,6 +67,10 @@ target_compile_definitions(fast_task_flags INTERFACE FT_PREEMPT_HIGHER_MAX_QUANT
 target_compile_definitions(fast_task_flags INTERFACE FT_PREEMPT_HIGH_MAX_QUANTUM_NS=${FAST_TASK_PREEMPT_HIGH_MAX_QUANTUM_NS})
 
 
+if(WIN32)
+    target_compile_definitions(fast_task_flags INTERFACE NOMINMAX)
+endif()
+
 if(MSVC)
     target_compile_options(fast_task_flags INTERFACE $<$<COMPILE_LANGUAGE:CXX>:/utf-8>)
     target_compile_options(fast_task_flags INTERFACE $<$<COMPILE_LANGUAGE:CXX>:/wd4505>)
@@ -95,8 +99,8 @@ endif()
 
 if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
     target_compile_options(fast_task_flags INTERFACE $<$<COMPILE_LANGUAGE:CXX>:-Wno-unused-function>)
-    
+
     if(MSVC)
         target_compile_options(fast_task_flags INTERFACE $<$<COMPILE_LANGUAGE:CXX>:/clang:-ftemplate-backtrace-limit=0>)
-    endif(MSVC)
+    endif()
 endif()
