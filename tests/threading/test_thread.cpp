@@ -147,3 +147,10 @@ TEST(Thread, SetAffinityFromAnotherThread) {
     t.join();
     EXPECT_EQ(observed, std::vector<uint32_t>{cpu});
 }
+
+TEST(Thread, SleepUntilNoDeadlineReturnsImmediately) {
+    const auto start = std::chrono::steady_clock::now();
+    fast_task::native::this_thread::sleep_until(fast_task::no_deadline);
+    const auto elapsed = std::chrono::steady_clock::now() - start;
+    EXPECT_LT(elapsed, std::chrono::milliseconds(100));
+}
