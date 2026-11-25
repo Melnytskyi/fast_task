@@ -25,7 +25,9 @@ function(add_ft_test TARGET_NAME SOURCE_FILE)
         ${CMAKE_SOURCE_DIR}/include   # library public headers
         ${ARGN}
     )
-    set_property(TARGET ${TARGET_NAME} PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
+    if(NOT (WIN32 AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(ARM64|arm64|aarch64)$"))
+        set_property(TARGET ${TARGET_NAME} PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
+    endif()
     set_target_properties(${TARGET_NAME} PROPERTIES
         CXX_STANDARD 23
         CXX_EXTENSIONS OFF

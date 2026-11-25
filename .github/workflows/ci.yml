@@ -65,6 +65,7 @@ jobs:
           cmake -B build -G Ninja
           -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
           -DFAST_TASK_BUILD_TESTS=ON
+          -DFAST_TASK_DISABLE_IO_TESTS=OFF
           ${{ matrix.cmake_args }}
 
       - name: Build
@@ -113,6 +114,7 @@ jobs:
         run: >
           cmake -B build
           -DFAST_TASK_BUILD_TESTS=ON
+          -DFAST_TASK_DISABLE_IO_TESTS=OFF
           ${{ matrix.cmake_args }}
 
       - name: Build

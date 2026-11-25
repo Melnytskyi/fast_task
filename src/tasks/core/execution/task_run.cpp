@@ -74,16 +74,13 @@ namespace fast_task {
                     fast_task::lock_guard guard(*data);
                     if (!data->get_is_restartable()) {
                         ended = true;
-                    } else {
-                        bool wake_now = data->get_resume_requested();
                         data->set_resume_requested(false);
-                        data->set_status(task_object::status_e::suspended);
-                        if (wake_now)
-                            transfer_task(task{loc.curr_task});
                     }
                 }
-                if (ended)
+                if (ended) {
+                    loc.pending_timer = fast_task::time_point::min();
                     data->end_of_life_notify();
+                }
             } else {
                 {
                     fast_task::lock_guard guard(*data);
@@ -240,6 +237,20 @@ namespace fast_task {
                     }
                     if (should_decrement)
                         task_mark_completed(*data, &loc);
+                } else if (data->get_execution_mode() == task_object::execution_mode::as_coroutine) {
+                    bool re_enqueue = false;
+                    {
+                        fast_task::lock_guard guard(*data);
+                        if (data->get_resume_requested()) {
+                            data->set_resume_requested(false);
+                            data->set_status(task_object::status_e::running);
+                            re_enqueue = true;
+                        } else {
+                            data->set_status(task_object::status_e::suspended);
+                        }
+                    }
+                    if (re_enqueue)
+                        transfer_task(task{loc.curr_task});
                 }
                 loc.curr_task = loc.transfer_state.pending;
                 loc.transfer_state.pending.reset();
@@ -272,17 +283,27 @@ namespace fast_task {
                         finished.set_status(task_object::status_e::suspended);
                     else
                         finished.set_status(task_object::status_e::running);
+                } else {
+                    if (finished.get_resume_requested()) {
+                        finished.set_resume_requested(false);
+                        do_yield_transfer = true;
+                    }
+                    if (!do_yield_transfer)
+                        finished.set_status(task_object::status_e::suspended);
+                    else
+                        finished.set_status(task_object::status_e::running);
                 }
             } else if (!finished.get_completed()) {
                 finished.set_completed(true);
                 should_decrement = true;
             }
         }
-        if (do_invalid_transfer || do_yield_transfer) {
+        loc.yield_request = false;
+        if (end_of_life) {
+            if (should_decrement)
+                task_mark_completed(get_data(loc.curr_task), &loc);
+        } else if (do_invalid_transfer || do_yield_transfer) {
             transfer_task(std::move(loc.curr_task));
-            loc.yield_request = false;
-        } else if (should_decrement) {
-            task_mark_completed(get_data(loc.curr_task), &loc);
         }
 
         loc.curr_task = nullptr;

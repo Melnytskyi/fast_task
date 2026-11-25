@@ -259,13 +259,18 @@ namespace fast_task {
         if (obj->vtable && obj->vtable->on_cancel)
             obj->vtable->on_cancel(obj->user_data());
 
-        fast_task::lock_guard guard(*obj);
-        obj->set_cancellation_requested(true);
-        if (obj->is_suspended() && !obj->get_time_end()) {
-            obj->set_time_end(true);
-            obj->set_awaked(true);
-            fast_task::transfer_task(task(*this));
+        bool should_transfer = false;
+        {
+            fast_task::lock_guard guard(*obj);
+            obj->set_cancellation_requested(true);
+            if (obj->is_suspended() && !obj->get_time_end()) {
+                obj->set_time_end(true);
+                obj->set_awaked(true);
+                should_transfer = true;
+            }
         }
+        if (should_transfer)
+            fast_task::transfer_task(task(*this));
     }
 
     void task::await_notify_cancel() const {

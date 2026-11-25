@@ -142,9 +142,7 @@ namespace fast_task::this_task {
         auto* loc = get_loc();
         if (!loc || !loc->is_task_thread)
             throw invalid_context();
-        auto& curr = get_data(loc->curr_task);
-        fast_task::lock_guard guard(curr);
-        transfer_task(task{loc->curr_task});
+        loc->yield_request = true;
         return false;
     }
 

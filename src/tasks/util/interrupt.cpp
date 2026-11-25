@@ -19,6 +19,7 @@
 #ifdef FT_ENABLE_PREEMPTIVE_SCHEDULER
     #if PLATFORM_WINDOWS
         #define NOMINMAX
+        #include <process.h>
         #include <windows.h>
     #else
         #include <signal.h>
@@ -89,93 +90,106 @@ namespace fast_task {
 namespace fast_task::interrupt {
     struct handle {
         std::list<timer_handle*> await_timers;
-        fast_task::native::condition_variable timer_signal;
-        fast_task::native::condition_variable active_done;
-        fast_task::native::mutex timer_signal_mutex;
+        CONDITION_VARIABLE timer_signal = CONDITION_VARIABLE_INIT;
+        CONDITION_VARIABLE active_done = CONDITION_VARIABLE_INIT;
+        SRWLOCK timer_signal_mutex = SRWLOCK_INIT;
         timer_handle* active_timer = nullptr;
-        fast_task::native::thread processor_thread;
+        HANDLE processor_thread = nullptr;
         bool processor_started = false;
         std::atomic<bool> shutdown{false};
 
         ~handle() {
-            {
-                fast_task::lock_guard<fast_task::native::mutex> lock(timer_signal_mutex);
-                shutdown.store(true, std::memory_order_release);
-                timer_signal.notify_all();
+            AcquireSRWLockExclusive(&timer_signal_mutex);
+            shutdown.store(true, std::memory_order_release);
+            WakeAllConditionVariable(&timer_signal);
+            HANDLE th = processor_thread;
+            processor_thread = nullptr;
+            ReleaseSRWLockExclusive(&timer_signal_mutex);
+            if (th != nullptr) {
+                WaitForSingleObject(th, INFINITE);
+                CloseHandle(th);
             }
-            if (processor_thread.joinable())
-                processor_thread.join();
         }
     };
 
     std::shared_ptr<handle> global = std::make_shared<handle>();
 
-    timer_handle::timer_handle() : handle(global) {}
+    // Lazily attach to global in setitimer() so threads that only enter
+    // interrupt_unsafe_region (including processor_thread) do not create a
+    // shared_ptr<handle> reference cycle.
+    timer_handle::timer_handle() = default;
+
+    unsigned __stdcall interrupt_processor_main(void* raw) {
+        auto* h = static_cast<handle*>(raw);
+        while (true) {
+            AcquireSRWLockExclusive(&h->timer_signal_mutex);
+            while (!h->shutdown.load(std::memory_order_acquire) && h->await_timers.empty())
+                SleepConditionVariableSRW(&h->timer_signal, &h->timer_signal_mutex, INFINITE, 0);
+            if (h->shutdown.load(std::memory_order_acquire)) {
+                ReleaseSRWLockExclusive(&h->timer_signal_mutex);
+                break;
+            }
+            timer_handle* data = h->await_timers.front();
+            h->await_timers.pop_front();
+            if (data == nullptr) {
+                ReleaseSRWLockExclusive(&h->timer_signal_mutex);
+                continue;
+            }
+            h->active_timer = data;
+            ReleaseSRWLockExclusive(&h->timer_signal_mutex);
+
+            bool requeue = false;
+            if (data->enabled_timers.load(std::memory_order_acquire) != 0) {
+                auto id = data->thread_id;
+                if (fast_task::native::thread::suspend(id)) {
+                    if (data->enabled_timers.load(std::memory_order_acquire) == 0) {
+                        fast_task::native::thread::resume(id);
+                    } else if (data->guard_zones.load(std::memory_order_acquire) != 0) {
+                        fast_task::native::thread::resume(id);
+                        requeue = true;
+                    } else {
+                        auto cb = data->interrupt;
+                        if (cb != nullptr)
+                            fast_task::native::thread::insert_context(id, (void (*)(void*))cb, nullptr);
+                        fast_task::native::thread::resume(id);
+                    }
+                }
+            }
+
+            if (requeue && !h->shutdown.load(std::memory_order_acquire) && data->enabled_timers.load(std::memory_order_acquire) != 0) {
+                Sleep(1);
+            }
+
+            AcquireSRWLockExclusive(&h->timer_signal_mutex);
+            if (requeue && !h->shutdown.load(std::memory_order_acquire) && data->enabled_timers.load(std::memory_order_acquire) != 0) {
+                h->await_timers.push_back(data);
+            }
+            h->active_timer = nullptr;
+            WakeAllConditionVariable(&h->active_done);
+            ReleaseSRWLockExclusive(&h->timer_signal_mutex);
+        }
+        return 0;
+    }
 
     VOID NTAPI timer_callback_fun(void* callback, BOOLEAN) {
         timer_handle* result = (timer_handle*)callback;
         if (result->thread_id == fast_task::native::this_thread::get_id())
             return;
-        fast_task::lock_guard<fast_task::native::mutex> lock(result->handle->timer_signal_mutex);
-        if (result->handle->shutdown.load(std::memory_order_acquire))
+        auto* h = result->handle.get();
+        if (!h)
             return;
-        if (!result->handle->processor_started) {
-            result->handle->processor_started = true;
-            handle* h = result->handle.get();
-            result->handle->processor_thread = fast_task::native::thread([h]() {
-                _set_name_thread_dbg("interrupt_processor");
-                fast_task::unique_lock<fast_task::native::mutex> lock(h->timer_signal_mutex, fast_task::defer_lock);
-                while (true) {
-                    lock.lock();
-                    while (!h->shutdown.load(std::memory_order_acquire) && h->await_timers.empty())
-                        h->timer_signal.wait(lock);
-                    if (h->shutdown.load(std::memory_order_acquire)) {
-                        lock.unlock();
-                        break;
-                    }
-                    timer_handle* data = h->await_timers.front();
-                    h->await_timers.pop_front();
-                    if (data == nullptr) {
-                        lock.unlock();
-                        continue;
-                    }
-                    h->active_timer = data;
-                    lock.unlock();
-
-                    bool requeue = false;
-                    if (data->enabled_timers.load(std::memory_order_acquire) != 0) {
-                        auto id = data->thread_id;
-                        if (fast_task::native::thread::suspend(id)) {
-                            if (data->enabled_timers.load(std::memory_order_acquire) == 0) {
-                                fast_task::native::thread::resume(id);
-                            } else if (data->guard_zones.load(std::memory_order_acquire) != 0) {
-                                fast_task::native::thread::resume(id);
-                                requeue = true;
-                            } else {
-                                auto cb = data->interrupt;
-                                if (cb != nullptr)
-                                    fast_task::native::thread::insert_context(id, (void (*)(void*))cb, nullptr);
-                                fast_task::native::thread::resume(id);
-                            }
-                        }
-                    }
-
-                    if (requeue && !h->shutdown.load(std::memory_order_acquire) && data->enabled_timers.load(std::memory_order_acquire) != 0) {
-                        fast_task::native::this_thread::sleep_for(std::chrono::milliseconds(1));
-                    }
-
-                    lock.lock();
-                    if (requeue && !h->shutdown.load(std::memory_order_acquire) && data->enabled_timers.load(std::memory_order_acquire) != 0) {
-                        h->await_timers.push_back(data);
-                    }
-                    h->active_timer = nullptr;
-                    h->active_done.notify_all();
-                    lock.unlock();
-                }
-            });
+        AcquireSRWLockExclusive(&h->timer_signal_mutex);
+        if (h->shutdown.load(std::memory_order_acquire)) {
+            ReleaseSRWLockExclusive(&h->timer_signal_mutex);
+            return;
         }
-        result->handle->await_timers.push_back(result);
-        result->handle->timer_signal.notify_all();
+        if (!h->processor_started) {
+            h->processor_started = true;
+            h->processor_thread = reinterpret_cast<HANDLE>(_beginthreadex(nullptr, 0, &interrupt_processor_main, h, 0, nullptr));
+        }
+        h->await_timers.push_back(result);
+        WakeAllConditionVariable(&h->timer_signal);
+        ReleaseSRWLockExclusive(&h->timer_signal_mutex);
     }
 
     bool timer_callback(void (*interrupter)()) {
@@ -189,6 +203,11 @@ namespace fast_task::interrupt {
         if (old_value)
             *old_value = timer.timer_value;
         if (new_value == nullptr)
+            return false;
+
+        if (!timer.handle)
+            timer.handle = global;
+        if (!timer.handle || timer.handle->shutdown.load(std::memory_order_acquire))
             return false;
 
         timer.timer_value = *new_value;
@@ -226,7 +245,7 @@ namespace fast_task::interrupt {
         if (!fast_task::interrupt::timer.handle)
             return;
         auto& h = *fast_task::interrupt::timer.handle;
-        fast_task::unique_lock<fast_task::native::mutex> lock(h.timer_signal_mutex);
+        AcquireSRWLockExclusive(&h.timer_signal_mutex);
         auto* self = &fast_task::interrupt::timer;
         std::erase_if(
             h.await_timers,
@@ -235,8 +254,9 @@ namespace fast_task::interrupt {
             }
         );
         while (h.active_timer == self) {
-            h.active_done.wait(lock);
+            SleepConditionVariableSRW(&h.active_done, &h.timer_signal_mutex, INFINITE, 0);
         }
+        ReleaseSRWLockExclusive(&h.timer_signal_mutex);
     }
 }
 

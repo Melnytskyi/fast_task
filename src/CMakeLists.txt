@@ -15,7 +15,16 @@ set_target_properties(fast_task
   CXX_STANDARD 20
   CXX_EXTENSIONS OFF
 )
-set_property(TARGET fast_task PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
+if(NOT (WIN32 AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(ARM64|arm64|aarch64)$"))
+  set_property(TARGET fast_task PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
+else()
+  # MSVC ARM64 LTCG (/GL) + /GS stack cookie checks conflict with Boost.Context jump_fcontext.
+  set_source_files_properties(
+    tasks/core/execution/context_switch.cpp
+    tasks/core/execution/task_run.cpp
+    PROPERTIES COMPILE_OPTIONS "/GS-"
+  )
+endif()
 
 generate_export_header(
   fast_task

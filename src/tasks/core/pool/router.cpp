@@ -55,9 +55,12 @@ namespace fast_task {
             return;
         }
 
-        if (!pre_scheduled && get_data(task).is_suspending()) {
-            get_data(task).set_resume_requested(true);
-            return;
+        if (!pre_scheduled) {
+            fast_task::lock_guard task_guard(get_data(task));
+            if (get_data(task).is_suspending()) {
+                get_data(task).set_resume_requested(true);
+                return;
+            }
         }
 
         if (get_data(task).get_is_on_scheduler() && get_data(task).get_relock() && stat) {
