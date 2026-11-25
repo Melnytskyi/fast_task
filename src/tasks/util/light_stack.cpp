@@ -24,7 +24,9 @@ namespace fast_task {
 }
 #if PLATFORM_WINDOWS
     #define WIN32_LEAN_AND_MEAN
-    #define NOMINMAX
+    #ifndef NOMINMAX
+        #define NOMINMAX
+    #endif
     #include <Windows.h>
 
     #ifndef FT_GUARD_PAGE_COUNT

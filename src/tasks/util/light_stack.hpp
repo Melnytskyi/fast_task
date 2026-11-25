@@ -7,7 +7,6 @@
 #pragma once
 #ifndef FAST_TASK_LIGHT_STACK
     #define FAST_TASK_LIGHT_STACK
-    #include <boost/context/fiber.hpp>
     #include <boost/context/stack_context.hpp>
     #include <boost/context/stack_traits.hpp>
     #include <fast_task/shared.hpp>

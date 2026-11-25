@@ -62,7 +62,9 @@ namespace fast_task {
     }
 }
 #elif defined(PLATFORM_WINDOWS)
-    #define NOMINMAX
+    #ifndef NOMINMAX
+        #define NOMINMAX
+    #endif
     #define WIN32_LEAN_AND_MEAN
     #include <windows.h>
     #pragma comment(lib, "Synchronization.lib")

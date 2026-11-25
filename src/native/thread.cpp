@@ -28,7 +28,9 @@ void (*thread_interrupter_asm_ptr)() = []() {
 }();
     #endif
 
-    #define NOMINMAX
+    #ifndef NOMINMAX
+        #define NOMINMAX
+    #endif
     #include <Windows.h>
     #include <process.h>
 
@@ -217,6 +219,9 @@ namespace fast_task::native {
         ResumeThread(thread_handle.handle);
         return res;
     #else
+        (void)id;
+        (void)inserted_context;
+        (void)arg;
         return false;
     #endif
     }

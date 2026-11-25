@@ -11,7 +11,9 @@
     #include <sys/mman.h>
     #include <unistd.h>
 #elif PLATFORM_WINDOWS
-    #define NOMINMAX
+    #ifndef NOMINMAX
+        #define NOMINMAX
+    #endif
     #include <Windows.h>
 #endif
 namespace fast_task {

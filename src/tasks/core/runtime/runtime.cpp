@@ -7,7 +7,9 @@
 #include <tasks/_internal.hpp>
 
 #if PLATFORM_WINDOWS
-    #define NOMINMAX
+    #ifndef NOMINMAX
+        #define NOMINMAX
+    #endif
     #include <Windows.h>
     #include <intrin.h>
     #include <locale>

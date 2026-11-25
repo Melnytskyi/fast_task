@@ -1,5 +1,7 @@
 #ifdef _WIN32
-    #define NOMINMAX
+    #ifndef NOMINMAX
+        #define NOMINMAX
+    #endif
     #include <Windows.h>
     #include <filesystem>
     #include <io.h>

@@ -13,7 +13,9 @@
 #include <exception>
 
 #ifdef _WIN32
-    #define NOMINMAX
+    #ifndef NOMINMAX
+        #define NOMINMAX
+    #endif
     #include <Windows.h>
 #else
     #include <chrono>

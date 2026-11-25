@@ -19,7 +19,9 @@ static double calculate_cpu_load(fast_task::util::cpu::usage_prev_stat& prev_sta
     return result;
 }
 #ifdef _WIN32
-    #define NOMINMAX
+    #ifndef NOMINMAX
+        #define NOMINMAX
+    #endif
     #include <windows.h>
 
 namespace fast_task::util::cpu {
