@@ -124,9 +124,6 @@ namespace fast_task {
         }
     }
 
-#if defined(_MSC_VER) && defined(_M_ARM64)
-    #pragma optimize("", off)
-#endif
     void in_stackfull_run(executors_local& loc, task_object* data) {
         auto& stack_current_context = get_execution_data(data).context;
         if (stack_current_context) {
@@ -134,34 +131,39 @@ namespace fast_task {
             data->get_relock().relock_start();
             arm_pending_timer(loc);
         } else {
+            task_run_enter(&loc);
+#ifdef BOOST_USE_WINFIB
+            stack_current_context = boost::context::callcc(std::allocator_arg, boost::context::fixedsize_stack(1048576 /*1 mb*/), context_exec);
+#else
             light_stack stack_alloc(1048576 /*1 mb*/);
             auto ss = stack_alloc.allocate();
-#if PLATFORM_LINUX
+    #if PLATFORM_LINUX
             get_execution_data(data).stack_ptr = ((char*)ss.sp) - ss.size;
             get_execution_data(data).stack_size = ss.size;
-#endif
-            task_run_enter(&loc);
+    #endif
             stack_current_context = boost::context::callcc(std::allocator_arg, boost::context::preallocated(ss.sp, ss.size, ss), stack_alloc, context_exec);
+#endif
             data->get_relock().relock_start();
             arm_pending_timer(loc);
         }
         if (loc.ex_ptr) {
+            task_run_enter(&loc);
+#ifdef BOOST_USE_WINFIB
+            stack_current_context = boost::context::callcc(std::allocator_arg, boost::context::fixedsize_stack(1048576 /*1 mb*/), context_ex_handle);
+#else
             light_stack stack_alloc(1048576 /*1 mb*/);
             auto ss = stack_alloc.allocate();
-#if PLATFORM_LINUX
+    #if PLATFORM_LINUX
             get_execution_data(data).stack_ptr = ((char*)ss.sp) - ss.size;
             get_execution_data(data).stack_size = ss.size;
-#endif
-            task_run_enter(&loc);
+    #endif
             stack_current_context = boost::context::callcc(std::allocator_arg, boost::context::preallocated(ss.sp, ss.size, ss), stack_alloc, context_ex_handle);
+#endif
             data->get_relock().relock_start();
             arm_pending_timer(loc);
             loc.ex_ptr = nullptr;
         }
     }
-#if defined(_MSC_VER) && defined(_M_ARM64)
-    #pragma optimize("", on)
-#endif
 
     bool execute_task() {
         auto* loc_ptr = get_loc();

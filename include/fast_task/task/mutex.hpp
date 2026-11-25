@@ -235,8 +235,8 @@ namespace fast_task {
                     return mutex.try_read_lock();
                 }
 
-                bool await_suspend(const base_coro_handle& h) {
-                    return !mutex.enter_read_wait(h.promise->task_object, state);
+                bool await_suspend(std::coroutine_handle<>) {
+                    return !mutex.enter_read_wait(scheduler::current_context_task(), state);
                 }
 
                 void await_resume() noexcept {}
@@ -254,8 +254,8 @@ namespace fast_task {
                     return mutex.try_write_lock();
                 }
 
-                bool await_suspend(const base_coro_handle& h) {
-                    return !mutex.enter_write_wait(h.promise->task_object, state);
+                bool await_suspend(std::coroutine_handle<>) {
+                    return !mutex.enter_write_wait(scheduler::current_context_task(), state);
                 }
 
                 void await_resume() noexcept {}
@@ -280,9 +280,9 @@ namespace fast_task {
                     return false;
                 }
 
-                bool await_suspend(const base_coro_handle& h) {
-                    task_obj = h.promise->task_object;
-                    if (mutex.enter_read_wait_until(h.promise->task_object, state, time_point)) {
+                bool await_suspend(std::coroutine_handle<>) {
+                    task_obj = scheduler::current_context_task();
+                    if (mutex.enter_read_wait_until(scheduler::current_context_task(), state, time_point)) {
                         successful = !task_obj.has_wait_timed_out();
                         return false;
                     }
@@ -321,9 +321,9 @@ namespace fast_task {
                     return false;
                 }
 
-                bool await_suspend(const base_coro_handle& h) {
-                    task_obj = h.promise->task_object;
-                    if (mutex.enter_write_wait_until(h.promise->task_object, state, time_point)) {
+                bool await_suspend(std::coroutine_handle<>) {
+                    task_obj = scheduler::current_context_task();
+                    if (mutex.enter_write_wait_until(scheduler::current_context_task(), state, time_point)) {
                         successful = !task_obj.has_wait_timed_out();
                         return false;
                     }

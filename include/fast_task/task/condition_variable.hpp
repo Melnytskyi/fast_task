@@ -59,9 +59,9 @@ namespace fast_task {
                     return false;
                 }
 
-                bool await_suspend(const base_coro_handle& h) {
+                bool await_suspend(std::coroutine_handle<>) {
                     mut = lock.release();
-                    if (cv.enter_wait(*mut, h.promise->task_object, state)) {
+                    if (cv.enter_wait(*mut, scheduler::current_context_task(), state)) {
                         lock = {*mut, fast_task::adopt_lock};
                         mut = nullptr;
                         return false;
@@ -98,10 +98,10 @@ namespace fast_task {
                     return false;
                 }
 
-                bool await_suspend(const base_coro_handle& h) {
-                    task_obj = h.promise->task_object;
+                bool await_suspend(std::coroutine_handle<>) {
+                    task_obj = scheduler::current_context_task();
                     mut = lock.release();
-                    if (cv.enter_wait_until(*mut, h.promise->task_object, state, time_point)) {
+                    if (cv.enter_wait_until(*mut, scheduler::current_context_task(), state, time_point)) {
                         lock = {*mut, fast_task::adopt_lock};
                         mut = nullptr;
                         return false;
@@ -139,9 +139,9 @@ namespace fast_task {
                     return false;
                 }
 
-                bool await_suspend(const base_coro_handle& h) {
+                bool await_suspend(std::coroutine_handle<>) {
                     mut = lock.release();
-                    if (cv.enter_wait(*mut, h.promise->task_object, state)) {
+                    if (cv.enter_wait(*mut, scheduler::current_context_task(), state)) {
                         lock = std::unique_lock<mutex>(*mut, std::adopt_lock);
                         mut = nullptr;
                         return false;
@@ -178,10 +178,10 @@ namespace fast_task {
                     return false;
                 }
 
-                bool await_suspend(const base_coro_handle& h) {
-                    task_obj = h.promise->task_object;
+                bool await_suspend(std::coroutine_handle<>) {
+                    task_obj = scheduler::current_context_task();
                     mut = lock.release();
-                    if (cv.enter_wait_until(*mut, h.promise->task_object, state, time_point)) {
+                    if (cv.enter_wait_until(*mut, scheduler::current_context_task(), state, time_point)) {
                         lock = std::unique_lock<mutex>(*mut, std::adopt_lock);
                         mut = nullptr;
                         return false;

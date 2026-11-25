@@ -82,25 +82,25 @@ namespace fast_task::util {
                 if (!status || entries_count == 0)
                     break;
 
-                    for (ULONG i = 0; i < entries_count; i++) {
-                        auto& entry = m_entries[i];
-                        if (entry.lpCompletionKey == WAKEUP_KEY && entry.lpOverlapped == nullptr)
-                            continue;
-                        auto overlap = reinterpret_cast<native_worker_handle*>(entry.lpOverlapped);
-                        if (!overlap || !overlap->manager)
-                            continue;
-                        overlap->manager->handle(
-                            reinterpret_cast<void*>(entry.lpCompletionKey),
-                            overlap,
-                            entry.dwNumberOfBytesTransferred
-                        );
-                        processed = true;
-                    }
-
-                    if (entries_count < m_entries.size())
-                        break;
-                    wait_ms = 0;
+                for (ULONG i = 0; i < entries_count; i++) {
+                    auto& entry = m_entries[i];
+                    if (entry.lpCompletionKey == WAKEUP_KEY && entry.lpOverlapped == nullptr)
+                        continue;
+                    auto overlap = reinterpret_cast<native_worker_handle*>(entry.lpOverlapped);
+                    if (!overlap || !overlap->manager)
+                        continue;
+                    overlap->manager->handle(
+                        reinterpret_cast<void*>(entry.lpCompletionKey),
+                        overlap,
+                        entry.dwNumberOfBytesTransferred
+                    );
+                    processed = true;
                 }
+
+                if (entries_count < m_entries.size())
+                    break;
+                wait_ms = 0;
+            }
             return processed;
         }
 

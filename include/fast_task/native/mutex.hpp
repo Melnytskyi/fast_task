@@ -17,6 +17,9 @@
 #include <type_traits>
 
 namespace fast_task::native {
+    class condition_variable;
+    class timed_mutex;
+
     class FT_API mutex {
         friend class condition_variable;
         friend class timed_mutex;

@@ -16,6 +16,9 @@ endif()
 
 #BOOST::context
 set(BOOST_INCLUDE_LIBRARIES context)
+if(WIN32 AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(ARM64|arm64|aarch64)$")
+    set(BOOST_CONTEXT_IMPLEMENTATION "winfib" CACHE STRING "Boost.Context implementation" FORCE)
+endif()
 find_package(Boost CONFIG COMPONENTS context)
 if(NOT Boost_FOUND)
     cmake_policy(PUSH)

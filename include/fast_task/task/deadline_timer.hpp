@@ -77,8 +77,8 @@ namespace fast_task {
                     return timer.timed_out();
                 }
 
-                bool await_suspend(const base_coro_handle& h) {
-                    task_obj = h.promise->task_object;
+                bool await_suspend(std::coroutine_handle<>) {
+                    task_obj = scheduler::current_context_task();
                     return !timer.enter_wait(task_obj, state, timeout_time);
                 }
 
@@ -105,8 +105,8 @@ namespace fast_task {
                     return timer.timed_out();
                 }
 
-                bool await_suspend(const base_coro_handle& h) {
-                    task_obj = h.promise->task_object;
+                bool await_suspend(std::coroutine_handle<>) {
+                    task_obj = scheduler::current_context_task();
                     suspended = !timer.enter_wait(mut, task_obj, state, timeout_time);
                     return suspended;
                 }
@@ -136,8 +136,8 @@ namespace fast_task {
                     return timer.timed_out();
                 }
 
-                bool await_suspend(const base_coro_handle& h) {
-                    task_obj = h.promise->task_object;
+                bool await_suspend(std::coroutine_handle<>) {
+                    task_obj = scheduler::current_context_task();
                     suspended = !timer.enter_wait(mut, task_obj, state, timeout_time);
                     return suspended;
                 }

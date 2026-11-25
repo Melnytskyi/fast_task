@@ -7,12 +7,7 @@
 
 namespace fast_task {
     struct FT_API enter_state {
-#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ < 14
-        // GCC < 14 can emit aligned movaps to 8-byte-aligned coroutine frame slots on x86_64.
-        alignas(void*) char data[120];
-#else
         alignas(std::max_align_t) char data[120];
-#endif
         void(*destruct)(void*) = nullptr;
 
         template <class T>

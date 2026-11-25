@@ -51,7 +51,7 @@ namespace fast_task::this_task {
                 return false;
             }
 
-            bool await_suspend(const base_coro_handle&) {
+            bool await_suspend(std::coroutine_handle<>) {
                 return !enter_yield(state);
             }
 
@@ -70,7 +70,7 @@ namespace fast_task::this_task {
                 return false;
             }
 
-            bool await_suspend(const base_coro_handle&) {
+            bool await_suspend(std::coroutine_handle<>) {
                 set_pool(*target);
                 return !enter_yield(state);
             }
@@ -90,7 +90,7 @@ namespace fast_task::this_task {
                 return false;
             }
 
-            bool await_suspend(const base_coro_handle&) {
+            bool await_suspend(std::coroutine_handle<>) {
                 return !enter_sleep_until(state, time_point);
             }
 

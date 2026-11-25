@@ -59,12 +59,7 @@ namespace fast_task::net {
         read_write
     };
 
-#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ < 14
-    // GCC < 14 can emit aligned movaps to 8-byte-aligned coroutine frame slots on x86_64.
-    struct alignas(void*) opaque_network_state {
-#else
     struct alignas(std::max_align_t) opaque_network_state {
-#endif
         std::byte data[384];
         void (*destruct)(void*) = nullptr;
 
@@ -113,8 +108,8 @@ namespace fast_task::net {
                 return false;
             }
 
-            bool await_suspend(const base_coro_handle& h) {
-                return !start(h.promise->task_object, state, result);
+            bool await_suspend(std::coroutine_handle<>) {
+                return !start(scheduler::current_context_task(), state, result);
             }
 
             Result await_resume() {
@@ -132,8 +127,8 @@ namespace fast_task::net {
                 return false;
             }
 
-            bool await_suspend(const base_coro_handle& h) {
-                return !start(h.promise->task_object, state, result);
+            bool await_suspend(std::coroutine_handle<>) {
+                return !start(scheduler::current_context_task(), state, result);
             }
 
             polyfill::expected<Result, std::error_code> await_resume() {
@@ -153,8 +148,8 @@ namespace fast_task::net {
                 return false;
             }
 
-            bool await_suspend(const base_coro_handle& h) {
-                return !start(h.promise->task_object, state);
+            bool await_suspend(std::coroutine_handle<>) {
+                return !start(scheduler::current_context_task(), state);
             }
 
             void await_resume() {}
