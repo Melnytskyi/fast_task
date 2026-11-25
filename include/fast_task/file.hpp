@@ -16,7 +16,7 @@
 #include <vector>
 
 
-#if __cplusplus >= 202002
+#if __cplusplus >= 202002 || (defined(_MSVC_LANG) && _MSVC_LANG >= 202002)
     #include "coroutine/core.hpp"
     #include "coroutine/detail/lock_misc.hpp"
     #include "polyfill/expected.hpp"
@@ -39,21 +39,17 @@ namespace fast_task::file {
             : read(read), write(write), _delete(_delete) {}
 
         uint8_t get() const {
-            union union_t {
-                share_mode self;
-                uint8_t value = 0;
-            } unified{.self = *this};
-
-            return unified.value;
+            return static_cast<uint8_t>(
+                (read ? 1u : 0u) |
+                (write ? 2u : 0u) |
+                (_delete ? 4u : 0u)
+            );
         }
 
         void set(uint8_t value) {
-            union union_t {
-                share_mode self;
-                uint8_t v = 0;
-            } unified{.v = value};
-
-            *this = unified.self;
+            read = (value & 1u) != 0;
+            write = (value & 2u) != 0;
+            _delete = (value & 4u) != 0;
         }
     };
 
@@ -124,6 +120,15 @@ namespace fast_task::file {
         bool enter_wait_until(const task& t, enter_state& state, fast_task::time_point tp);
 
         bool enter_cancel(const task& t, enter_state& state);
+
+        void cancel() noexcept {
+            if (slot_ && !slot_.is_ended()) {
+                try {
+                    slot_.notify_cancel();
+                } catch (...) {
+                }
+            }
+        }
     };
 
     template <>
@@ -139,7 +144,7 @@ namespace fast_task::file {
     template <>
     bool io_operation<std::vector<uint8_t>>::enter_wait_until(const task& t, enter_state& state, fast_task::time_point tp);
     template <>
-    bool io_operation<void>::enter_cancel(const task& t, enter_state& state);
+    bool io_operation<std::vector<uint8_t>>::enter_cancel(const task& t, enter_state& state);
     template <>
     bool io_operation<void>::is_done() const noexcept;
     template <>
@@ -157,7 +162,7 @@ namespace fast_task::file {
 
     namespace detail {
 
-#if __cplusplus >= 202002
+#if __cplusplus >= 202002 || (defined(_MSVC_LANG) && _MSVC_LANG >= 202002)
         template <typename T>
         class [[nodiscard("I/O operations must be awaited or explicitly canceled")]] io_handle {
             file::io_operation<T> op;
@@ -174,7 +179,7 @@ namespace fast_task::file {
 
             ~io_handle() {
                 if (!op.is_done())
-                    std::terminate();
+                    op.cancel();
             }
 
             struct awaiter {
@@ -234,7 +239,7 @@ namespace fast_task::file {
 
             ~io_handle() {
                 if (!op.is_done())
-                    std::terminate();
+                    op.cancel();
             }
 
             struct awaiter {
@@ -295,7 +300,7 @@ namespace fast_task::file {
 
             ~io_handle_until() {
                 if (!op.is_done())
-                    std::terminate();
+                    op.cancel();
             }
 
             struct awaiter {
@@ -358,7 +363,7 @@ namespace fast_task::file {
 
             ~io_handle_until() {
                 if (!op.is_done())
-                    std::terminate();
+                    op.cancel();
             }
 
             struct awaiter {
@@ -422,7 +427,7 @@ namespace fast_task::file {
 
             ~safe_io_handle() {
                 if (!op.is_done())
-                    std::terminate();
+                    op.cancel();
             }
 
             struct awaiter {
@@ -484,7 +489,7 @@ namespace fast_task::file {
 
             ~safe_io_handle() {
                 if (!op.is_done())
-                    std::terminate();
+                    op.cancel();
             }
 
             struct awaiter {
@@ -547,7 +552,7 @@ namespace fast_task::file {
 
             ~safe_io_handle_until() {
                 if (!op.is_done())
-                    std::terminate();
+                    op.cancel();
             }
 
             struct awaiter {
@@ -562,10 +567,10 @@ namespace fast_task::file {
                     return !self.op.enter_wait_until(h.promise->task_object, state, self.tp);
                 }
 
-                std::optional<T> await_resume() {
+                polyfill::expected<std::optional<T>, file::io_errors> await_resume() {
                     if (auto err = self.op.get_error())
                         return polyfill::unexpected(*err);
-                    return *self.op.try_get();
+                    return self.op.try_get();
                 }
             };
 
@@ -609,9 +614,8 @@ namespace fast_task::file {
             safe_io_handle_until& operator=(safe_io_handle_until&&) noexcept = default;
 
             ~safe_io_handle_until() {
-                if (!op.is_done()) {
-                    std::terminate();
-                }
+                if (!op.is_done())
+                    op.cancel();
             }
 
             struct awaiter {
@@ -712,7 +716,7 @@ namespace fast_task::file {
         io_operation<void> make_write_at(uint64_t offset, const uint8_t* data, uint32_t size);
         io_operation<void> make_append(const uint8_t* data, uint32_t size);
 
-#if _WIN64
+#ifdef _WIN32
         using native_file_handle = void*;
 #else /*UNIX*/
         using native_file_handle = int;
@@ -723,6 +727,7 @@ namespace fast_task::file {
         //extract full path from handle, could be not same as path in constructor
         std::string get_path() const;
 
+#if __cplusplus >= 202002 || (defined(_MSVC_LANG) && _MSVC_LANG >= 202002)
         inline auto async_read(uint32_t size) {
             return detail::io_handle{make_read(size)};
         }
@@ -904,24 +909,32 @@ namespace fast_task::file {
         inline auto safe_async_append_for(const uint8_t* data, uint32_t size, std::chrono::duration<Rep, Period> timeout) {
             return detail::safe_io_handle_until{make_append(data, size), fast_task::clock::now() + timeout};
         }
+#endif
     };
 
     namespace detail {
         template <bool _mock>
         struct force_static_iofstream {
             inline static open_mode to_open_mode(std::ios_base::openmode mode) {
-                if (mode & std::ios_base::in) {
+                if ((mode & std::ios_base::in) && (mode & std::ios_base::out)) {
+                    return open_mode::read_write;
+                } else if (mode & std::ios_base::app) {
+                    return open_mode::append;
+                } else if (mode & std::ios_base::in) {
                     return open_mode::read;
                 } else if (mode & std::ios_base::out) {
                     return open_mode::write;
-                } else if (mode & std::ios_base::app) {
-                    return open_mode::append;
                 } else {
                     return open_mode::read_write;
                 }
             }
 
             inline static on_open_action to_open_action(std::ios_base::openmode mode) {
+#ifdef _MSC_VER
+                if ((mode & std::ios_base::trunc) && (mode & std::ios_base::_Nocreate)) {
+                    return on_open_action::truncate_exists;
+                } else
+#endif
                 if (mode & std::ios_base::trunc) {
                     return on_open_action::always_new;
                 } else if (mode & std::ios_base::app) {
@@ -930,10 +943,6 @@ namespace fast_task::file {
                 } else if (mode & std::ios_base::noreplace) {
                     return on_open_action::create_new;
 #endif
-#ifdef _MSC_VER
-                } else if (mode & (std::ios_base::trunc & std::ios_base::_Nocreate)) {
-                    return on_open_action::truncate_exists;
-#endif
                 } else if (mode & std::ios_base::ate) {
                     return on_open_action::open_exists;
                 } else {
@@ -941,7 +950,7 @@ namespace fast_task::file {
                 }
             }
 
-#if _WIN64
+#ifdef _WIN32
             inline static share_mode to_protection_mode(std::ios_base::openmode op_mod, int mode) {
                 share_mode protection_mode;
                 if (mode & _SH_DENYRW) {
@@ -992,75 +1001,73 @@ namespace fast_task::file {
             private:
                 static constexpr size_t buffer_size = 4096;
                 file_handle& _handle;
-                std::vector<char> buffer;
-
-                std::streamsize make_sputn(const char* s, std::streamsize n) {
-                    size_t bytes_to_write = std::min(static_cast<size_t>(n), size_t(epptr() - pptr()));
-                    traits_type::copy(pptr(), s, bytes_to_write);
-                    pbump(static_cast<int>(bytes_to_write));
-                    if (flush_buffer() == traits_type::eof())
-                        return traits_type::eof();
-                    return static_cast<std::streamsize>(bytes_to_write);
-                }
+                std::vector<char> read_buffer;
+                std::vector<char> write_buffer;
 
             protected:
                 std::streamsize xsgetn(char* s, std::streamsize n) override {
-                    if (gptr() == egptr()) {
-                        uint32_t bytes_read = _handle.read(reinterpret_cast<uint8_t*>(buffer.data()), buffer_size);
-                        if (bytes_read == 0)
-                            return traits_type::eof();
-                        setg(buffer.data(), buffer.data(), buffer.data() + bytes_read);
+                    std::streamsize total_read = 0;
+                    while (total_read < n) {
+                        if (gptr() == egptr()) {
+                            uint32_t bytes_read = _handle.read(reinterpret_cast<uint8_t*>(read_buffer.data()), buffer_size);
+                            if (bytes_read == 0)
+                                break;
+                            setg(read_buffer.data(), read_buffer.data(), read_buffer.data() + bytes_read);
+                        }
+                        size_t bytes_to_copy = std::min(static_cast<size_t>(n - total_read), static_cast<size_t>(egptr() - gptr()));
+                        traits_type::copy(s + total_read, gptr(), bytes_to_copy);
+                        gbump(static_cast<int>(bytes_to_copy));
+                        total_read += static_cast<std::streamsize>(bytes_to_copy);
                     }
-                    size_t bytes_to_copy = std::min(static_cast<size_t>(n), size_t(egptr() - gptr()));
-                    traits_type::copy(s, gptr(), bytes_to_copy);
-                    gbump(static_cast<int>(bytes_to_copy));
-                    return static_cast<std::streamsize>(bytes_to_copy);
+                    return total_read;
                 }
 
                 std::streamsize xsputn(const char* s, std::streamsize n) override {
-                    auto res = n;
-                    while (n > 0) {
-                        size_t available_space = pptr() < epptr() ? epptr() - pptr() : 0;
+                    std::streamsize total_written = 0;
+                    while (total_written < n) {
+                        size_t available_space = pptr() < epptr() ? static_cast<size_t>(epptr() - pptr()) : 0;
                         if (available_space == 0) {
                             if (flush_buffer() == traits_type::eof())
-                                return traits_type::eof();
-                            available_space = epptr() - pptr();
+                                return total_written;
+                            available_space = static_cast<size_t>(epptr() - pptr());
                         }
-                        size_t bytes_to_write = std::min(static_cast<size_t>(n), available_space);
-                        auto sput_res = make_sputn(s, static_cast<std::streamsize>(bytes_to_write));
-                        if (sput_res == traits_type::eof())
-                            return traits_type::eof();
-                        s += bytes_to_write;
-                        n -= static_cast<std::streamsize>(bytes_to_write);
+                        size_t bytes_to_write = std::min(static_cast<size_t>(n - total_written), available_space);
+                        traits_type::copy(pptr(), s + total_written, bytes_to_write);
+                        pbump(static_cast<int>(bytes_to_write));
+                        if (pptr() == epptr()) {
+                            if (flush_buffer() == traits_type::eof())
+                                return total_written;
+                        }
+                        total_written += static_cast<std::streamsize>(bytes_to_write);
                     }
-                    return res;
+                    return total_written;
                 }
 
                 int_type underflow() override {
                     if (gptr() == egptr()) {
-                        uint32_t bytes_read = _handle.read(reinterpret_cast<uint8_t*>(buffer.data()), buffer_size);
+                        uint32_t bytes_read = _handle.read(reinterpret_cast<uint8_t*>(read_buffer.data()), buffer_size);
                         if (bytes_read == 0)
                             return traits_type::eof();
-                        setg(buffer.data(), buffer.data(), buffer.data() + bytes_read);
+                        setg(read_buffer.data(), read_buffer.data(), read_buffer.data() + bytes_read);
                     }
                     return traits_type::to_int_type(*gptr());
                 }
 
                 int_type overflow(int_type ch) override {
+                    if (flush_buffer() == traits_type::eof())
+                        return traits_type::eof();
                     if (ch != traits_type::eof()) {
                         *pptr() = traits_type::to_char_type(ch);
                         pbump(1);
                     }
-                    if (flush_buffer() == traits_type::eof())
-                        return traits_type::eof();
                     return traits_type::not_eof(ch);
                 }
 
                 int flush_buffer() {
-                    size_t size = pptr() - pbase();
+                    size_t size = static_cast<size_t>(pptr() - pbase());
                     if (size > 0) {
                         _handle.write(reinterpret_cast<const uint8_t*>(pbase()), static_cast<uint32_t>(size));
-                        setp(buffer.data(), buffer.data() + buffer_size);
+                        setp(write_buffer.data(), write_buffer.data() + buffer_size);
                     }
                     return 0;
                 }
@@ -1070,6 +1077,9 @@ namespace fast_task::file {
                 }
 
                 std::streampos seekoff(std::streamoff off, std::ios_base::seekdir dir, std::ios_base::openmode which) override {
+                    if (flush_buffer() == traits_type::eof())
+                        return std::streampos(std::streamoff(-1));
+
                     pointer_offset offset_mode;
                     switch (dir) {
                     case std::ios_base::beg:
@@ -1087,9 +1097,13 @@ namespace fast_task::file {
 
                     pointer pointer_type = (which & std::ios_base::out) ? pointer::write : pointer::read;
 
+                    if (dir == std::ios_base::cur && pointer_type == pointer::read)
+                        off -= static_cast<std::streamoff>(egptr() - gptr());
+
                     if (!_handle.seek_pos(static_cast<int64_t>(off), offset_mode, pointer_type))
                         return std::streampos(std::streamoff(-1));
 
+                    setg(read_buffer.data(), read_buffer.data(), read_buffer.data());
                     return std::streampos(static_cast<std::streamoff>(_handle.tell_pos(pointer_type)));
                 }
 
@@ -1099,13 +1113,16 @@ namespace fast_task::file {
 
             public:
                 explicit async_filebuf(file_handle& fh)
-                    : _handle(fh), buffer(buffer_size) {
-                    setg(buffer.data(), buffer.data(), buffer.data());
-                    setp(buffer.data(), buffer.data() + buffer_size);
+                    : _handle(fh), read_buffer(buffer_size), write_buffer(buffer_size) {
+                    setg(read_buffer.data(), read_buffer.data(), read_buffer.data());
+                    setp(write_buffer.data(), write_buffer.data() + buffer_size);
                 }
 
                 ~async_filebuf() {
-                    flush_buffer();
+                    try {
+                        flush_buffer();
+                    } catch (...) {
+                    }
                 }
             };
 
@@ -1169,11 +1186,14 @@ namespace fast_task::file {
                 }
 
                 ~async_iofstream() {
-                    if (handle.is_open()) {
-                        if (rdbuf()) {
-                            flush();
-                            delete rdbuf();
+                    if (auto* buf = rdbuf()) {
+                        try {
+                            if (handle.is_open())
+                                flush();
+                        } catch (...) {
                         }
+                        set_rdbuf(nullptr);
+                        delete buf;
                     }
                 }
 
@@ -1219,13 +1239,21 @@ namespace fast_task::file {
                 }
 
                 ~atomic_async_ofstream() {
-                    if (handle.is_open()) {
-                        if (rdbuf()) {
-                            flush();
-                            delete rdbuf();
+                    if (auto* buf = rdbuf()) {
+                        try {
+                            if (handle.is_open())
+                                flush();
+                        } catch (...) {
                         }
-                        handle.close();
-                        std::filesystem::rename(real_path.string() + ".atomic.tmp", real_path);
+                        set_rdbuf(nullptr);
+                        delete buf;
+                    }
+                    if (handle.is_open()) {
+                        try {
+                            handle.close();
+                            std::filesystem::rename(real_path.string() + ".atomic.tmp", real_path);
+                        } catch (...) {
+                        }
                     }
                 }
 

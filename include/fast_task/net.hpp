@@ -60,25 +60,32 @@ namespace fast_task::net {
     };
 
     struct alignas(std::max_align_t) opaque_network_state {
-        std::byte data[192];
+        std::byte data[384];
         void (*destruct)(void*) = nullptr;
 
         template <class T, class... Args>
         T* use(Args&&... args) {
             static_assert(sizeof(opaque_network_state::data) >= sizeof(T), "opaque_network_state inline storage too small for this type");
-            if (destruct)
-                destruct(data);
+            static_assert(alignof(opaque_network_state) >= alignof(T), "opaque_network_state alignment too small for this type");
+            release();
+            T* ptr = new (data) T(std::forward<Args>(args)...);
             destruct = [](void* self) { reinterpret_cast<T*>(self)->~T(); };
-            return new (&data) T{args...};
+            return ptr;
         }
 
         void release() {
-            if (destruct)
-                destruct(data);
-            destruct = nullptr;
+            if (destruct) {
+                auto fn = destruct;
+                destruct = nullptr;
+                fn(data);
+            }
         }
 
         opaque_network_state() = default;
+        opaque_network_state(const opaque_network_state&) = delete;
+        opaque_network_state& operator=(const opaque_network_state&) = delete;
+        opaque_network_state(opaque_network_state&&) = delete;
+        opaque_network_state& operator=(opaque_network_state&&) = delete;
 
         ~opaque_network_state() {
             release();

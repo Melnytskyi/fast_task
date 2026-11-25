@@ -59,7 +59,7 @@ namespace fast_task {
         std::chrono::nanoseconds(FT_PREEMPT_NORMAL_BASIC_QUANTUM_NS),
         std::chrono::nanoseconds(FT_PREEMPT_HIGHER_BASIC_QUANTUM_NS),
         std::chrono::nanoseconds(FT_PREEMPT_HIGH_BASIC_QUANTUM_NS),
-        std::chrono::nanoseconds::min()
+        std::chrono::nanoseconds::zero()
     };
 
     inline static constexpr std::chrono::nanoseconds priority_quantum_max[] = {
@@ -69,12 +69,12 @@ namespace fast_task {
         std::chrono::nanoseconds(FT_PREEMPT_NORMAL_MAX_QUANTUM_NS),
         std::chrono::nanoseconds(FT_PREEMPT_HIGHER_MAX_QUANTUM_NS),
         std::chrono::nanoseconds(FT_PREEMPT_HIGH_MAX_QUANTUM_NS),
-        std::chrono::nanoseconds::min()
+        std::chrono::nanoseconds::zero()
     };
 
     std::chrono::nanoseconds next_quantum(task_priority priority, std::chrono::nanoseconds& current_available_quantum) {
         if (priority == task_priority::semi_realtime)
-            return std::chrono::nanoseconds::min();
+            return std::chrono::nanoseconds::zero();
 
         current_available_quantum += priority_quantum_basic[(size_t)priority];
         if (current_available_quantum > priority_quantum_max[(size_t)priority])
@@ -84,7 +84,7 @@ namespace fast_task {
 
     std::chrono::nanoseconds peek_quantum(task_priority priority, std::chrono::nanoseconds current_available_quantum) {
         if (priority == task_priority::semi_realtime)
-            return std::chrono::nanoseconds::min();
+            return std::chrono::nanoseconds::zero();
 
         current_available_quantum += priority_quantum_basic[(size_t)priority];
         if (current_available_quantum > priority_quantum_max[(size_t)priority])

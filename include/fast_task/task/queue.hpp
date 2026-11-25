@@ -68,18 +68,28 @@ namespace fast_task {
                 fast_task::time_point time_point;
                 fast_task::task task_obj;
                 bool successful = false;
+                bool timed_out_early = false;
 
                 bool await_ready() noexcept {
-                    successful = fast_task::clock::now() >= time_point;
-                    return successful;
+                    if (fast_task::is_no_deadline(time_point) || fast_task::clock::now() >= time_point) {
+                        timed_out_early = true;
+                        return true;
+                    }
+                    return false;
                 }
 
                 bool await_suspend(const base_coro_handle& h) {
                     task_obj = h.promise->task_object;
-                    return !q.enter_wait_until(h.promise->task_object, state, time_point);
+                    if (q.enter_wait_until(h.promise->task_object, state, time_point)) {
+                        successful = !task_obj.has_wait_timed_out();
+                        return false;
+                    }
+                    return true;
                 }
 
                 bool await_resume() noexcept {
+                    if (timed_out_early)
+                        return false;
                     if (successful)
                         return true;
                     successful = !task_obj.has_wait_timed_out();

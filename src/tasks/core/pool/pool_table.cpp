@@ -9,6 +9,26 @@
 #include <tasks/_internal.hpp>
 
 namespace fast_task {
+    pool_ref acquire_pool_ref(uint8_t index) noexcept {
+        if (index >= pool_table_size)
+            return {};
+        fast_task::shared_lock guard(glob.pools.safety);
+        auto* pool = glob.pools.slots[index].load(std::memory_order_acquire);
+        if (!pool)
+            return {};
+        pool->active_refs.fetch_add(1, std::memory_order_acq_rel);
+        return pool_ref(pool);
+    }
+
+    pool_ref acquire_implicit_pool_ref() noexcept {
+        fast_task::shared_lock guard(glob.pools.safety);
+        auto* pool = glob.pools.implicit_pool.load(std::memory_order_acquire);
+        if (!pool || pool->closing)
+            return {};
+        pool->active_refs.fetch_add(1, std::memory_order_acq_rel);
+        return pool_ref(pool);
+    }
+
     uint8_t allocate_pool_slot(worker_pool_storage* storage) {
         fast_task::unique_lock guard(glob.pools.safety);
         for (uint8_t i = 0; i < user_pool_count; ++i) {
@@ -25,7 +45,11 @@ namespace fast_task {
     worker_pool_storage* release_pool_slot(uint8_t index) noexcept {
         if (index >= user_pool_count)
             return nullptr;
-        worker_pool_storage* released = glob.pools.slots[index].exchange(nullptr, std::memory_order_acq_rel);
+        worker_pool_storage* released = nullptr;
+        {
+            fast_task::unique_lock guard(glob.pools.safety);
+            released = glob.pools.slots[index].exchange(nullptr, std::memory_order_acq_rel);
+        }
         if (released) {
             if (released->config.allow_implicit_start)
                 refresh_implicit_pool();
@@ -68,18 +92,16 @@ namespace fast_task {
 
     void retarget_task(task_object& t, worker_pool_storage& to) noexcept {
         fast_task::lock_guard guard(t);
-        worker_pool_storage* from = t.get_pool_assigned() ? pool_for_index(t.pool_index) : nullptr;
-        if (from == &to) {
+        pool_ref from = t.get_pool_assigned() ? acquire_pool_ref(t.pool_index) : pool_ref{};
+        if (from.get() == &to) {
             t.set_pool_assigned(true);
             return;
         }
-        if (!t.is_created() && !t.get_completed()) {
+        if (from && !t.is_created() && !t.get_completed()) {
             to.runtime.executing_tasks.fetch_add(1, std::memory_order_acq_rel);
-            if (from) {
-                auto rem_old = from->runtime.executing_tasks.fetch_sub(1, std::memory_order_acq_rel);
-                if (rem_old == 1)
-                    notify_no_tasks_waiters();
-            }
+            auto rem_old = from->runtime.executing_tasks.fetch_sub(1, std::memory_order_acq_rel);
+            if (rem_old == 1)
+                notify_no_tasks_waiters();
         }
         t.pool_index = to.pool_index;
         t.set_pool_assigned(true);

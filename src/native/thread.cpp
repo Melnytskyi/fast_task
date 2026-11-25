@@ -6,6 +6,7 @@
 
 #include <fast_task/native/thread.hpp>
 #include <tasks/util/interrupt.hpp>
+#include <cerrno>
 
 #if _WIN32
     #include <tasks/util/cpu.hpp>
@@ -38,17 +39,37 @@ namespace fast_task::native {
     namespace {
         bool apply_thread_affinity(HANDLE thread, std::span<const uint32_t> cpus);
         std::vector<uint32_t> read_thread_affinity(HANDLE thread);
+
+        struct win32_thread_start_ctx {
+            void (*function)(void*);
+            void* arg;
+        };
+
+        unsigned __stdcall win32_thread_trampoline(void* raw) {
+            std::unique_ptr<win32_thread_start_ctx> ctx(static_cast<win32_thread_start_ctx*>(raw));
+            ctx->function(ctx->arg);
+            return 0;
+        }
     }
 
     void* thread::create(void (*function)(void*), void* arg, unsigned long& id, size_t stack_size, bool stack_reservation, const cpu_affinity* affinity, bool& affinity_applied, int& error_code) {
         error_code = 0;
         affinity_applied = true;
         interrupt_unsafe_region region;
-        void* handle = (void*)_beginthreadex(nullptr, (uint32_t)std::min<size_t>(stack_size, UINT32_MAX), reinterpret_cast<_beginthreadex_proc_type>(reinterpret_cast<void*>(function)), arg, CREATE_SUSPENDED | (stack_reservation ? STACK_SIZE_PARAM_IS_A_RESERVATION : 0), (unsigned int*)&id);
+        auto ctx = std::make_unique<win32_thread_start_ctx>(win32_thread_start_ctx{function, arg});
+        void* handle = (void*)_beginthreadex(
+            nullptr,
+            (uint32_t)std::min<size_t>(stack_size, UINT32_MAX),
+            &win32_thread_trampoline,
+            ctx.get(),
+            CREATE_SUSPENDED | (stack_reservation ? STACK_SIZE_PARAM_IS_A_RESERVATION : 0),
+            (unsigned int*)&id
+        );
         if (!handle) {
-            error_code = GetLastError();
+            error_code = errno;
             return nullptr;
         }
+        ctx.release();
         if (affinity && !affinity->cpus.empty() && !apply_thread_affinity((HANDLE)handle, affinity->cpus))
             affinity_applied = false;
         ResumeThread(handle);
@@ -244,17 +265,29 @@ namespace fast_task::native {
         }
 
         void sleep_for(std::chrono::milliseconds ms) {
+            if (ms.count() <= 0)
+                return;
             interrupt_unsafe_region region;
-            Sleep((DWORD)ms.count());
+            auto remaining = ms.count();
+            while (remaining > 0) {
+                const DWORD chunk = remaining > 0x7FFFFFFF ? 0x7FFFFFFF : static_cast<DWORD>(remaining);
+                Sleep(chunk);
+                remaining -= chunk;
+            }
         }
 
         void sleep_until(fast_task::time_point time) {
+            if (fast_task::is_no_deadline(time))
+                return;
             interrupt_unsafe_region region;
-            auto diff = time - fast_task::clock::now();
-            while (diff.count() > 0) {
-                std::chrono::milliseconds ms = std::chrono::duration_cast<std::chrono::milliseconds>(diff);
-                Sleep((DWORD)ms.count());
-                diff = time - fast_task::clock::now();
+            while (true) {
+                const auto now = fast_task::clock::now();
+                if (now >= time)
+                    return;
+                const auto ms = std::chrono::ceil<std::chrono::milliseconds>(time - now);
+                const auto count = ms.count();
+                const DWORD chunk = count > 0x7FFFFFFF ? 0x7FFFFFFF : (count <= 0 ? 1 : static_cast<DWORD>(count));
+                Sleep(chunk);
             }
         }
     }
@@ -289,9 +322,28 @@ namespace fast_task::native {
                     cpus.push_back(static_cast<uint32_t>(cpu));
             return cpus;
         }
+
+        struct posix_thread_start_ctx {
+            void (*function)(void*);
+            void* arg;
+        };
+
+        struct pthread_attr_guard {
+            pthread_attr_t& attr;
+
+            ~pthread_attr_guard() {
+                pthread_attr_destroy(&attr);
+            }
+        };
     }
 
-    void* thread::create(void (*function)(void*), void* arg, unsigned long& id, size_t stack_size, bool stack_reservation, const cpu_affinity* affinity, bool& affinity_applied, int& error_code) {
+    extern "C" void* ft_posix_thread_trampoline(void* raw) {
+        std::unique_ptr<posix_thread_start_ctx> ctx(static_cast<posix_thread_start_ctx*>(raw));
+        ctx->function(ctx->arg);
+        return nullptr;
+    }
+
+    void* thread::create(void (*function)(void*), void* arg, unsigned long& id, size_t stack_size, bool /*stack_reservation*/, const cpu_affinity* affinity, bool& affinity_applied, int& error_code) {
         interrupt_unsafe_region region;
         error_code = 0;
         affinity_applied = true;
@@ -300,11 +352,12 @@ namespace fast_task::native {
             error_code = err;
             return nullptr;
         }
+        pthread_attr_guard attr_guard{attr};
         if (int err = pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE); err) {
             error_code = err;
             return nullptr;
         }
-        if (stack_reservation) {
+        if (stack_size > 0) {
             if (int err = pthread_attr_setstacksize(&attr, stack_size); err) {
                 error_code = err;
                 return nullptr;
@@ -316,15 +369,13 @@ namespace fast_task::native {
                 pthread_attr_setaffinity_np(&attr, sizeof(mask), &mask) != 0)
                 affinity_applied = false;
         }
+        auto ctx = std::make_unique<posix_thread_start_ctx>(posix_thread_start_ctx{function, arg});
         pthread_t thread;
-        if (int err = pthread_create(&thread, &attr, reinterpret_cast<void* (*)(void*)>(function), arg); err) {
+        if (int err = pthread_create(&thread, &attr, &ft_posix_thread_trampoline, ctx.get()); err) {
             error_code = err;
             return nullptr;
         }
-        if (int err = pthread_attr_destroy(&attr); err) {
-            error_code = err;
-            return nullptr;
-        }
+        ctx.release();
         id = (unsigned long)thread;
         return (void*)thread;
     }
@@ -447,19 +498,27 @@ namespace fast_task::native {
         }
 
         void sleep_for(std::chrono::milliseconds ms) {
+            if (ms.count() <= 0)
+                return;
             interrupt_unsafe_region region;
-            sleep_until(fast_task::clock::now() + ms);
+            sleep_until(fast_task::deadline_after(ms));
         }
 
         void sleep_until(fast_task::time_point time) {
+            if (fast_task::is_no_deadline(time))
+                return;
             interrupt_unsafe_region region;
-            auto diff = time - fast_task::clock::now();
-            while (diff.count() > 0) {
+            while (true) {
+                const auto now = fast_task::clock::now();
+                if (now >= time)
+                    return;
+                const auto diff = time - now;
+                const auto secs = std::chrono::duration_cast<std::chrono::seconds>(diff);
+                const auto nsecs = std::chrono::duration_cast<std::chrono::nanoseconds>(diff - secs);
                 timespec ts;
-                ts.tv_sec = diff.count() / 1000000000;
-                ts.tv_nsec = diff.count() % 1000000000;
+                ts.tv_sec = static_cast<time_t>(secs.count());
+                ts.tv_nsec = static_cast<long>(nsecs.count());
                 nanosleep(&ts, nullptr);
-                diff = time - fast_task::clock::now();
             }
         }
     }

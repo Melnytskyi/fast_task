@@ -29,17 +29,33 @@
     #include <string.h>
 #endif
 
+#include <atomic>
 #include <condition_variable>
 #include <filesystem>
 #include <functional>
+#include <mutex>
 #include <string>
 #include <variant>
 
 namespace fast_task::net {
 
-    extern bool inited;
+    extern std::atomic<bool> inited;
     uint8_t init_networking();
     using universal_address = ::sockaddr_storage;
+
+    static uint16_t parse_port(const char* str) {
+        if (!str || *str == '\0')
+            throw std::invalid_argument("Invalid port");
+        uint32_t val = 0;
+        for (const char* p = str; *p != '\0'; ++p) {
+            if (*p < '0' || *p > '9')
+                throw std::invalid_argument("Invalid port");
+            val = val * 10 + static_cast<uint32_t>(*p - '0');
+            if (val > 65535)
+                throw std::invalid_argument("Port out of range");
+        }
+        return static_cast<uint16_t>(val);
+    }
 
     void internal_makeIP4(universal_address& addr_storage, const char* ip, uint16_t port) {
         init_networking();
@@ -100,7 +116,7 @@ namespace fast_task::net {
         const char* port = strchr(ip_port, ':');
         if (!port)
             throw std::invalid_argument("Invalid ip4 address");
-        uint16_t port_num = (uint16_t)std::stoi(port + 1);
+        uint16_t port_num = parse_port(port + 1);
         std::string ip(ip_port, port);
         if (ip == "localhost") {
             internal_makeIP4(addr_storage, "127.0.0.1", port_num);
@@ -123,7 +139,7 @@ namespace fast_task::net {
             throw std::invalid_argument("Invalid ip6:port address");
         if (port[2] == 0)
             throw std::invalid_argument("Invalid ip6:port address");
-        uint16_t port_num = (uint16_t)std::stoi(port + 2);
+        uint16_t port_num = parse_port(port + 2);
 
 
         if (ip_port == port - 1) {
@@ -131,6 +147,7 @@ namespace fast_task::net {
             memset(&addr6, 0, sizeof(addr6));
             addr6.sin6_family = AF_INET6;
             addr6.sin6_port = htons(port_num);
+            memset(&addr_storage, 0, sizeof(addr_storage));
             memcpy(&addr_storage, &addr6, sizeof(addr6));
             return;
         }
@@ -146,22 +163,22 @@ namespace fast_task::net {
     }
 
     bool ipv6_supported() {
-        if (!inited)
+        if (!inited.load(std::memory_order_acquire))
             init_networking();
-        static int ipv6_supported = -1;
-        if (ipv6_supported == -1) {
-            ipv6_supported = 0;
+        static std::once_flag flag;
+        static bool supported = false;
+        std::call_once(flag, [] {
             SOCKET sock = socket(AF_INET6, SOCK_STREAM, IPPROTO_TCP);
             if (sock != INVALID_SOCKET) {
-                ipv6_supported = 1;
+                supported = true;
 #ifdef _WIN32
                 closesocket(sock);
 #else
                 close(sock);
 #endif
             }
-        }
-        return ipv6_supported == 1;
+        });
+        return supported;
     }
 }
 

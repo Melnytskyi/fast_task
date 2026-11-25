@@ -14,9 +14,18 @@ namespace fast_task {
         interrupt_unsafe_region::lock();
     }
 
+    task_cancellation::task_cancellation(const task_cancellation& other)
+        : in_landing(other.in_landing) {
+        interrupt_unsafe_region::lock();
+    }
+
+    task_cancellation& task_cancellation::operator=(const task_cancellation& other) noexcept {
+        in_landing = other.in_landing;
+        return *this;
+    }
+
     task_cancellation::~task_cancellation() {
         interrupt_unsafe_region::unlock();
-        assert(in_landing);
     }
 
     bool task_cancellation::_in_landing() {
@@ -38,9 +47,9 @@ namespace fast_task {
         auto& curr_task = get_data(task);
         if (curr_task.get_cancellation_requested())
             return true;
-        if (curr_task.exdata.load(std::memory_order_relaxed))
-            if (curr_task.exdata.load(std::memory_order_relaxed)->timeout != timeout_disabled)
-                if (curr_task.exdata.load(std::memory_order_relaxed)->timeout <= fast_task::clock::now().time_since_epoch().count())
+        if (auto* ex = curr_task.exdata.load(std::memory_order_acquire))
+            if (ex->timeout != timeout_disabled)
+                if (ex->timeout <= fast_task::clock::now().time_since_epoch().count())
                     return true;
         return false;
     }

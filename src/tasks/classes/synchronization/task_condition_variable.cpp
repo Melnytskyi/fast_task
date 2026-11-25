@@ -28,80 +28,98 @@ namespace fast_task {
 
     void condition_variable::wait(fast_task::unique_lock<mutex>& guard) {
         auto* mut = guard.release();
-        futex::unlock_and_wait(
-            &address,
-            [](void* address) { reinterpret_cast<std::atomic_uint8_t*>(address)->store(HAS_WAITERS, std::memory_order_release); },
-            [](void*) { return false; },
-            mut,
-            [](void* mut_, bool more_present) { reinterpret_cast<fast_task::mutex*>(mut_)->set_unlocked(more_present);return true; },
-            [](void* mut_, bool mark_request) {
-                if (mark_request) {
-                    reinterpret_cast<fast_task::mutex*>(mut_)->mark_has_wait();
-                    return true;
-                } else
-                    return !reinterpret_cast<fast_task::mutex*>(mut_)->is_locked();
-            }
-        );
+        try {
+            futex::unlock_and_wait(
+                &address,
+                [](void* address) { reinterpret_cast<std::atomic_uint8_t*>(address)->store(HAS_WAITERS, std::memory_order_release); },
+                [](void*) { return false; },
+                mut,
+                [](void* mut_, bool more_present) { reinterpret_cast<fast_task::mutex*>(mut_)->set_unlocked(more_present); return true; },
+                [](void* mut_, bool mark_request) {
+                    auto* m = reinterpret_cast<fast_task::mutex*>(mut_);
+                    if (mark_request)
+                        m->mark_has_wait();
+                    return !m->is_locked();
+                }
+            );
+        } catch (...) {
+            guard = fast_task::unique_lock<mutex>{*mut};
+            throw;
+        }
         guard = fast_task::unique_lock<mutex>{*mut}; //locks
     }
 
     bool condition_variable::wait_until(fast_task::unique_lock<mutex>& guard, fast_task::time_point time_point) {
         auto* mut = guard.release();
-        auto res = futex::unlock_and_wait_until(
-            &address,
-            [](void* address) { reinterpret_cast<std::atomic_uint8_t*>(address)->store(HAS_WAITERS, std::memory_order_release); },
-            [](void*) { return false; },
-            mut,
-            [](void* mut_, bool more_present) { reinterpret_cast<fast_task::mutex*>(mut_)->set_unlocked(more_present); return true; },
-            [](void* mut_, bool mark_request) {
-                if (mark_request) {
-                    reinterpret_cast<fast_task::mutex*>(mut_)->mark_has_wait();
-                    return true;
-                } else
-                    return !reinterpret_cast<fast_task::mutex*>(mut_)->is_locked();
-            },
-            time_point
-        );
+        bool res = false;
+        try {
+            res = futex::unlock_and_wait_until(
+                &address,
+                [](void* address) { reinterpret_cast<std::atomic_uint8_t*>(address)->store(HAS_WAITERS, std::memory_order_release); },
+                [](void*) { return false; },
+                mut,
+                [](void* mut_, bool more_present) { reinterpret_cast<fast_task::mutex*>(mut_)->set_unlocked(more_present); return true; },
+                [](void* mut_, bool mark_request) {
+                    auto* m = reinterpret_cast<fast_task::mutex*>(mut_);
+                    if (mark_request)
+                        m->mark_has_wait();
+                    return !m->is_locked();
+                },
+                time_point
+            );
+        } catch (...) {
+            guard = fast_task::unique_lock<mutex>{*mut};
+            throw;
+        }
         guard = fast_task::unique_lock<mutex>{*mut}; //locks
         return res;
     }
 
     void condition_variable::wait(std::unique_lock<mutex>& guard) {
         auto* mut = guard.release();
-        futex::unlock_and_wait(
-            &address,
-            [](void* address) { reinterpret_cast<std::atomic_uint8_t*>(address)->store(HAS_WAITERS, std::memory_order_release); },
-            [](void*) { return false; },
-            mut,
-            [](void* mut_, bool more_present) { reinterpret_cast<fast_task::mutex*>(mut_)->set_unlocked(more_present);return true; },
-            [](void* mut_, bool mark_request) {
-                if (mark_request) {
-                    reinterpret_cast<fast_task::mutex*>(mut_)->mark_has_wait();
-                    return true;
-                } else
-                    return !reinterpret_cast<fast_task::mutex*>(mut_)->is_locked();
-            }
-        );
+        try {
+            futex::unlock_and_wait(
+                &address,
+                [](void* address) { reinterpret_cast<std::atomic_uint8_t*>(address)->store(HAS_WAITERS, std::memory_order_release); },
+                [](void*) { return false; },
+                mut,
+                [](void* mut_, bool more_present) { reinterpret_cast<fast_task::mutex*>(mut_)->set_unlocked(more_present); return true; },
+                [](void* mut_, bool mark_request) {
+                    auto* m = reinterpret_cast<fast_task::mutex*>(mut_);
+                    if (mark_request)
+                        m->mark_has_wait();
+                    return !m->is_locked();
+                }
+            );
+        } catch (...) {
+            guard = std::unique_lock<mutex>{*mut};
+            throw;
+        }
         guard = std::unique_lock<mutex>{*mut}; //locks
     }
 
     bool condition_variable::wait_until(std::unique_lock<mutex>& guard, fast_task::time_point time_point) {
         auto* mut = guard.release();
-        auto res = futex::unlock_and_wait_until(
-            &address,
-            [](void* address) { reinterpret_cast<std::atomic_uint8_t*>(address)->store(HAS_WAITERS, std::memory_order_release); },
-            [](void*) { return false; },
-            mut,
-            [](void* mut_, bool more_present) { reinterpret_cast<fast_task::mutex*>(mut_)->set_unlocked(more_present); return true; },
-            [](void* mut_, bool mark_request) {
-                if (mark_request) {
-                    reinterpret_cast<fast_task::mutex*>(mut_)->mark_has_wait();
-                    return true;
-                } else
-                    return !reinterpret_cast<fast_task::mutex*>(mut_)->is_locked();
-            },
-            time_point
-        );
+        bool res = false;
+        try {
+            res = futex::unlock_and_wait_until(
+                &address,
+                [](void* address) { reinterpret_cast<std::atomic_uint8_t*>(address)->store(HAS_WAITERS, std::memory_order_release); },
+                [](void*) { return false; },
+                mut,
+                [](void* mut_, bool more_present) { reinterpret_cast<fast_task::mutex*>(mut_)->set_unlocked(more_present); return true; },
+                [](void* mut_, bool mark_request) {
+                    auto* m = reinterpret_cast<fast_task::mutex*>(mut_);
+                    if (mark_request)
+                        m->mark_has_wait();
+                    return !m->is_locked();
+                },
+                time_point
+            );
+        } catch (...) {
+            guard = std::unique_lock<mutex>{*mut};
+            throw;
+        }
         guard = std::unique_lock<mutex>{*mut}; //locks
         return res;
     }
@@ -153,7 +171,10 @@ namespace fast_task {
 
             virtual void callback(task_object* cb) {
                 cb->on_start_override = nullptr;
-                cb->vtable->on_start(cb->user_data());
+                auto* on_start = cb->vtable->on_start;
+                void* user_data = cb->user_data();
+                delete this;
+                on_start(user_data);
             }
 
             virtual void on_destruct(to_start_override* self) {
@@ -197,7 +218,10 @@ namespace fast_task {
 
             virtual void callback(task_object* cb) {
                 cb->on_start_override = nullptr;
-                cb->vtable->on_start(cb->user_data());
+                auto* on_start = cb->vtable->on_start;
+                void* user_data = cb->user_data();
+                delete this;
+                on_start(user_data);
             }
 
             virtual void on_destruct(to_start_override* self) {
@@ -221,21 +245,62 @@ namespace fast_task {
         );
     }
 
+    namespace {
+        struct cv_relock_override : public to_start_override {
+            enter_state relock_state;
+            mutex* mut;
+            to_start_override* prev_override;
+            bool relocking = false;
+
+            cv_relock_override(mutex* m, to_start_override* prev) noexcept
+                : mut(m), prev_override(prev) {}
+
+            virtual void callback(task_object* cb) override {
+                if (!relocking) {
+                    relocking = true;
+                    auto* loc = get_loc();
+                    if (loc && loc->curr_task) {
+                        if (!mut->enter_wait(loc->curr_task, relock_state))
+                            return;
+                    }
+                }
+                auto* prev = prev_override;
+                cb->on_start_override = prev;
+                delete this;
+                if (prev)
+                    prev->callback(cb);
+                else if (cb->vtable && cb->vtable->on_start)
+                    cb->vtable->on_start(cb->user_data());
+            }
+
+            virtual void on_destruct(to_start_override* self) override {
+                auto* me = static_cast<cv_relock_override*>(self);
+                auto* prev = me->prev_override;
+                delete me;
+                if (prev)
+                    prev->on_destruct(prev);
+            }
+
+            virtual ~cv_relock_override() = default;
+        };
+    }
+
     bool condition_variable::enter_wait(mutex& mut, const task& task, enter_state& st) {
-        get_data(task).set_relock(mut);
+        auto& td = get_data(task);
+        auto* ov = new cv_relock_override(&mut, td.on_start_override);
+        td.on_start_override = ov;
         futex::enter_unlock_and_wait(
             task,
             &address,
             [](void* address) { reinterpret_cast<std::atomic_uint8_t*>(address)->store(HAS_WAITERS, std::memory_order_release); },
             [](void*) { return false; },
             &mut,
-            [](void*, bool) { return false; },
+            [](void* mut_, bool more_present) { reinterpret_cast<fast_task::mutex*>(mut_)->set_unlocked(more_present); return true; },
             [](void* mut_, bool mark_request) {
-                if (mark_request) {
-                    reinterpret_cast<fast_task::mutex*>(mut_)->mark_has_wait();
-                    return true;
-                } else
-                    return !reinterpret_cast<fast_task::mutex*>(mut_)->is_locked();
+                auto* m = reinterpret_cast<fast_task::mutex*>(mut_);
+                if (mark_request)
+                    m->mark_has_wait();
+                return !m->is_locked();
             },
             st
         );
@@ -243,25 +308,35 @@ namespace fast_task {
     }
 
     bool condition_variable::enter_wait_until(mutex& mut, const task& task, enter_state& st, fast_task::time_point time_point) {
-        if (fast_task::clock::now() >= time_point)
+        auto& td = get_data(task);
+        td.set_time_end(false);
+        if (fast_task::is_no_deadline(time_point) || fast_task::clock::now() >= time_point) {
+            td.set_time_end(true);
             return true;
-        get_data(task).set_relock(mut);
-        return futex::enter_unlock_and_wait_until(
+        }
+        auto* ov = new cv_relock_override(&mut, td.on_start_override);
+        td.on_start_override = ov;
+        bool immediate = futex::enter_unlock_and_wait_until(
             task,
             &address,
             [](void* address) { reinterpret_cast<std::atomic_uint8_t*>(address)->store(HAS_WAITERS, std::memory_order_release); },
             [](void*) { return false; },
             &mut,
-            [](void*, bool) { return false; },
+            [](void* mut_, bool more_present) { reinterpret_cast<fast_task::mutex*>(mut_)->set_unlocked(more_present); return true; },
             [](void* mut_, bool mark_request) {
-                if (mark_request) {
-                    reinterpret_cast<fast_task::mutex*>(mut_)->mark_has_wait();
-                    return true;
-                } else
-                    return !reinterpret_cast<fast_task::mutex*>(mut_)->is_locked();
+                auto* m = reinterpret_cast<fast_task::mutex*>(mut_);
+                if (mark_request)
+                    m->mark_has_wait();
+                return !m->is_locked();
             },
             st,
             time_point
         );
+        if (immediate) {
+            td.on_start_override = ov->prev_override;
+            delete ov;
+            return mut.enter_wait(task, st);
+        }
+        return false;
     }
 }

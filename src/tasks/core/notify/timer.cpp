@@ -57,6 +57,7 @@ namespace fast_task {
 
     void resetTimeWait() {
         auto loc = get_loc();
-        get_data(loc->curr_task).reset_wait_flags();
+        if (loc && loc->curr_task)
+            get_data(loc->curr_task).reset_wait_flags();
     }
 } // namespace fast_task

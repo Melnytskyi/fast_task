@@ -261,7 +261,7 @@ namespace fast_task {
         void FT_API explicit_start_timer();
         void FT_API shut_down();
 
-        const task& FT_API current_context_task();
+        FT_API const task& current_context_task();
 
 
         /**

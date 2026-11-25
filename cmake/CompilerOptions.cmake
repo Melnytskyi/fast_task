@@ -1,7 +1,7 @@
 add_library(fast_task_flags INTERFACE)
 
 
-target_compile_definitions(fast_task_flags INTERFACE ENABLE_BOOST_PREPROCESSOR ON)
+target_compile_definitions(fast_task_flags INTERFACE ENABLE_BOOST_PREPROCESSOR=1)
 
 if(FAST_TASK_ENABLE_DEBUG_API)
     target_compile_definitions(fast_task_flags INTERFACE FT_DEBUG_API_ENABLED)
@@ -52,7 +52,6 @@ endif()
 
 target_compile_definitions(fast_task_flags INTERFACE FT_MAX_EXECUTORS=${FAST_TASK_MAX_EXECUTORS})
 target_compile_definitions(fast_task_flags INTERFACE FT_BINDED_MAX_SLOTS=${FAST_TASK_BINDED_MAX_SLOTS})
-target_compile_definitions(fast_task_flags INTERFACE FT_MAX_STEAL_ATTEMPTS=${FAST_TASK_MAX_STEAL_ATTEMPTS})
 target_compile_definitions(fast_task_flags INTERFACE FT_MAX_STEAL_ATTEMPTS=${FAST_TASK_MAX_STEAL_ATTEMPTS})
 target_compile_definitions(fast_task_flags INTERFACE FT_PREEMPT_BACKGROUND_BASIC_QUANTUM_NS=${FAST_TASK_PREEMPT_BACKGROUND_BASIC_QUANTUM_NS})
 target_compile_definitions(fast_task_flags INTERFACE FT_PREEMPT_LOW_BASIC_QUANTUM_NS=${FAST_TASK_PREEMPT_LOW_BASIC_QUANTUM_NS})

@@ -22,13 +22,22 @@ namespace fast_task {
         };
         auto flush_cold = [&] {
             if (cold_count) {
-                auto& global = global_storage();
-                {
-                    fast_task::shared_lock sg(glob.no_tasks.guard);
-                    for (size_t i = 0; i < cold_count; ++i)
-                        global.ops.queue.enqueue_cold(global, cold_wakes[i].release());
+                for (size_t i = 0; i < cold_count; ++i) {
+                    task t = std::move(cold_wakes[i]);
+                    if (!t)
+                        continue;
+                    auto& data = get_data(t);
+                    pool_ref target = data.get_pool_assigned() ? acquire_pool_ref(data.pool_index) : pool_ref{};
+                    worker_pool_storage& pool = target ? *target : global_storage();
+                    {
+                        fast_task::shared_lock sg(glob.no_tasks.guard);
+                        if (pool.is_global)
+                            pool.ops.queue.enqueue_cold(pool, t.release());
+                        else
+                            pool.ops.queue.enqueue(pool, nullptr, t.release());
+                    }
+                    wake_work_all(pool);
                 }
-                wake_work_all(global);
                 cold_count = 0;
             }
         };
@@ -45,18 +54,19 @@ namespace fast_task {
         };
 
         auto handle_expired = [&](timing& tmng) {
-            if (tmng.check_id != get_data(tmng.awake_task).awake_check)
-                return;
-
-            if (tmng.get_is_cold()) {
-                enqueue_cold(std::move(tmng.awake_task));
-            } else {
-                fast_task::lock_guard tg(get_data(tmng.awake_task));
-                if (get_data(tmng.awake_task).get_awaked())
+            auto& data = get_data(tmng.awake_task);
+            bool is_cold = false;
+            {
+                fast_task::lock_guard tg(data);
+                if (tmng.check_id != data.awake_check || data.get_awaked())
                     return;
-                get_data(tmng.awake_task).set_time_end(true);
-                enqueue_wake(std::move(tmng.awake_task));
+                data.set_time_end(true);
+                is_cold = tmng.get_is_cold();
             }
+            if (is_cold)
+                enqueue_cold(std::move(tmng.awake_task));
+            else
+                enqueue_wake(std::move(tmng.awake_task));
         };
 
         auto current_now = fast_task::clock::now();
@@ -151,7 +161,14 @@ namespace fast_task {
         if (claim_handoff.load(std::memory_order_relaxed))
             return;
         claim_handoff.store(true, std::memory_order_seq_cst);
-        global_storage().work_event.notify_one();
+        if (global_storage().work_event.notify_one())
+            return;
+        for (uint8_t i = 0; i < user_pool_count; ++i) {
+            if (auto pool = acquire_pool_ref(i)) {
+                if (pool->config.allow_driver_polling && !pool->closing && pool->work_event.notify_one())
+                    return;
+            }
+        }
     }
 
     void driver_context::ensure_driver() {

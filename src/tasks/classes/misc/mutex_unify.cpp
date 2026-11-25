@@ -53,6 +53,12 @@ namespace fast_task {
         case mutex_unify_type::uspin:
             uspin->lock();
             break;
+        case mutex_unify_type::sem:
+            sem->lock();
+            break;
+        case mutex_unify_type::lim:
+            lim->lock();
+            break;
         case mutex_unify_type::task_obj:
             reinterpret_cast<task_object*>(nmut)->lock();
             break;
@@ -87,8 +93,30 @@ namespace fast_task {
             return urwmut->try_read_lock();
         case mutex_unify_type::urwmut_w:
             return urwmut->try_write_lock();
+        case mutex_unify_type::mmut:
+            return mmut->try_lock();
         case mutex_unify_type::uspin:
             return uspin->try_lock();
+        case mutex_unify_type::sem:
+            return sem->try_lock();
+        case mutex_unify_type::lim:
+            return lim->try_lock();
+        case mutex_unify_type::task_obj: {
+            auto* obj = reinterpret_cast<task_object*>(nmut);
+            interrupt_unsafe_region::lock();
+            uint16_t cur = obj->state.load(std::memory_order_relaxed);
+            while ((cur & task_object::state_f::spin_lock_locked) == 0) {
+                if (obj->state.compare_exchange_weak(
+                        cur,
+                        static_cast<uint16_t>(cur | task_object::state_f::spin_lock_locked),
+                        std::memory_order_acquire,
+                        std::memory_order_relaxed
+                    ))
+                    return true;
+            }
+            interrupt_unsafe_region::unlock();
+            return false;
+        }
         default:
             return false;
         }
@@ -122,6 +150,19 @@ namespace fast_task {
             return urwmut->try_write_lock_until(time_point);
         case mutex_unify_type::mmut:
             return mmut->try_lock_until(time_point);
+        case mutex_unify_type::uspin:
+            while (!uspin->try_lock()) {
+                if (fast_task::clock::now() >= time_point)
+                    return false;
+                cpu_relax();
+            }
+            return true;
+        case mutex_unify_type::sem:
+            return sem->try_lock_until(time_point);
+        case mutex_unify_type::lim:
+            return lim->try_lock_until(time_point);
+        case mutex_unify_type::task_obj:
+            return try_lock();
         default:
             return false;
         }
@@ -171,6 +212,12 @@ namespace fast_task {
         case mutex_unify_type::uspin:
             uspin->unlock();
             break;
+        case mutex_unify_type::sem:
+            sem->release();
+            break;
+        case mutex_unify_type::lim:
+            lim->unlock();
+            break;
         case mutex_unify_type::task_obj:
             reinterpret_cast<task_object*>(nmut)->unlock();
             break;
@@ -180,6 +227,7 @@ namespace fast_task {
     }
 
     mutex_unify::mutex_unify() {
+        std_nmut = nullptr;
         type = mutex_unify_type::nothing;
     }
 
@@ -259,6 +307,7 @@ namespace fast_task {
     }
 
     mutex_unify::mutex_unify(std::nullptr_t) {
+        std_nmut = nullptr;
         type = mutex_unify_type::nothing;
     }
 
@@ -345,6 +394,7 @@ namespace fast_task {
     }
 
     mutex_unify& mutex_unify::operator=(std::nullptr_t) {
+        std_nmut = nullptr;
         type = mutex_unify_type::nothing;
         return *this;
     }
@@ -354,59 +404,63 @@ namespace fast_task {
     }
 
     bool mutex_unify::operator==(std::mutex& smut) {
-        return (void*)nmut == (void*)std::addressof(smut);
+        return type == mutex_unify_type::std_nmut && std_nmut == std::addressof(smut);
     }
 
     bool mutex_unify::operator==(std::timed_mutex& smut) {
-        return (void*)nmut == (void*)std::addressof(smut);
+        return type == mutex_unify_type::std_ntimed && std_ntimed == std::addressof(smut);
     }
 
     bool mutex_unify::operator==(std::recursive_mutex& smut) {
-        return (void*)nmut == (void*)std::addressof(smut);
+        return type == mutex_unify_type::std_nrec && std_nrec == std::addressof(smut);
     }
 
     bool mutex_unify::operator==(fast_task::native::mutex& smut) {
-        return (void*)nmut == (void*)std::addressof(smut);
+        return type == mutex_unify_type::nmut && nmut == std::addressof(smut);
     }
 
     bool mutex_unify::operator==(fast_task::native::timed_mutex& smut) {
-        return (void*)nmut == (void*)std::addressof(smut);
+        return type == mutex_unify_type::ntimed && ntimed == std::addressof(smut);
+    }
+
+    bool mutex_unify::operator==(fast_task::native::rw_mutex& smut) {
+        return (type == mutex_unify_type::rwmut_r || type == mutex_unify_type::rwmut_w) && rwmut == std::addressof(smut);
     }
 
     bool mutex_unify::operator==(fast_task::native::recursive_mutex& smut) {
-        return (void*)nmut == (void*)std::addressof(smut);
+        return type == mutex_unify_type::nrec && nrec == std::addressof(smut);
     }
 
     bool mutex_unify::operator==(fast_task::native::spin_lock& spin) {
-        return (void*)nmut == (void*)std::addressof(spin);
+        return type == mutex_unify_type::uspin && uspin == std::addressof(spin);
     }
 
     bool mutex_unify::operator==(mutex& smut) {
-        return (void*)nmut == (void*)std::addressof(smut);
+        return type == mutex_unify_type::umut && umut == std::addressof(smut);
     }
 
     bool mutex_unify::operator==(rw_mutex& smut) {
-        return (void*)nmut == (void*)std::addressof(smut);
+        return (type == mutex_unify_type::urwmut_r || type == mutex_unify_type::urwmut_w) && urwmut == std::addressof(smut);
     }
 
     bool mutex_unify::operator==(recursive_mutex& smut) {
-        return (void*)nmut == (void*)std::addressof(smut);
+        return type == mutex_unify_type::urmut && urmut == std::addressof(smut);
     }
 
     bool mutex_unify::operator==(class multiply_mutex& mut) {
-        return (void*)nmut == (void*)std::addressof(mut);
+        return type == mutex_unify_type::mmut && mmut == std::addressof(mut);
     }
 
     bool mutex_unify::operator==(semaphore& _sem) {
-        return (void*)nmut == (void*)std::addressof(_sem);
+        return type == mutex_unify_type::sem && sem == std::addressof(_sem);
     }
 
     bool mutex_unify::operator==(limiter& _lim) {
-        return (void*)nmut == (void*)std::addressof(_lim);
+        return type == mutex_unify_type::lim && lim == std::addressof(_lim);
     }
 
     bool mutex_unify::operator==(std::nullptr_t) {
-        return (void*)nmut == nullptr;
+        return type == mutex_unify_type::nothing || std_nmut == nullptr;
     }
 
     void mutex_unify::relock_start() {
@@ -431,7 +485,11 @@ namespace fast_task {
         case mutex_unify_type::nrec:
         case mutex_unify_type::rwmut_r:
         case mutex_unify_type::rwmut_w:
+        case mutex_unify_type::task_obj:
             lock();
+            return true;
+        case mutex_unify_type::uspin:
+            uspin->lock();
             return true;
         case mutex_unify_type::umut:
             return umut->enter_wait(task, state);
@@ -455,14 +513,28 @@ namespace fast_task {
     bool mutex_unify::enter_wait_until(const task& task, enter_state& state, fast_task::time_point time_point) {
         switch (type) {
         case mutex_unify_type::std_nmut:
-        case mutex_unify_type::std_ntimed:
         case mutex_unify_type::std_nrec:
         case mutex_unify_type::nmut:
-        case mutex_unify_type::ntimed:
         case mutex_unify_type::nrec:
         case mutex_unify_type::rwmut_r:
         case mutex_unify_type::rwmut_w:
+        case mutex_unify_type::task_obj:
             lock();
+            return true;
+        case mutex_unify_type::std_ntimed:
+            if (!std_ntimed->try_lock_until(time_point))
+                get_data(task).set_time_end(true);
+            else
+                get_data(task).set_time_end(false);
+            return true;
+        case mutex_unify_type::ntimed:
+            if (!ntimed->try_lock_until(time_point))
+                get_data(task).set_time_end(true);
+            else
+                get_data(task).set_time_end(false);
+            return true;
+        case mutex_unify_type::uspin:
+            uspin->lock();
             return true;
         case mutex_unify_type::umut:
             return umut->enter_wait_until(task, state, time_point);
@@ -499,6 +571,21 @@ namespace fast_task {
         case mutex_unify_type::mmut:
             mmut->donate_ownership(target_owner);
             break;
+        case mutex_unify_type::lim: {
+            if (!target_owner)
+                break;
+            size_t cur_id = this_task::get_id();
+            size_t target_id = target_owner->get_id();
+            if (cur_id == target_id)
+                break;
+            fast_task::lock_guard guard(lim->values.lock_check_lock);
+            size_t idx = lim->values.lock_check.find(cur_id);
+            if (idx != limiter::holder_set::npos)
+                lim->values.lock_check.erase(idx);
+            if (lim->values.lock_check.find(target_id) == limiter::holder_set::npos)
+                lim->values.lock_check.push(target_id);
+            break;
+        }
         default:
             break;
         }

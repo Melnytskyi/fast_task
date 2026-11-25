@@ -28,9 +28,6 @@ namespace fast_task {
         lock_guard(Mutex& mtx, adopt_lock_t)
             : _mtx(mtx) {}
 
-        lock_guard(Mutex& mtx, defer_lock_t)
-            : _mtx(mtx) {}
-
         lock_guard(const lock_guard&) = delete;
         lock_guard(lock_guard&&) = delete;
         lock_guard& operator=(const lock_guard&) = delete;
@@ -78,6 +75,8 @@ namespace fast_task {
         }
 
         void lock() {
+            if (!_mtx)
+                throw std::logic_error("Program tried to lock null mutex");
             if (!_locked) {
                 _mtx->lock();
                 _locked = true;
@@ -86,6 +85,8 @@ namespace fast_task {
         }
 
         bool try_lock() {
+            if (!_mtx)
+                throw std::logic_error("Program tried to lock null mutex");
             if (!_locked)
                 return _locked = _mtx->try_lock();
             else
@@ -93,6 +94,8 @@ namespace fast_task {
         }
 
         void unlock() {
+            if (!_mtx)
+                throw std::logic_error("Program tried to unlock null mutex");
             if (_locked) {
                 _mtx->unlock();
                 _locked = false;
@@ -156,7 +159,7 @@ namespace fast_task {
         }
 
         ~shared_lock() {
-            if (_locked)
+            if (_locked && _mtx)
                 _mtx->unlock_shared();
         }
 
@@ -172,6 +175,8 @@ namespace fast_task {
         }
 
         void lock() {
+            if (!_mtx)
+                throw std::logic_error("Program tried to lock null mutex");
             if (!_locked) {
                 _mtx->lock_shared();
                 _locked = true;
@@ -180,6 +185,8 @@ namespace fast_task {
         }
 
         bool try_lock() {
+            if (!_mtx)
+                throw std::logic_error("Program tried to lock null mutex");
             if (!_locked)
                 return _locked = _mtx->try_lock_shared();
             else
@@ -187,6 +194,8 @@ namespace fast_task {
         }
 
         void unlock() {
+            if (!_mtx)
+                throw std::logic_error("Program tried to unlock null mutex");
             if (_locked) {
                 _mtx->unlock_shared();
                 _locked = false;

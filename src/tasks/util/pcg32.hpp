@@ -23,8 +23,8 @@ namespace fast_task {
 
         pcg32() {
             std::random_device device{};
-            state = device() ^ (device() >> 31);
-            inc = (device() ^ (device() >> 31)) | 1;
+            state = (static_cast<uint64_t>(device()) << 32) | device();
+            inc = ((static_cast<uint64_t>(device()) << 32) | device()) | 1;
         }
 
         uint32_t next() {

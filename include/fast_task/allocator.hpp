@@ -7,7 +7,10 @@
 #ifndef LIBRARY_FAST_TASK_INCLUDE_ALLOCATOR
 #define LIBRARY_FAST_TASK_INCLUDE_ALLOCATOR
 #include "shared.hpp"
+#include <cstddef>
 #include <cstdint>
+#include <limits>
+#include <new>
 #include <type_traits>
 
 namespace fast_task {
@@ -17,6 +20,8 @@ namespace fast_task {
 
     FT_API void* allocate(std::size_t bytes);
     FT_API void free(void* p);
+    FT_API void* allocate_aligned(std::size_t bytes, std::size_t alignment);
+    FT_API void free_aligned(void* p);
 
     template <class T>
     struct allocator {
@@ -34,29 +39,45 @@ namespace fast_task {
         allocator(const allocator<U>&) noexcept {}
 
         [[nodiscard]] T* allocate(size_type n) {
-            return (T*)fast_task::allocate(n * sizeof(T));
+            if (n > std::numeric_limits<size_type>::max() / sizeof(T))
+                throw std::bad_array_new_length();
+            const std::size_t bytes = n == 0 ? 1 : n * sizeof(T);
+            void* p = nullptr;
+            if constexpr (alignof(T) > alignof(std::max_align_t))
+                p = fast_task::allocate_aligned(bytes, alignof(T));
+            else
+                p = fast_task::allocate(bytes);
+            if (!p)
+                throw std::bad_alloc();
+            return static_cast<T*>(p);
         }
 
-        [[nodiscard]] T* deallocate(T* p, size_type _) {
-            fast_task::free(p);
-            return nullptr;
+        void deallocate(T* p, size_type) noexcept {
+            if constexpr (alignof(T) > alignof(std::max_align_t))
+                fast_task::free_aligned(p);
+            else
+                fast_task::free(p);
         }
     };
-}
 
-template <class T, class U>
-bool operator==(const fast_task::allocator<T>&, const fast_task::allocator<U>&) {
-    return true;
-}
+    template <class T, class U>
+    bool operator==(const allocator<T>&, const allocator<U>&) noexcept {
+        return true;
+    }
 
-template <class T, class U>
-bool operator!=(const fast_task::allocator<T>&, const fast_task::allocator<U>&) {
-    return false;
+    template <class T, class U>
+    bool operator!=(const allocator<T>&, const allocator<U>&) noexcept {
+        return false;
+    }
 }
 
 FT_API void* operator new(std::size_t n, fast_task::allocator_tag) noexcept(false);
 FT_API void operator delete(void* p, fast_task::allocator_tag) noexcept;
 FT_API void* operator new[](std::size_t s, fast_task::allocator_tag) noexcept(false);
 FT_API void operator delete[](void* p, fast_task::allocator_tag) noexcept;
+FT_API void* operator new(std::size_t n, std::align_val_t al, fast_task::allocator_tag) noexcept(false);
+FT_API void operator delete(void* p, std::align_val_t al, fast_task::allocator_tag) noexcept;
+FT_API void* operator new[](std::size_t s, std::align_val_t al, fast_task::allocator_tag) noexcept(false);
+FT_API void operator delete[](void* p, std::align_val_t al, fast_task::allocator_tag) noexcept;
 
 #endif /* LIBRARY_FAST_TASK_INCLUDE_ALLOCATOR */

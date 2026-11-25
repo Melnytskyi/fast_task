@@ -31,23 +31,31 @@ namespace fast_task {
         const bool pin_round_robin =
             !affinity.cpus.empty() && affinity.mode == scheduler::pool_affinity_mode::round_robin;
         std::vector<uint32_t> cpus;
-        if (!affinity.cpus.empty())
-            cpus = affinity.cpus;
+        try {
+            if (!affinity.cpus.empty())
+                cpus = affinity.cpus;
+        } catch (...) {
+            storage.threads.release_target(spawn_count);
+            throw;
+        }
 
         for (uint16_t i = 0; i < spawn_count; ++i) {
-            if (pin_round_robin) {
-                const uint32_t cursor = storage.runtime.affinity_index.fetch_add(1, std::memory_order_relaxed);
-                cpus.assign(1, affinity.cpus[cursor % affinity.cpus.size()]);
-            }
-            threads_manager::count_thread_launch();
+            bool launched_counted = false;
             try {
+                if (pin_round_robin) {
+                    const uint32_t cursor = storage.runtime.affinity_index.fetch_add(1, std::memory_order_relaxed);
+                    cpus.assign(1, affinity.cpus[cursor % affinity.cpus.size()]);
+                }
+                threads_manager::count_thread_launch();
+                launched_counted = true;
                 native::thread worker(native::cpu_affinity{cpus}, pool_worker_main, slot);
                 if (!worker.affinity_applied())
                     storage.runtime.affinity_failures.fetch_add(1, std::memory_order_relaxed);
                 worker.detach();
             } catch (...) {
-                threads_manager::count_thread_exit();
-                storage.threads.release_target(1);
+                if (launched_counted)
+                    threads_manager::count_thread_exit();
+                storage.threads.release_target(static_cast<uint16_t>(spawn_count - i));
                 throw;
             }
         }
@@ -56,15 +64,18 @@ namespace fast_task {
     void ensure_pool_worker(worker_pool_storage& storage) noexcept {
         if (storage.runtime.paused.load(std::memory_order_acquire))
             return;
-        if (storage.threads.live() != 0)
-            return;
         if (storage.threads.dormant() != 0) {
             storage.dormant_event.notify_one();
             return;
         }
+        if (storage.threads.live() != 0)
+            return;
         if (storage.queue_empty())
             return;
-        spawn_pool_worker(storage, 1);
+        try {
+            spawn_pool_worker(storage, 1);
+        } catch (...) {
+        }
     }
 
     void shrink_pool_workers(worker_pool_storage& storage, uint16_t count) noexcept {

@@ -6,6 +6,7 @@
 #include "../task/task.hpp"
 #include "promise.hpp"
 #include <concepts>
+#include <optional>
 #include <queue>
 #include <type_traits>
 
@@ -16,97 +17,169 @@ namespace fast_task {
     //}
     template <class T>
     class [[nodiscard]] task_generator {
-        struct enter_state {
+        struct gen_state {
             fast_task::native::spin_lock lock;
             std::queue<T> values;
             bool is_finished = false;
             std::exception_ptr ex;
-            fast_task::task suspended_consumer;
-            fast_task::task suspended_producer;
+            fast_task::task consumer_signal;
+            fast_task::task producer_signal;
         };
 
-        std::shared_ptr<enter_state> state;
+        std::shared_ptr<gen_state> state;
         fast_task::task task_handle;
 
     public:
         struct promise_type : public fast_task::task_promise_base {
-            std::shared_ptr<enter_state> state = std::make_shared<enter_state>();
+            std::shared_ptr<gen_state> state = std::make_shared<gen_state>();
 
             task_generator get_return_object() {
                 auto h_promise = std::coroutine_handle<promise_type>::from_promise(*this);
-
                 std::coroutine_handle<> h_frame = h_promise;
 
-                auto on_start = [](void* handle_addr) {
-                    std::coroutine_handle<>::from_address(handle_addr).resume();
+                static task_vtable vt = {
+                    nullptr,
+                    nullptr,
+                    [](void* handle_addr) {
+                        auto h = std::coroutine_handle<promise_type>::from_address(handle_addr);
+                        auto& p = h.promise();
+                        struct task_object_guard {
+                            task_promise_base& promise;
+
+                            ~task_object_guard() noexcept {
+                                promise.task_object.reset();
+                            }
+                        };
+                        p.task_object = scheduler::current_context_task();
+                        task_object_guard guard{p};
+                        h.resume();
+                    },
+                    nullptr,
+                    [](void* handle_addr) {
+                        std::coroutine_handle<>::from_address(handle_addr).destroy();
+                    },
+                    false
                 };
 
-                auto on_destruct = [](void* handle_addr) {
-                    std::coroutine_handle<>::from_address(handle_addr).destroy();
-                };
-
-                task_object = task(
+                task t(
                     h_frame.address(),
-                    on_start,
-                    [](void* handle_addr) {},
-                    [](void* handle_addr) {},
-                    on_destruct,
+                    &vt,
                     true,
                     true
                 );
-                return task_generator{state, task_object};
+                task_object = t;
+                return task_generator{state, std::move(t)};
+            }
+
+            auto initial_suspend() noexcept {
+                struct auto_start_awaiter {
+                    promise_type& promise;
+
+                    bool await_ready() noexcept {
+                        return false;
+                    }
+
+                    void await_suspend(std::coroutine_handle<>) {
+                        task t = std::move(promise.task_object);
+                        if (t)
+                            scheduler::start(std::move(t));
+                    }
+
+                    void await_resume() noexcept {}
+                };
+
+                return auto_start_awaiter{*this};
             }
 
             auto yield_value(T val) {
                 struct yield_awaiter {
-                    std::shared_ptr<enter_state> state;
+                    enter_state wait_state;
+                    std::shared_ptr<gen_state> state;
                     T val;
 
-                    bool await_ready() {
+                    bool await_ready() noexcept {
                         return false;
                     }
 
                     bool await_suspend(std::coroutine_handle<promise_type> h) {
-                        fast_task::lock_guard guard(state->lock);
-                        state->values.push(std::move(val));
+                        fast_task::task consumer_sig;
+                        fast_task::task producer_sig;
+                        {
+                            fast_task::lock_guard guard(state->lock);
+                            state->values.push(std::move(val));
 
-                        if (state->suspended_consumer) {
-                            fast_task::scheduler::start(state->suspended_consumer);
-                            state->suspended_consumer.reset();
+                            if (state->consumer_signal) {
+                                consumer_sig = std::move(state->consumer_signal);
+                                state->consumer_signal.reset();
+                            }
+
+                            if (state->values.size() > 40) {
+                                if (!state->producer_signal)
+                                    state->producer_signal = fast_task::task::callback_dummy(nullptr, nullptr, nullptr, nullptr, nullptr);
+                                producer_sig = state->producer_signal;
+                            }
                         }
-
-                        if (state->values.size() > 40) {
-                            state->suspended_producer = h.promise().task_object;
-                            return true;
-                        } else
-                            return false;
+                        if (consumer_sig)
+                            consumer_sig.end_dummy([](void*) {});
+                        if (producer_sig)
+                            return !producer_sig.enter_wait(h.promise().task_object, wait_state);
+                        return false;
                     }
 
                     void await_resume() {}
                 };
 
-                return yield_awaiter{state, std::move(val)};
+                return yield_awaiter{{}, state, std::move(val)};
             }
 
             void return_void() noexcept {
-                fast_task::lock_guard guard(state->lock);
-                state->is_finished = true;
-                if (state->suspended_consumer) {
-                    fast_task::scheduler::start(state->suspended_consumer);
+                fast_task::task consumer_sig;
+                {
+                    fast_task::lock_guard guard(state->lock);
+                    state->is_finished = true;
+                    if (state->consumer_signal) {
+                        consumer_sig = std::move(state->consumer_signal);
+                        state->consumer_signal.reset();
+                    }
                 }
+                if (consumer_sig)
+                    consumer_sig.end_dummy([](void*) {});
             }
 
-            void unhandled_exception() {
-                fast_task::lock_guard guard(state->lock);
-                state->ex = std::current_exception();
-                if (state->suspended_consumer) {
-                    fast_task::scheduler::start(state->suspended_consumer);
+            void unhandled_exception() noexcept {
+                fast_task::task consumer_sig;
+                {
+                    fast_task::lock_guard guard(state->lock);
+                    state->ex = std::current_exception();
+                    state->is_finished = true;
+                    if (state->consumer_signal) {
+                        consumer_sig = std::move(state->consumer_signal);
+                        state->consumer_signal.reset();
+                    }
                 }
+                if (consumer_sig)
+                    consumer_sig.end_dummy([](void*) {});
             }
         };
 
-        task_generator(std::shared_ptr<enter_state> s, task t) : state(std::move(s)), task_handle(std::move(t)) {
-            scheduler::start(task_handle);
+        task_generator(std::shared_ptr<gen_state> s, task t) : state(std::move(s)), task_handle(std::move(t)) {}
+
+        ~task_generator() {
+            if (task_handle) {
+                task_handle.notify_cancel();
+                if (state) {
+                    fast_task::task producer_sig;
+                    {
+                        fast_task::lock_guard guard(state->lock);
+                        if (state->producer_signal) {
+                            producer_sig = std::move(state->producer_signal);
+                            state->producer_signal.reset();
+                        }
+                    }
+                    if (producer_sig)
+                        producer_sig.end_dummy([](void*) {});
+                }
+            }
         }
 
         task_generator(task_generator&&) noexcept = default;
@@ -117,7 +190,8 @@ namespace fast_task {
 
         auto next() {
             struct next_awaiter {
-                std::shared_ptr<enter_state> state;
+                enter_state wait_state;
+                std::shared_ptr<gen_state> state;
 
                 bool await_ready() {
                     fast_task::lock_guard guard(state->lock);
@@ -126,50 +200,66 @@ namespace fast_task {
 
                 template <class Promise>
                 bool await_suspend(std::coroutine_handle<Promise> h) {
-                    fast_task::lock_guard guard(state->lock);
-                    if (!state->values.empty() || state->is_finished)
-                        return false;
+                    fast_task::task signal;
+                    {
+                        fast_task::lock_guard guard(state->lock);
+                        if (!state->values.empty() || state->is_finished)
+                            return false;
+                        if (!state->consumer_signal)
+                            state->consumer_signal = fast_task::task::callback_dummy(nullptr, nullptr, nullptr, nullptr, nullptr);
+                        signal = state->consumer_signal;
+                    }
                     if constexpr (std::derived_from<Promise, task_promise_base>) {
-                        state->suspended_consumer = h.promise().task_object;
-                        return true;
+                        return !signal.enter_wait(h.promise().task_object, wait_state);
                     } else {
-                        auto on_start_resume = [](void* handle_addr) {
-                            std::coroutine_handle<>::from_address(handle_addr).resume();
+                        static task_vtable vt = {
+                            nullptr,
+                            nullptr,
+                            [](void* handle_addr) {
+                                std::coroutine_handle<>::from_address(handle_addr).resume();
+                            },
+                            nullptr,
+                            nullptr,
+                            false
                         };
-                        auto on_nop = [](void*) {};
                         auto bridge_task = fast_task::task(
                             h.address(),
-                            on_start_resume,
-                            on_nop,
-                            on_nop,
-                            on_nop,
+                            &vt,
                             false,
                             true
                         );
-                        state->suspended_consumer = bridge_task;
+                        if (signal.is_ended())
+                            return false;
+                        signal.callback(bridge_task);
                         return true;
                     }
                 }
 
                 std::optional<T> await_resume() {
-                    fast_task::lock_guard guard(state->lock);
-                    if (state->ex)
-                        std::rethrow_exception(state->ex);
-                    if (state->values.empty() && state->is_finished)
-                        return std::nullopt;
-
-                    T val = std::move(state->values.front());
-                    state->values.pop();
-                    if(state->suspended_producer) {
-                        fast_task::scheduler::start(state->suspended_producer);
-                        state->suspended_producer.reset();
+                    fast_task::task producer_sig;
+                    std::optional<T> res;
+                    {
+                        fast_task::lock_guard guard(state->lock);
+                        if (!state->values.empty()) {
+                            res.emplace(std::move(state->values.front()));
+                            state->values.pop();
+                            if (state->producer_signal) {
+                                producer_sig = std::move(state->producer_signal);
+                                state->producer_signal.reset();
+                            }
+                        } else if (state->ex) {
+                            auto ex = std::move(state->ex);
+                            state->ex = nullptr;
+                            std::rethrow_exception(ex);
+                        }
                     }
-
-                    return val;
+                    if (producer_sig)
+                        producer_sig.end_dummy([](void*) {});
+                    return res;
                 }
             };
 
-            return next_awaiter{state};
+            return next_awaiter{{}, state};
         }
     };
 }

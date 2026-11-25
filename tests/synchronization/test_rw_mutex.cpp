@@ -273,3 +273,40 @@ TEST_F(TaskRwMutexTest, AsyncWriteLock) {
 
     EXPECT_TRUE(completed.load());
 }
+
+TEST_F(TaskRwMutexTest, WriterTimeoutWakesParkedReaders) {
+    fast_task::rw_mutex rw;
+    std::atomic<bool> writer_started{false};
+    std::atomic<bool> writer_done{false};
+    std::atomic<bool> writer_acquired{true};
+    std::atomic<bool> reader2_acquired{false};
+
+    rw.read_lock();
+
+    auto writer = fast_task::task::run([&] {
+        writer_started.store(true, std::memory_order_release);
+        bool ok = rw.try_write_lock_for(std::chrono::milliseconds(25));
+        writer_acquired.store(ok, std::memory_order_release);
+        if (ok)
+            rw.write_unlock();
+        writer_done.store(true, std::memory_order_release);
+    });
+
+    while (!writer_started.load(std::memory_order_acquire))
+        std::this_thread::yield();
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+
+    auto reader2 = fast_task::task::run([&] {
+        rw.read_lock();
+        reader2_acquired.store(true, std::memory_order_release);
+        rw.read_unlock();
+    });
+
+    writer.await_task();
+    EXPECT_TRUE(writer_done.load(std::memory_order_acquire));
+    EXPECT_FALSE(writer_acquired.load(std::memory_order_acquire));
+
+    rw.read_unlock();
+    reader2.await_task();
+    EXPECT_TRUE(reader2_acquired.load(std::memory_order_acquire));
+}

@@ -66,6 +66,7 @@ namespace fast_task {
         bool explicitly_configured : 1 = false;
         bool lazily_initialized : 1 = false;
         std::atomic<bool> slot_released{false};
+        std::atomic<uint32_t> active_refs{0};
 
     protected:
         worker_pool_storage() noexcept = default;

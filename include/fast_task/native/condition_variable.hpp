@@ -123,7 +123,12 @@ namespace fast_task::native {
         void wait(mut& mtx) {
             fast_task::unique_lock<mutex> lock(_mutex);
             detail::full_state_relock_guard<mut> relock(mtx);
-            _cond.wait(_mutex);
+            try {
+                _cond.wait(_mutex);
+            } catch (...) {
+                lock.unlock();
+                throw;
+            }
             lock.unlock();
         }
 
@@ -136,7 +141,13 @@ namespace fast_task::native {
         cv_status wait_until(mut& mtx, fast_task::time_point time) {
             fast_task::unique_lock<mutex> lock(_mutex);
             detail::full_state_relock_guard<mut> relock(mtx);
-            cv_status ret = _cond.wait_until(_mutex, time);
+            cv_status ret;
+            try {
+                ret = _cond.wait_until(_mutex, time);
+            } catch (...) {
+                lock.unlock();
+                throw;
+            }
             lock.unlock();
             return ret;
         }

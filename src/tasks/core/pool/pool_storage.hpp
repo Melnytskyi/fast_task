@@ -12,6 +12,7 @@
 #include <tasks/core/pool/pool.hpp>
 
 namespace fast_task {
+    void FT_API_LOCAL validate_pool_policies(scheduler::queue_policy queue, scheduler::idle_policy idle);
     worker_pool_storage* FT_API_LOCAL construct_pool_storage(void* buffer, scheduler::queue_policy queue, scheduler::idle_policy idle, scheduler::worker_balancer balancer, bool single_worker);
     worker_pool_storage* FT_API_LOCAL construct_global_pool_storage(void* buffer, scheduler::queue_policy queue, scheduler::idle_policy idle, scheduler::worker_balancer balancer, bool single_worker);
 }

@@ -81,3 +81,36 @@ TEST_F(CoroutineBasicTest, AutoStartCoro) {
     coro->await_task();
     EXPECT_TRUE(ran.load());
 }
+
+TEST_F(CoroutineBasicTest, MoveOnlyReturnValue) {
+    auto producer = []() -> fast_task::task_coro<std::unique_ptr<int>> {
+        co_await fast_task::this_task::async_yield();
+        co_return std::make_unique<int>(77);
+    }();
+    fast_task::scheduler::start(producer.get_task());
+    auto res = producer.sync_get();
+    ASSERT_NE(res, nullptr);
+    EXPECT_EQ(*res, 77);
+}
+
+TEST_F(CoroutineBasicTest, VoidSyncGetRethrowsException) {
+    auto failing = []() -> fast_task::task_coro<void> {
+        throw std::runtime_error("coro_void_boom");
+        co_return;
+    }();
+    fast_task::scheduler::start(failing.get_task());
+    EXPECT_THROW(failing.sync_get(), std::runtime_error);
+}
+
+TEST_F(CoroutineBasicTest, UnstartedDestructionDoesNotLeak) {
+    auto sentinel = std::make_shared<int>(123);
+    std::weak_ptr<int> weak = sentinel;
+    {
+        auto make_coro = [](std::shared_ptr<int> p) -> fast_task::task_coro<int> {
+            co_return *p;
+        };
+        auto coro = make_coro(std::move(sentinel));
+        (void)coro;
+    }
+    EXPECT_TRUE(weak.expired());
+}

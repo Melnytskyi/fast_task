@@ -45,8 +45,11 @@ namespace fast_task {
                 glob.tasks_in_swap.fetch_sub(1, std::memory_order_release);
 #endif
 
-                bool old_context_in_swap = post_switch_loc->context_in_swap;
-                post_switch_loc->context_in_swap = true;
+                bool old_context_in_swap = false;
+                if (post_switch_loc) {
+                    old_context_in_swap = post_switch_loc->context_in_swap;
+                    post_switch_loc->context_in_swap = true;
+                }
 
                 auto relock_state = task_data.get_relock();
                 task_data.set_relock(nullptr);
@@ -57,14 +60,15 @@ namespace fast_task {
                 task_data.set_time_end(old_time_end_flag);
                 task_data.set_awaked(old_awaked);
 
-                get_loc()->context_in_swap = old_context_in_swap;
+                if (auto* loc_after = get_loc())
+                    loc_after->context_in_swap = old_context_in_swap;
                 throw;
             }
 #if defined(FT_EXCEPTION_POLICY_PRESERVE)
             if (get_execution_data(&task_data).switch_preserve)
                 std::rethrow_exception(std::move(get_execution_data(&task_data).switch_preserve));
 #endif
-            preserve_interrupt_data();
+            restore_interrupt_data();
 #ifndef NDEBUG
             glob.tasks_in_swap.fetch_sub(1, std::memory_order_release);
 #endif
@@ -125,7 +129,15 @@ namespace fast_task {
         } catch (const task_cancellation& cancel) {
             forceCancelCancellation(cancel);
         } catch (const boost::context::detail::forced_unwind&) {
-            task_run_exit(get_loc());
+            auto* post_loc = get_loc();
+            if (post_loc) {
+                task_run_exit(post_loc);
+            } else {
+                worker_pool_storage* pool = task_obj.get_pool_assigned() ? pool_for_index(task_obj.pool_index) : nullptr;
+                if (!pool)
+                    pool = &global_storage();
+                pool->runtime.in_run_tasks.fetch_sub(1, std::memory_order_release);
+            }
             throw;
         } catch (...) {
             get_loc()->ex_ptr = std::current_exception();
@@ -154,8 +166,10 @@ namespace fast_task {
                 flush_interrupt_data();
                 timer_reinit();
                 auto vtable = task_obj.vtable;
-                if (vtable && vtable->on_exception)
-                    vtable->on_exception(task_obj.user_data(), get_loc()->ex_ptr);
+                if (vtable && vtable->on_exception) {
+                    std::exception_ptr ex = get_loc()->ex_ptr;
+                    vtable->on_exception(task_obj.user_data(), ex);
+                }
             } else { //this_task::the_coroutine_ended(get_loc().curr_task); inline
                 {
                     fast_task::lock_guard guard(task_obj);
@@ -168,8 +182,16 @@ namespace fast_task {
         } catch (const boost::context::detail::forced_unwind&) {
             task_obj.set_is_restartable(false);
             task_obj.end_of_life_notify();
-            task_run_exit(get_loc());
-            return std::move(stack_current_context);
+            auto* post_loc = get_loc();
+            if (post_loc) {
+                task_run_exit(post_loc);
+            } else {
+                worker_pool_storage* pool = task_obj.get_pool_assigned() ? pool_for_index(task_obj.pool_index) : nullptr;
+                if (!pool)
+                    pool = &global_storage();
+                pool->runtime.in_run_tasks.fetch_sub(1, std::memory_order_release);
+            }
+            throw;
         } catch (...) {
             get_loc()->ex_ptr = std::current_exception();
         }

@@ -161,7 +161,7 @@ namespace fast_task {
 
         template <class Rep, class Period>
         [[nodiscard]] auto async_try_lock_for(const std::chrono::duration<Rep, Period>& duration) {
-            return detail::async_try_lock_until(this, fast_task::clock::now() + duration);
+            return detail::async_try_lock_until(*this, fast_task::clock::now() + duration);
         }
 #endif
     };

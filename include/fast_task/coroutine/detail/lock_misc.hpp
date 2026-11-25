@@ -16,7 +16,7 @@ namespace fast_task::detail {
             enter_state state;
             T& mutex;
 
-            bool await_ready() noexcept {
+            bool await_ready() {
                 return mutex.try_lock();
             }
 
@@ -39,14 +39,18 @@ namespace fast_task::detail {
             fast_task::task task_obj;
             bool successful = false;
 
-            bool await_ready() noexcept {
+            bool await_ready() {
                 successful = mutex.try_lock();
                 return successful;
             }
 
             bool await_suspend(const base_coro_handle& h) {
                 task_obj = h.promise->task_object;
-                return !mutex.enter_wait_until(h.promise->task_object, state, time_point);
+                if (mutex.enter_wait_until(h.promise->task_object, state, time_point)) {
+                    successful = true;
+                    return false;
+                }
+                return true;
             }
 
             bool await_resume() {

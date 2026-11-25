@@ -12,7 +12,7 @@ namespace fast_task {
     void refresh_dormant_sharing() noexcept {
         bool enabled = false;
         for (uint16_t i = 0; i < pool_table_size; ++i) {
-            auto* pool = glob.pools.slots[i].load(std::memory_order_acquire);
+            auto pool = acquire_pool_ref(static_cast<uint8_t>(i));
             if (pool && pool->config.allow_dormant_sharing && !pool->closing) {
                 enabled = true;
                 break;
@@ -20,7 +20,8 @@ namespace fast_task {
         }
         glob.pools.dormant_sharing_enabled.store(enabled, std::memory_order_release);
         fast_task::lock_guard guard(glob.pools.dormant_broker.lock);
-        glob.pools.dormant_broker.open = true;
+        if (!scheduler_stopping())
+            glob.pools.dormant_broker.open = true;
     }
 
     bool claim_dormant_slot(worker_pool_storage& pool, bool spawned) noexcept {
@@ -62,14 +63,14 @@ namespace fast_task {
         if (!borrower.ops.queue.has_runnable_work(borrower, nullptr))
             return false;
 
-        worker_pool_storage* lender = nullptr;
+        pool_ref lender;
         {
             fast_task::lock_guard guard(glob.pools.dormant_broker.lock);
             if (!glob.pools.dormant_broker.open)
                 return false;
             for (uint16_t i = 0; i < pool_table_size; ++i) {
-                auto* candidate = glob.pools.slots[i].load(std::memory_order_acquire);
-                if (!candidate || candidate == &borrower)
+                auto candidate = acquire_pool_ref(static_cast<uint8_t>(i));
+                if (!candidate || candidate.get() == &borrower)
                     continue;
                 if (!candidate->config.allow_dormant_sharing || candidate->config.hooks.worker_body != nullptr)
                     continue;
@@ -84,12 +85,12 @@ namespace fast_task {
                     continue;
                 if (static_cast<uint32_t>(candidate->threads.live()) + dormant <= 1)
                     continue;
-                if (!glob.pools.dormant_broker.try_push(candidate, &borrower))
+                if (!glob.pools.dormant_broker.try_push(candidate.get(), &borrower))
                     return false;
                 candidate->threads.lend();
                 borrower.threads.accept_lease();
                 glob.pools.dormant_broker.outstanding += 1;
-                lender = candidate;
+                lender = std::move(candidate);
                 break;
             }
         }
@@ -147,7 +148,7 @@ namespace fast_task {
             broker.grant_count = 0;
         }
         for (uint16_t i = 0; i < pool_table_size; ++i) {
-            if (auto* pool = glob.pools.slots[i].load(std::memory_order_acquire))
+            if (auto pool = acquire_pool_ref(static_cast<uint8_t>(i)))
                 pool->dormant_event.notify_all();
         }
     }

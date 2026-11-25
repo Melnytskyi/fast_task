@@ -154,7 +154,7 @@ namespace fast_task {
             return false;
         obj->lock();
         bool time_end_flag = obj->get_time_end();
-        resetTimeWait();
+        obj->reset_wait_flags();
         obj->unlock();
         return time_end_flag;
     }
@@ -188,65 +188,69 @@ namespace fast_task {
     }
 
     void task::callback(const task& cbtask) const {
-        if (!obj)
+        if (!obj || !cbtask.obj)
             return;
-        obj->lock();
-        if (obj->is_ended()) {
-            obj->unlock();
-            scheduler::start(cbtask);
-            return;
-        }
+        if (obj == cbtask.obj)
+            throw std::logic_error("task::callback cannot register a task as a callback of itself");
 
         auto& cd = get_data(cbtask);
+        task_object* first = obj < &cd ? obj : &cd;
+        task_object* second = obj < &cd ? &cd : obj;
+
+        bool already_ended = false;
         {
-            fast_task::lock_guard guard(cd);
-            if (cd.is_running() || cd.is_ended()) {
-                obj->unlock();
-                throw std::runtime_error("Task is running or completed and cannot be registered");
-            }
-            if (cd.is_scheduled() && (!cd.is_suspended() && cd.get_is_on_scheduler())) {
-                obj->unlock();
-                throw std::runtime_error("Task is already in the scheduler queue");
-            }
-            if (!cd.vtable || !cd.vtable->on_start) {
-                obj->unlock();
-                throw std::logic_error("task::callback requires the on_start callback to be set");
+            fast_task::lock_guard guard1(*first);
+            fast_task::lock_guard guard2(*second);
+            if (obj->is_ended()) {
+                already_ended = true;
+            } else {
+                if (cd.is_running() || cd.is_ended())
+                    throw std::runtime_error("Task is running or completed and cannot be registered");
+                if (cd.is_scheduled() && (!cd.is_suspended() && cd.get_is_on_scheduler()))
+                    throw std::runtime_error("Task is already in the scheduler queue");
+                if (!cd.vtable || !cd.vtable->on_start)
+                    throw std::logic_error("task::callback requires the on_start callback to be set");
+
+                struct redefine_start_callback : public to_start_override {
+                    enter_state state;
+
+                    redefine_start_callback() {}
+
+                    virtual void callback(task_object* cb) {
+                        cb->on_start_override = nullptr;
+                        auto* vtable = cb->vtable;
+                        void* udata = cb->user_data();
+                        delete this;
+                        if (vtable && vtable->on_start)
+                            vtable->on_start(udata);
+                    }
+
+                    virtual void on_destruct(to_start_override* self) {
+                        delete self;
+                    }
+
+                    virtual ~redefine_start_callback() = default;
+                };
+
+                auto res = new redefine_start_callback();
+                cd.on_start_override = res;
+
+                if (cd.is_created()) {
+                    task_mark_created(cd);
+                    cd.set_status(task_object::status_e::scheduled);
+                }
+                futex::enter_wait_on_address(
+                    cbtask,
+                    obj,
+                    [](void* self) {
+                        return reinterpret_cast<task_object*>(self)->is_ended();
+                    },
+                    res->state
+                );
             }
         }
-
-        struct redefine_start_callback : public to_start_override {
-            enter_state state;
-
-            redefine_start_callback() {}
-
-            virtual void callback(task_object* cb) {
-                cb->on_start_override = nullptr;
-                cb->vtable->on_start(cb->user_data());
-            }
-
-            virtual void on_destruct(to_start_override* self) {
-                delete self;
-            }
-
-            virtual ~redefine_start_callback() = default;
-        };
-
-        auto res = new redefine_start_callback();
-        cd.on_start_override = res;
-
-        if (cd.is_created()) {
-            task_mark_created(cd);
-            cd.set_status(task_object::status_e::scheduled);
-        }
-        futex::enter_wait_on_address(
-            cbtask,
-            obj,
-            [](void* self) {
-                return reinterpret_cast<task_object*>(self)->is_ended();
-            },
-            res->state
-        );
-        obj->unlock();
+        if (already_ended)
+            scheduler::start(cbtask);
     }
 
     void task::notify_cancel() const {
@@ -257,7 +261,7 @@ namespace fast_task {
 
         fast_task::lock_guard guard(*obj);
         obj->set_cancellation_requested(true);
-        if (obj->is_suspended() && !obj->is_scheduled() && !obj->get_time_end()) {
+        if (obj->is_suspended() && !obj->get_time_end()) {
             obj->set_time_end(true);
             obj->set_awaked(true);
             fast_task::transfer_task(task(*this));

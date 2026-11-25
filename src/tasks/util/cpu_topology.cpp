@@ -88,7 +88,7 @@ namespace fast_task::util {
 
             for (int cpu = 0; cpu < tracked_cpu_count; ++cpu) {
                 if (!llc_list_of_cpu(cpu, list, sizeof(list)))
-                    break;
+                    continue;
 
                 uint8_t domain = 0;
                 for (; domain < distinct; ++domain)
@@ -116,7 +116,7 @@ namespace fast_task::util {
 
     uint8_t llc_of_cpu(int cpu) noexcept {
         if (cpu < 0 || cpu >= tracked_cpu_count)
-            return 0;
+            return unknown_llc;
         return table().llc_of_cpu[cpu];
     }
 

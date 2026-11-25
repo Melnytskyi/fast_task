@@ -1,0 +1,122 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  linux:
+    name: Linux (${{ matrix.arch }} / ${{ matrix.config }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            arch: x64
+            config: Debug
+            build_type: Debug
+            cmake_args: ""
+          - os: ubuntu-latest
+            arch: x64
+            config: Release
+            build_type: Release
+            cmake_args: ""
+          - os: ubuntu-latest
+            arch: x64
+            config: Shared
+            build_type: Release
+            cmake_args: "-DFAST_TASK_STATIC=OFF"
+          - os: ubuntu-latest
+            arch: x64
+            config: DebugAPI
+            build_type: Debug
+            cmake_args: "-DFAST_TASK_ENABLE_DEBUG_API=ON"
+          - os: ubuntu-latest
+            arch: x64
+            config: Preempt
+            build_type: Release
+            cmake_args: "-DFAST_TASK_ENABLE_PREEMPTIVE_SCHEDULER=ON"
+          - os: ubuntu-24.04-arm
+            arch: arm64
+            config: Debug
+            build_type: Debug
+            cmake_args: ""
+          - os: ubuntu-24.04-arm
+            arch: arm64
+            config: Release
+            build_type: Release
+            cmake_args: ""
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build pkg-config liburing-dev libc-ares-dev libboost-context-dev
+
+      - name: Check scheduler layer includes
+        run: bash scripts/check_layers.sh
+
+      - name: Configure CMake
+        run: >
+          cmake -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+          -DFAST_TASK_BUILD_TESTS=ON
+          ${{ matrix.cmake_args }}
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test
+        run: ctest --test-dir build --timeout 14 --output-on-failure
+
+  windows:
+    name: Windows (${{ matrix.arch }} / ${{ matrix.config }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            arch: x64
+            config: Debug
+            build_type: Debug
+            cmake_args: ""
+          - os: windows-latest
+            arch: x64
+            config: Release
+            build_type: Release
+            cmake_args: ""
+          - os: windows-latest
+            arch: x64
+            config: Preempt
+            build_type: Release
+            cmake_args: "-DFAST_TASK_ENABLE_PREEMPTIVE_SCHEDULER=ON"
+          - os: windows-11-arm
+            arch: arm64
+            config: Debug
+            build_type: Debug
+            cmake_args: ""
+          - os: windows-11-arm
+            arch: arm64
+            config: Release
+            build_type: Release
+            cmake_args: ""
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure CMake
+        run: >
+          cmake -B build
+          -DFAST_TASK_BUILD_TESTS=ON
+          ${{ matrix.cmake_args }}
+
+      - name: Build
+        run: cmake --build build --config ${{ matrix.build_type }} --parallel
+
+      - name: Test
+        run: ctest --test-dir build -C ${{ matrix.build_type }} --timeout 14 --output-on-failure

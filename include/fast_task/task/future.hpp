@@ -8,20 +8,75 @@
 #ifndef FAST_TASK_INCLUDE_TASK_FUTURE
     #define FAST_TASK_INCLUDE_TASK_FUTURE
     #include "../shared.hpp"
+    #include "condition_variable.hpp"
     #include "fwd.hpp"
     #include "queue.hpp"
     #include "scheduler.hpp"
     #include "task.hpp"
+    #include <optional>
 
     #if __cplusplus >= 202002
         #include "../coroutine/core.hpp"
     #endif
 namespace fast_task {
+    namespace detail {
+        struct queued_future_sync {
+            fast_task::mutex mtx;
+            fast_task::condition_variable cv;
+            bool done = false;
+
+            void signal() {
+                {
+                    fast_task::lock_guard<fast_task::mutex> lk(mtx);
+                    done = true;
+                }
+                cv.notify_all();
+            }
+
+            void wait() {
+                fast_task::unique_lock<fast_task::mutex> lk(mtx);
+                while (!done)
+                    cv.wait(lk);
+            }
+
+            bool wait_until(fast_task::time_point tp) {
+                fast_task::unique_lock<fast_task::mutex> lk(mtx);
+                while (!done) {
+                    if (!cv.wait_until(lk, tp))
+                        return done;
+                }
+                return true;
+            }
+        };
+    }
+
     template <class T>
     class future : public std::enable_shared_from_this<future<T>> {
+        template <class U>
+        friend class future;
+
         task task_;
         std::optional<T> result;
         std::exception_ptr ex_ptr;
+        std::shared_ptr<detail::queued_future_sync> queued_sync;
+
+        void wait_impl() {
+            if (task_.is_ended())
+                return;
+            if (queued_sync) {
+                queued_sync->wait();
+                return;
+            }
+            task_.await_task();
+        }
+
+        bool wait_until_impl(fast_task::time_point time) {
+            if (task_.is_ended())
+                return true;
+            if (queued_sync)
+                return queued_sync->wait_until(time);
+            return task_.await_task_until(time);
+        }
 
     public:
         future() = default;
@@ -33,10 +88,10 @@ namespace fast_task {
         {
             std::shared_ptr<future> future_ = std::make_shared<future>();
             future_->task_ = task::create(
-                [fn = std::move(fn), weak_future = std::weak_ptr<future>(future_)]() mutable {
+                [fn = std::forward<FN>(fn), weak_future = std::weak_ptr<future>(future_)]() mutable {
                     auto result = std::make_optional<T>(fn());
                     if (auto self = weak_future.lock())
-                        self->result = result;
+                        self->result.emplace(std::move(*result));
                 },
                 [weak_future = std::weak_ptr<future>(future_)](const std::exception_ptr& ex) {
                     if (auto self = weak_future.lock())
@@ -54,11 +109,13 @@ namespace fast_task {
             requires std::is_same_v<std::invoke_result_t<FN>, T>
         {
             std::shared_ptr<future> future_ = std::make_shared<future>();
+            auto sync = std::make_shared<detail::queued_future_sync>();
+            future_->queued_sync = sync;
             future_->task_ = task::create(
-                [fn = std::move(fn), weak_future = std::weak_ptr<future>(future_)]() mutable {
+                [fn = std::forward<FN>(fn), weak_future = std::weak_ptr<future>(future_)]() mutable {
                     auto result = std::make_optional<T>(fn());
                     if (auto self = weak_future.lock())
-                        self->result = result;
+                        self->result.emplace(std::move(*result));
                 },
                 [weak_future = std::weak_ptr<future>(future_)](const std::exception_ptr& ex) {
                     if (auto self = weak_future.lock())
@@ -68,6 +125,9 @@ namespace fast_task {
             if (pool)
                 pool->bind(future_->task_);
             queue.add(future_->task_);
+            future_->task_.callback(task::create([sync = std::move(sync)]() {
+                sync->signal();
+            }));
             return future_;
         }
 
@@ -94,22 +154,24 @@ namespace fast_task {
         }
 
         T get() {
-            if (!task_.is_ended())
-                task_.await_task();
+            wait_impl();
             if (ex_ptr)
                 std::rethrow_exception(ex_ptr);
             if (task_.is_cancellation_requested())
                 throw std::runtime_error("Task has been canceled. Can not receive result.");
+            if (!result.has_value())
+                throw std::runtime_error("Future has no result.");
             return *result;
         }
 
         T take() {
-            if (!task_.is_ended())
-                task_.await_task();
+            wait_impl();
             if (ex_ptr)
                 std::rethrow_exception(ex_ptr);
             if (task_.is_cancellation_requested())
                 throw std::runtime_error("Task has been canceled. Can not receive result.");
+            if (!result.has_value())
+                throw std::runtime_error("Future has no result.");
             return std::move(*result);
         }
 
@@ -120,8 +182,8 @@ namespace fast_task {
             if (task_.is_ended())
                 fn(*this);
             else
-                task_.callback(task::create([this, fn = std::move(fn)]() mutable {
-                    fn(*this);
+                task_.callback(task::create([fut = this->shared_from_this(), fn = std::forward<FN>(fn)]() mutable {
+                    fn(*fut);
                 }));
         }
 
@@ -132,7 +194,7 @@ namespace fast_task {
             if (task_.is_ended())
                 fn();
             else
-                task_.callback(task::create([fn = std::move(fn)]() mutable {
+                task_.callback(task::create([fn = std::forward<FN>(fn)]() mutable {
                     fn();
                 }));
         }
@@ -146,8 +208,7 @@ namespace fast_task {
         }
 
         void wait() {
-            if (!task_.is_ended())
-                task_.await_task();
+            wait_impl();
             if (ex_ptr)
                 std::rethrow_exception(ex_ptr);
             if (task_.is_cancellation_requested())
@@ -160,9 +221,8 @@ namespace fast_task {
         }
 
         bool wait_until(fast_task::time_point time) {
-            if (!task_.is_ended())
-                if (!task_.await_task_until(time))
-                    return false;
+            if (!wait_until_impl(time))
+                return false;
             if (ex_ptr)
                 std::rethrow_exception(ex_ptr);
             if (task_.is_cancellation_requested())
@@ -171,8 +231,7 @@ namespace fast_task {
         }
 
         void wait_no_except() {
-            if (!task_.is_ended())
-                task_.await_task();
+            wait_impl();
         }
 
         template <class Dur_resolution, class Dur_type>
@@ -181,14 +240,11 @@ namespace fast_task {
         }
 
         bool wait_until_no_except(fast_task::time_point time) {
-            if (!task_.is_ended())
-                if (!task_.await_task_until(time))
-                    return false;
-            return true;
+            return wait_until_impl(time);
         }
 
         bool has_exception() const {
-            return (bool)ex_ptr;
+            return task_.is_ended() && static_cast<bool>(ex_ptr);
         }
 
         bool is_canceled() const {
@@ -210,9 +266,31 @@ namespace fast_task {
 
     template <>
     class FT_API future<void> : public std::enable_shared_from_this<future<void>> {
+        template <class U>
+        friend class future;
+
         task task_;
         std::exception_ptr ex_ptr;
         bool has_result = false;
+        std::shared_ptr<detail::queued_future_sync> queued_sync;
+
+        void wait_impl() {
+            if (task_.is_ended())
+                return;
+            if (queued_sync) {
+                queued_sync->wait();
+                return;
+            }
+            task_.await_task();
+        }
+
+        bool wait_until_impl(fast_task::time_point time) {
+            if (task_.is_ended())
+                return true;
+            if (queued_sync)
+                return queued_sync->wait_until(time);
+            return task_.await_task_until(time);
+        }
 
     public:
         future() = default;
@@ -224,7 +302,7 @@ namespace fast_task {
         {
             std::shared_ptr<future> future_ = std::make_shared<future>();
             future_->task_ = task::create(
-                [fn = std::move(fn), weak_future = std::weak_ptr<future>(future_)]() mutable {
+                [fn = std::forward<FN>(fn), weak_future = std::weak_ptr<future>(future_)]() mutable {
                     fn();
                     if (auto self = weak_future.lock())
                         self->has_result = true;
@@ -245,8 +323,10 @@ namespace fast_task {
             requires std::is_same_v<std::invoke_result_t<FN>, void>
         {
             std::shared_ptr<future> future_ = std::make_shared<future>();
+            auto sync = std::make_shared<detail::queued_future_sync>();
+            future_->queued_sync = sync;
             future_->task_ = task::create(
-                [fn = std::move(fn), weak_future = std::weak_ptr<future>(future_)]() mutable {
+                [fn = std::forward<FN>(fn), weak_future = std::weak_ptr<future>(future_)]() mutable {
                     fn();
                     if (auto self = weak_future.lock())
                         self->has_result = true;
@@ -259,14 +339,17 @@ namespace fast_task {
             if (pool)
                 pool->bind(future_->task_);
             queue.add(future_->task_);
+            future_->task_.callback(task::create([sync = std::move(sync)]() {
+                sync->signal();
+            }));
             return future_;
         }
 
         template <class FN>
-        std::shared_ptr<future<std::invoke_result_t<FN, void>>> chain(FN&& fn, scheduler::worker_pool* pool = nullptr) &;
+        std::shared_ptr<future<std::invoke_result_t<FN>>> chain(FN&& fn, scheduler::worker_pool* pool = nullptr) &;
 
         template <class FN>
-        std::shared_ptr<future<std::invoke_result_t<FN, void>>> chain(FN&& fn, scheduler::worker_pool* pool = nullptr) &&;
+        std::shared_ptr<future<std::invoke_result_t<FN>>> chain(FN&& fn, scheduler::worker_pool* pool = nullptr) &&;
 
         static std::shared_ptr<future> make_ready();
         void get();
@@ -279,8 +362,8 @@ namespace fast_task {
             if (task_.is_ended())
                 fn(*this);
             else
-                task_.callback(task::create([fut = this->shared_from_this(), fn = std::move(fn)]() mutable {
-                    fn(fut);
+                task_.callback(task::create([fut = this->shared_from_this(), fn = std::forward<FN>(fn)]() mutable {
+                    fn(*fut);
                 }));
         }
 
@@ -291,7 +374,7 @@ namespace fast_task {
             if (task_.is_ended())
                 fn();
             else
-                task_.callback(task::create([fn = std::move(fn)]() mutable {
+                task_.callback(task::create([fn = std::forward<FN>(fn)]() mutable {
                     fn();
                 }));
         }
@@ -321,8 +404,6 @@ namespace fast_task {
         bool enter_wait_until(const task&, enter_state& t, fast_task::time_point time);
     };
 
-    extern template class FT_API future<void>;
-
     template <class T>
     using future_ptr = std::shared_ptr<future<T>>;
 
@@ -332,7 +413,7 @@ namespace fast_task {
         using ResT = std::invoke_result_t<FN, T>;
         std::shared_ptr<future<ResT>> future_ = std::make_shared<future<ResT>>();
         future_->task_ = task::create(
-            [fn = std::move(fn), weak_future = std::weak_ptr<future<ResT>>(future_), prev_future = this->shared_from_this()]() mutable {
+            [fn = std::forward<FN>(fn), weak_future = std::weak_ptr<future<ResT>>(future_), prev_future = this->shared_from_this()]() mutable {
                 if constexpr (std::is_same_v<ResT, void>) {
                     fn(prev_future->get());
                     if (auto self = weak_future.lock())
@@ -340,7 +421,7 @@ namespace fast_task {
                 } else {
                     auto result = std::make_optional<ResT>(fn(prev_future->get()));
                     if (auto self = weak_future.lock())
-                        self->result = result;
+                        self->result.emplace(std::move(*result));
                 }
             },
             [weak_future = std::weak_ptr<future<ResT>>(future_)](const std::exception_ptr& ex) {
@@ -360,7 +441,7 @@ namespace fast_task {
         using ResT = std::invoke_result_t<FN, T>;
         std::shared_ptr<future<ResT>> future_ = std::make_shared<future<ResT>>();
         future_->task_ = task::create(
-            [fn = std::move(fn), weak_future = std::weak_ptr<future<ResT>>(future_), prev_future = this->shared_from_this()]() mutable {
+            [fn = std::forward<FN>(fn), weak_future = std::weak_ptr<future<ResT>>(future_), prev_future = this->shared_from_this()]() mutable {
                 if constexpr (std::is_same_v<ResT, void>) {
                     fn(prev_future->take());
                     if (auto self = weak_future.lock())
@@ -368,7 +449,7 @@ namespace fast_task {
                 } else {
                     auto result = std::make_optional<ResT>(fn(prev_future->take()));
                     if (auto self = weak_future.lock())
-                        self->result = result;
+                        self->result.emplace(std::move(*result));
                 }
             },
             [weak_future = std::weak_ptr<future<ResT>>(future_)](const std::exception_ptr& ex) {
@@ -383,11 +464,11 @@ namespace fast_task {
     }
 
     template <class FN>
-    future_ptr<std::invoke_result_t<FN, void>> future<void>::chain(FN&& fn, scheduler::worker_pool* pool) & {
-        using ResT = std::invoke_result_t<FN, void>;
+    future_ptr<std::invoke_result_t<FN>> future<void>::chain(FN&& fn, scheduler::worker_pool* pool) & {
+        using ResT = std::invoke_result_t<FN>;
         std::shared_ptr<future<ResT>> future_ = std::make_shared<future<ResT>>();
         future_->task_ = task::create(
-            [fn = std::move(fn), weak_future = std::weak_ptr<future<ResT>>(future_), prev_future = this->shared_from_this()]() mutable {
+            [fn = std::forward<FN>(fn), weak_future = std::weak_ptr<future<ResT>>(future_), prev_future = this->shared_from_this()]() mutable {
                 prev_future->get();
                 if constexpr (std::is_same_v<ResT, void>) {
                     fn();
@@ -396,7 +477,7 @@ namespace fast_task {
                 } else {
                     auto result = std::make_optional<ResT>(fn());
                     if (auto self = weak_future.lock())
-                        self->result = result;
+                        self->result.emplace(std::move(*result));
                 }
             },
             [weak_future = std::weak_ptr<future<ResT>>(future_)](const std::exception_ptr& ex) {
@@ -411,11 +492,11 @@ namespace fast_task {
     }
 
     template <class FN>
-    future_ptr<std::invoke_result_t<FN, void>> future<void>::chain(FN&& fn, scheduler::worker_pool* pool) && {
-        using ResT = std::invoke_result_t<FN, void>;
+    future_ptr<std::invoke_result_t<FN>> future<void>::chain(FN&& fn, scheduler::worker_pool* pool) && {
+        using ResT = std::invoke_result_t<FN>;
         std::shared_ptr<future<ResT>> future_ = std::make_shared<future<ResT>>();
         future_->task_ = task::create(
-            [fn = std::move(fn), weak_future = std::weak_ptr<future<ResT>>(future_), prev_future = this->shared_from_this()]() mutable {
+            [fn = std::forward<FN>(fn), weak_future = std::weak_ptr<future<ResT>>(future_), prev_future = this->shared_from_this()]() mutable {
                 prev_future->get();
                 if constexpr (std::is_same_v<ResT, void>) {
                     fn();
@@ -424,7 +505,7 @@ namespace fast_task {
                 } else {
                     auto result = std::make_optional<ResT>(fn());
                     if (auto self = weak_future.lock())
-                        self->result = result;
+                        self->result.emplace(std::move(*result));
                 }
             },
             [weak_future = std::weak_ptr<future<ResT>>(future_)](const std::exception_ptr& ex) {
@@ -533,15 +614,17 @@ namespace fast_task {
                 return;
             std::vector<future_ptr<void>> futures;
             futures.reserve(container.size());
-            for (auto& item : container)
-                futures.push_back(future<void>::start(queue, [&item, &fn]() { fn(item); }));
-
             try {
+                for (auto& item : container)
+                    futures.push_back(future<void>::start(queue, [&item, &fn]() { fn(item); }));
+
                 for (auto& future_ : futures)
                     future_->wait();
             } catch (...) {
                 for (auto& future_ : futures)
                     future_->cancel();
+                for (auto& future_ : futures)
+                    future_->wait_no_except();
                 throw;
             }
         }
@@ -552,15 +635,17 @@ namespace fast_task {
                 return;
             std::vector<future_ptr<void>> futures;
             futures.reserve(container.size());
-            for (auto& item : container)
-                futures.push_back(future<void>::start([&item, &fn]() { fn(item); }));
-
             try {
+                for (auto& item : container)
+                    futures.push_back(future<void>::start([&item, &fn]() { fn(item); }));
+
                 for (auto& future_ : futures)
                     future_->wait();
             } catch (...) {
                 for (auto& future_ : futures)
                     future_->cancel();
+                for (auto& future_ : futures)
+                    future_->wait_no_except();
                 throw;
             }
         }
@@ -734,7 +819,7 @@ namespace fast_task {
             future_ptr<T> t;
 
             bool await_ready() noexcept {
-                return t->is_ready();
+                return !t || t->is_ready();
             }
 
             template <class Promise>
@@ -758,7 +843,7 @@ namespace fast_task {
                         false,
                         true
                     );
-                    if (t->is_ready())
+                    if (!t || t->is_ready())
                         return false;
                     t->callback(bridge_task);
                     return true;
@@ -776,7 +861,7 @@ namespace fast_task {
             future_ptr<T> t;
 
             bool await_ready() noexcept {
-                return t->is_ready();
+                return !t || t->is_ready();
             }
 
             template <class Promise>
@@ -800,7 +885,7 @@ namespace fast_task {
                         false,
                         true
                     );
-                    if (t->is_ready())
+                    if (!t || t->is_ready())
                         return false;
                     t->callback(bridge_task);
                     return true;
@@ -820,7 +905,7 @@ namespace fast_task {
 
     template <class T>
     inline auto operator co_await(const future_ptr<T>& t) noexcept {
-        return detail::future_cop_result_awaiter{{}, std::move(t)};
+        return detail::future_cop_result_awaiter{{}, t};
     }
     #endif
 }

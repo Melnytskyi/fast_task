@@ -27,7 +27,7 @@
     #if defined(_MSC_VER)
         #include "intrin.h"
 static void psnip_cpu_getid(int func, int* data) {
-    __cpuid(data, func);
+    __cpuidex(data, func, 0);
 }
     #else
 static void psnip_cpu_getid(int func, int* data) {
@@ -47,7 +47,7 @@ static void psnip_cpu_getid(int func, int* data) {
 static unsigned int psnip_cpuinfo[8 * 4] = {
     0,
 };
-#elif defined(PSNIP_CPU_ARCH_ARM) || defined(PSNIP_CPU_ARCH_ARM_64)
+#elif defined(PSNIP_CPU_ARCH_ARM) || defined(PSNIP_CPU_ARCH_ARM64)
 static unsigned long psnip_cpuinfo[2] = {
     0,
 };
@@ -55,31 +55,39 @@ static unsigned long psnip_cpuinfo[2] = {
 
 static void psnip_cpu_init(void) {
 #if defined(PSNIP_CPU_ARCH_X86) || defined(PSNIP_CPU_ARCH_X86_64)
-    int i;
-    for (i = 0; i < 8; i++) {
-        psnip_cpu_getid(i, (int*)&(psnip_cpuinfo[i * 4]));
+    psnip_cpu_getid(0, (int*)&(psnip_cpuinfo[0]));
+    unsigned int max_leaf = psnip_cpuinfo[0];
+    if (max_leaf > 7)
+        max_leaf = 7;
+    for (unsigned int i = 1; i <= max_leaf; i++) {
+        psnip_cpu_getid((int)i, (int*)&(psnip_cpuinfo[i * 4]));
     }
-#elif defined(PSNIP_CPU_ARCH_ARM) || defined(PSNIP_CPU_ARCH_ARM_64)
+#elif defined(PSNIP_CPU_ARCH_ARM) || defined(PSNIP_CPU_ARCH_ARM64)
+    #if defined(PSNIP_CPU__IMPL_GETAUXVAL)
     psnip_cpuinfo[0] = getauxval(AT_HWCAP);
     psnip_cpuinfo[1] = getauxval(AT_HWCAP2);
+    #endif
 #endif
 }
 
-bool psnip_cpu_init_once = []() { psnip_cpu_init(); return true; }();
-
-
 int
 psnip_cpu_feature_check(enum PSnipCPUFeature feature) {
+    static const bool psnip_cpu_init_once = []() {
+        psnip_cpu_init();
+        return true;
+    }();
+    (void)psnip_cpu_init_once;
+
 #if defined(PSNIP_CPU_ARCH_X86) || defined(PSNIP_CPU_ARCH_X86_64)
     unsigned int i, r, b;
-#elif defined(PSNIP_CPU_ARCH_ARM) || defined(PSNIP_CPU_ARCH_ARM_64)
+#elif defined(PSNIP_CPU_ARCH_ARM) || defined(PSNIP_CPU_ARCH_ARM64)
     unsigned long b, i;
 #endif
 
 #if defined(PSNIP_CPU_ARCH_X86) || defined(PSNIP_CPU_ARCH_X86_64)
     if ((feature & PSNIP_CPU_FEATURE_CPU_MASK) != PSNIP_CPU_FEATURE_X86)
         return 0;
-#elif defined(PSNIP_CPU_ARCH_ARM) || defined(PSNIP_CPU_ARCH_ARM_64)
+#elif defined(PSNIP_CPU_ARCH_ARM) || defined(PSNIP_CPU_ARCH_ARM64)
     if ((feature & PSNIP_CPU_FEATURE_CPU_MASK) != PSNIP_CPU_FEATURE_ARM)
         return 0;
 #else
@@ -97,10 +105,10 @@ psnip_cpu_feature_check(enum PSnipCPUFeature feature) {
         return 0;
 
     return (psnip_cpuinfo[(i * 4) + r] >> b) & 1;
-#elif defined(PSNIP_CPU_ARCH_ARM) || defined(PSNIP_CPU_ARCH_ARM_64)
-    b = 1 << ((feature & 0xff) - 1);
+#elif defined(PSNIP_CPU_ARCH_ARM) || defined(PSNIP_CPU_ARCH_ARM64)
+    b = 1UL << ((feature & 0xff) - 1);
     i = psnip_cpuinfo[(feature >> 0x08) & 0xff];
-    return (psnip_cpuinfo[(feature >> 0x08) & 0xff] & b) == b;
+    return (i & b) == b;
 #endif
 }
 
@@ -116,14 +124,11 @@ int psnip_cpu_feature_check_many(enum PSnipCPUFeature* feature) {
 
 int psnip_cpu_count(void) {
     static int count = 0;
-    int c;
+    int c = -1;
 
 #if defined(_WIN32)
     DWORD_PTR lpProcessAffinityMask = 0;
     DWORD_PTR lpSystemAffinityMask = 0;
-#elif defined(PSNIP_CPU__IMPL_SYSCONF) && defined(HW_NCPU)
-    int mib[2];
-    size_t len;
 #endif
 
     if (count != 0)
@@ -144,6 +149,8 @@ int psnip_cpu_count(void) {
 #elif defined(_hpux)
     c = mpctl(MPC_GETNUMSPUS, NULL, NULL);
 #elif defined(HW_NCPU)
+    int mib[2];
+    size_t len;
     c = 0;
     mib[0] = CTL_HW;
     mib[1] = HW_NCPU;

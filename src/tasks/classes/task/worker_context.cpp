@@ -38,6 +38,7 @@ namespace fast_task::scheduler {
         bool runnable_or_shutting_down(const executors_local* loc, const worker_pool_storage* home) noexcept {
             return glob.shutdown.executors_down.load(std::memory_order_acquire) ||
                    glob.shutdown.requested.load(std::memory_order_acquire) ||
+                   (home && (home->runtime.stop_requested.load(std::memory_order_acquire) || home->closing)) ||
                    has_runnable_work(home, loc);
         }
 

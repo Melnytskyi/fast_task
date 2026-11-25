@@ -5,7 +5,7 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
-#ifdef _WIN64
+#ifdef _WIN32
     #include "native_workers_singleton_win.hpp"
 #else
     #include "native_workers_singleton_linux.hpp"

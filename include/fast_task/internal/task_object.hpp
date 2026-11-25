@@ -45,7 +45,7 @@ namespace fast_task {
                 invalid_switch_caught = 0x100,
                 completed = 0x200,
                 relock_action_as_unlock = 0x400,
-                // 0x800 has_waiters
+                resume_requested = 0x800,
             };
         };
 
@@ -58,7 +58,7 @@ namespace fast_task {
 
         std::atomic<execution_data*> exdata; // 8[also re-used in allocator for linked list of free task_object items]
         std::atomic<uint32_t> link_counter;  // 4
-        std::atomic<state_f::f> state;       // 2
+        std::atomic<uint16_t> state;         // 2
         std::atomic<status_e> status;        // 1
         uint8_t relock_type;                 // 1
         std::atomic<void*> tls_data;         // 8
@@ -93,6 +93,8 @@ namespace fast_task {
         void set_invalid_switch_caught(bool state) noexcept;
         bool get_completed() const noexcept;
         void set_completed(bool state) noexcept;
+        bool get_resume_requested() const noexcept;
+        void set_resume_requested(bool state) noexcept;
         execution_mode get_execution_mode() const noexcept;
 
         task_priority get_priority() const noexcept;
@@ -103,6 +105,7 @@ namespace fast_task {
         bool is_scheduled() const noexcept; // status != created
         bool is_created() const noexcept;   // status == created
         bool is_running() const noexcept;   // status == running
+        bool is_suspending() const noexcept; // status == suspending
         bool is_suspended() const noexcept; // status == suspended
         bool is_ended() const noexcept;     // status == ended
         bool is_released() const noexcept;  // status == released

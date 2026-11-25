@@ -23,7 +23,7 @@ namespace fast_task::this_task {
 
     void FT_API switch_to(scheduler::worker_pool& target_pool);
     void FT_API set_pool(scheduler::worker_pool& target_pool) noexcept;
-    scheduler::worker_pool& FT_API current_pool() noexcept;
+    FT_API scheduler::worker_pool& current_pool() noexcept;
 
     template <class Dur_resolution, class Dur_type>
     void sleep_for(std::chrono::duration<Dur_resolution, Dur_type> duration) {

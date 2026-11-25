@@ -97,3 +97,16 @@ TEST_F(TaskQueueTest, EnableDisable) {
     q.wait();
     EXPECT_TRUE(ran.load());
 }
+
+TEST_F(TaskQueueTest, DestructionWithUnstartedTasksDoesNotDeadlock) {
+    std::atomic<int> ran{0};
+    {
+        fast_task::queue q(1);
+        q.disable();
+        auto t1 = fast_task::task::create([&] { ran.fetch_add(1, std::memory_order_relaxed); });
+        auto t2 = fast_task::task::create([&] { ran.fetch_add(1, std::memory_order_relaxed); });
+        q.add(t1);
+        q.add(t2);
+    }
+    EXPECT_EQ(ran.load(std::memory_order_relaxed), 0);
+}

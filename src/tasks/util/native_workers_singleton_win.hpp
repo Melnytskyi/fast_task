@@ -6,12 +6,17 @@
 // http://www.boost.org/LICENSE_1_0.txt)
 #ifndef SRC_TASKS_UTIL_NATIVE_WORKERS_SINGLETON_WIN
 #define SRC_TASKS_UTIL_NATIVE_WORKERS_SINGLETON_WIN
+#include <algorithm>
 #include <chrono>
 #include <cstring>
+#include <fast_task/native/thread.hpp>
 #include <fast_task/shared.hpp>
 #include <list>
+#include <memory>
 #include <mutex>
+#include <stdexcept>
 #include <thread>
+#include <type_traits>
 #include <vector>
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -29,11 +34,8 @@ namespace fast_task::util {
 
     public:
         OVERLAPPED overlapped;
-
-    private:
         native_worker_manager* manager;
 
-    public:
         native_worker_handle(native_worker_manager* manager)
             : manager(manager) {
             SecureZeroMemory(&overlapped, sizeof(OVERLAPPED));
@@ -46,6 +48,8 @@ namespace fast_task::util {
         native_worker_handle& operator=(native_worker_handle&&) = delete;
     };
 
+    static_assert(std::is_standard_layout_v<native_worker_handle>, "native_worker_handle must be standard-layout");
+
     class FT_API_LOCAL native_workers_singleton {
         static constexpr ULONG_PTR WAKEUP_KEY = 0;
 
@@ -53,34 +57,50 @@ namespace fast_task::util {
         std::vector<OVERLAPPED_ENTRY> m_entries;
 
         native_workers_singleton() {
-            m_hCompletionPort.reset(CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 0), CloseHandle);
-            if (!m_hCompletionPort)
+                HANDLE hPort = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 0);
+            if (hPort == NULL)
                 throw std::runtime_error("CreateIoCompletionPort failed");
-            m_entries.resize(std::min<size_t>(fast_task::native::thread::hardware_concurrency(), INT32_MAX));
+            m_hCompletionPort.reset(hPort, CloseHandle);
+            unsigned hw = fast_task::native::thread::hardware_concurrency();
+            size_t entries_cap = std::max<size_t>(16, static_cast<size_t>(hw) * 2);
+            m_entries.resize(std::min<size_t>(entries_cap, static_cast<size_t>(INT32_MAX)));
         }
 
         bool poll_once(int timeout_ms) {
-            ULONG entries_count = 0;
-            DWORD wait_ms = timeout_ms < 0 ? INFINITE : static_cast<DWORD>(timeout_ms);
-            auto status = GetQueuedCompletionStatusEx(m_hCompletionPort.get(), m_entries.data(), (ULONG)m_entries.size(), &entries_count, wait_ms, false);
-            if (!status)
-                return false;
-
             bool processed = false;
-            for (ULONG i = 0; i < entries_count; i++) {
-                auto& entry = m_entries[i];
-                if (entry.lpCompletionKey == WAKEUP_KEY)
-                    continue;
-                auto overlap = ((native_worker_handle*)entry.lpOverlapped);
-                if (!overlap || !overlap->manager)
-                    continue;
-                overlap->manager->handle(
-                    (void*)entry.lpCompletionKey,
-                    overlap,
-                    entry.dwNumberOfBytesTransferred
+            DWORD wait_ms = timeout_ms < 0 ? INFINITE : static_cast<DWORD>(timeout_ms);
+            for (;;) {
+                ULONG entries_count = 0;
+                auto status = GetQueuedCompletionStatusEx(
+                    m_hCompletionPort.get(),
+                    m_entries.data(),
+                    static_cast<ULONG>(m_entries.size()),
+                    &entries_count,
+                    wait_ms,
+                    false
                 );
-                processed = true;
-            }
+                if (!status || entries_count == 0)
+                    break;
+
+                    for (ULONG i = 0; i < entries_count; i++) {
+                        auto& entry = m_entries[i];
+                        if (entry.lpCompletionKey == WAKEUP_KEY && entry.lpOverlapped == nullptr)
+                            continue;
+                        auto overlap = reinterpret_cast<native_worker_handle*>(entry.lpOverlapped);
+                        if (!overlap || !overlap->manager)
+                            continue;
+                        overlap->manager->handle(
+                            reinterpret_cast<void*>(entry.lpCompletionKey),
+                            overlap,
+                            entry.dwNumberOfBytesTransferred
+                        );
+                        processed = true;
+                    }
+
+                    if (entries_count < m_entries.size())
+                        break;
+                    wait_ms = 0;
+                }
             return processed;
         }
 

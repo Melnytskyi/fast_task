@@ -69,3 +69,53 @@ TEST_F(FutureBasicTest, GetRethrowsException) {
     });
     EXPECT_THROW(f->get(), std::runtime_error);
 }
+
+TEST_F(FutureBasicTest, ChainVoidAndCrossType) {
+    auto f_void = fast_task::future<void>::start([]() {
+        fast_task::this_task::yield();
+    });
+    auto f_from_void = f_void->chain([]() -> int {
+        return 99;
+    });
+    EXPECT_EQ(f_from_void->get(), 99);
+
+    auto f_int = fast_task::future<int>::start([]() {
+        return 42;
+    });
+    auto f_str = f_int->chain([](int v) -> std::string {
+        return "val=" + std::to_string(v);
+    });
+    EXPECT_EQ(f_str->get(), "val=42");
+}
+
+TEST_F(FutureBasicTest, WhenReadySurvivesDroppingFuturePtr) {
+    fast_task::native::mutex nm;
+    fast_task::native::condition_variable ncv;
+    bool callback_ran = false;
+    int observed = 0;
+
+    {
+        auto fut = fast_task::future<int>::start([]() {
+            fast_task::this_task::sleep_for(std::chrono::milliseconds(15));
+            return 123;
+        });
+        fut->when_ready([&](fast_task::future<int>& f) {
+            int val = f.get();
+            {
+                fast_task::lock_guard<fast_task::native::mutex> lk(nm);
+                observed = val;
+                callback_ran = true;
+            }
+            ncv.notify_all();
+        });
+        fut.reset();
+    }
+
+    {
+        fast_task::unique_lock<fast_task::native::mutex> lk(nm);
+        while (!callback_ran)
+            ncv.wait(lk);
+    }
+    EXPECT_TRUE(callback_ran);
+    EXPECT_EQ(observed, 123);
+}

@@ -11,7 +11,7 @@
 #include <tasks/util/light_stack.hpp>
 
 namespace fast_task {
-    size_t task::max_running_tasks = 0;
+    std::atomic<size_t> task::max_running_tasks{0};
 
     void taskExecutor(worker_entry_options options) {
         set_interruptTask();
@@ -33,8 +33,8 @@ namespace fast_task {
     void pool_worker_main(uint8_t slot) {
         set_interruptTask();
 
-        worker_pool_storage* pool = pool_for_index(slot);
-        if (!pool) {
+        pool_ref ref = acquire_pool_ref(slot);
+        if (!ref) {
             threads_manager::count_thread_exit();
             return;
         }
@@ -42,7 +42,7 @@ namespace fast_task {
         {
             scheduler::worker_context ctx;
             try {
-                scheduler::worker_context_impl::of(ctx).join(*pool, true, true);
+                scheduler::worker_context_impl::of(ctx).join(*ref, true, true);
             } catch (...) {
                 threads_manager::count_thread_exit();
                 return;

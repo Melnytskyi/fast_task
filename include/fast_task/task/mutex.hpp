@@ -282,7 +282,11 @@ namespace fast_task {
 
                 bool await_suspend(const base_coro_handle& h) {
                     task_obj = h.promise->task_object;
-                    return !mutex.enter_read_wait_until(h.promise->task_object, state, time_point);
+                    if (mutex.enter_read_wait_until(h.promise->task_object, state, time_point)) {
+                        successful = !task_obj.has_wait_timed_out();
+                        return false;
+                    }
+                    return true;
                 }
 
                 bool await_resume() noexcept {
@@ -298,7 +302,7 @@ namespace fast_task {
 
         template <class Rep, class Period>
         [[nodiscard]] auto async_try_read_lock_for(const std::chrono::duration<Rep, Period>& duration) {
-            return async_try_read_lock_until(*this, fast_task::clock::now() + duration);
+            return async_try_read_lock_until(fast_task::clock::now() + duration);
         }
 
         [[nodiscard]] auto async_try_write_lock_until(fast_task::time_point time_point) {
@@ -319,7 +323,11 @@ namespace fast_task {
 
                 bool await_suspend(const base_coro_handle& h) {
                     task_obj = h.promise->task_object;
-                    return !mutex.enter_write_wait_until(h.promise->task_object, state, time_point);
+                    if (mutex.enter_write_wait_until(h.promise->task_object, state, time_point)) {
+                        successful = !task_obj.has_wait_timed_out();
+                        return false;
+                    }
+                    return true;
                 }
 
                 bool await_resume() noexcept {
@@ -335,7 +343,7 @@ namespace fast_task {
 
         template <class Rep, class Period>
         [[nodiscard]] auto async_try_write_lock_for(const std::chrono::duration<Rep, Period>& duration) {
-            return async_try_write_lock_until(*this, fast_task::clock::now() + duration);
+            return async_try_write_lock_until(fast_task::clock::now() + duration);
         }
 #endif
     };

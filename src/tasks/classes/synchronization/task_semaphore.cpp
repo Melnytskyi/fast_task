@@ -7,12 +7,33 @@
 #include <fast_task/internal/futex.hpp>
 #include <fast_task/task.hpp>
 #include <tasks/_internal.hpp>
+#include <thread>
 
 namespace fast_task {
     constexpr size_t SEM_COUNT_MASK = ~native_thread_data;
     constexpr size_t SEM_HAS_WAITER = native_thread_data;
 
     namespace {
+        struct sem_enter_lock_ctx {
+            bool active = false;
+            bool called = false;
+            bool acquired = false;
+        };
+
+        thread_local sem_enter_lock_ctx g_sem_enter_lock_ctx;
+
+        struct sem_enter_lock_scope {
+            sem_enter_lock_ctx& ctx;
+
+            sem_enter_lock_scope(sem_enter_lock_ctx& c) noexcept : ctx(c) {
+                ctx = {true, false, false};
+            }
+
+            ~sem_enter_lock_scope() noexcept {
+                ctx.active = false;
+            }
+        };
+
         void semaphore_release_waiter_bit(void* address, size_t, bool has_remaining) {
             auto& state = *reinterpret_cast<std::atomic_size_t*>(address);
             if (has_remaining)
@@ -26,6 +47,41 @@ namespace fast_task {
                 return 0;
             return futex::wake_on_address(&state, semaphore_release_waiter_bit, count);
         }
+
+        bool sem_enter_check_callback(void* addr) {
+            auto& state = *reinterpret_cast<std::atomic_size_t*>(addr);
+            size_t cur = state.load(std::memory_order_relaxed);
+            while (true) {
+                if ((cur & SEM_COUNT_MASK) > 0)
+                    return true;
+                if (state.compare_exchange_weak(cur, cur | SEM_HAS_WAITER, std::memory_order_release, std::memory_order_relaxed))
+                    return false;
+            }
+        }
+
+        void sem_enter_lock_callback(void* addr, const task&, futex::node_data) {
+            auto& state = *reinterpret_cast<std::atomic_size_t*>(addr);
+            size_t cur = state.load(std::memory_order_relaxed);
+            bool try_only = g_sem_enter_lock_ctx.active;
+            if (try_only)
+                g_sem_enter_lock_ctx.called = true;
+            while (true) {
+                if ((cur & SEM_COUNT_MASK) > 0) {
+                    if (state.compare_exchange_weak(cur, cur - 1, std::memory_order_acquire, std::memory_order_relaxed)) {
+                        if (try_only)
+                            g_sem_enter_lock_ctx.acquired = true;
+                        return;
+                    }
+                    continue;
+                }
+                if (try_only) {
+                    g_sem_enter_lock_ctx.acquired = false;
+                    return;
+                }
+                std::this_thread::yield();
+                cur = state.load(std::memory_order_relaxed);
+            }
+        }
     }
 
     semaphore::semaphore() : values{.state = 0, .max_threshold = 0} {
@@ -34,8 +90,8 @@ namespace fast_task {
 
     semaphore::~semaphore() {
         FT_DEBUG_ONLY(unregister_object(this));
-        if ((values.state.load(std::memory_order_relaxed) & SEM_COUNT_MASK) == 0) {
-            assert(false && "Semaphore destroyed while locked");
+        if (futex::has_waiters(&values.state)) {
+            assert(false && "Semaphore destroyed while waited");
             std::terminate();
         }
     }
@@ -116,7 +172,7 @@ namespace fast_task {
         size_t cached = values.state.load(std::memory_order_relaxed);
         size_t max = values.max_threshold.load(std::memory_order_relaxed);
         while (true) {
-            if ((cached & SEM_COUNT_MASK) == max)
+            if ((cached & SEM_COUNT_MASK) >= max)
                 return;
             if (values.state.compare_exchange_weak(cached, cached + 1, std::memory_order_release, std::memory_order_relaxed))
                 break;
@@ -153,58 +209,63 @@ namespace fast_task {
 
     bool semaphore::enter_wait(const task& task, enter_state& state) {
         interrupt_unsafe_region region;
-        size_t expected = values.state.load(std::memory_order_relaxed);
-        while ((expected & SEM_COUNT_MASK) > 0) {
-            if (values.state.compare_exchange_weak(expected, expected - 1, std::memory_order_acquire, std::memory_order_relaxed))
+        while (true) {
+            size_t expected = values.state.load(std::memory_order_relaxed);
+            while ((expected & SEM_COUNT_MASK) > 0) {
+                if (values.state.compare_exchange_weak(expected, expected - 1, std::memory_order_acquire, std::memory_order_relaxed))
+                    return true;
+            }
+            bool immediate = false;
+            bool called = false;
+            bool acquired = false;
+            {
+                sem_enter_lock_scope scope(g_sem_enter_lock_ctx);
+                immediate = futex::enter_wait_on_address_lock(
+                    task,
+                    &values.state,
+                    &sem_enter_check_callback,
+                    &sem_enter_lock_callback,
+                    state
+                );
+                called = g_sem_enter_lock_ctx.called;
+                acquired = g_sem_enter_lock_ctx.acquired;
+            }
+            if (!immediate)
+                return false;
+            if (!called || acquired)
                 return true;
         }
-        return futex::enter_wait_on_address_lock(
-            task,
-            &values.state,
-            [](void* addr) {
-                auto& state = *reinterpret_cast<std::atomic_size_t*>(addr);
-                size_t cur = state.load(std::memory_order_relaxed);
-                while (true) {
-                    if ((cur & SEM_COUNT_MASK) > 0)
-                        return true;
-                    if (state.compare_exchange_weak(cur, cur | SEM_HAS_WAITER, std::memory_order_release, std::memory_order_relaxed))
-                        return false;
-                }
-            },
-            [](void* addr, auto&, auto) {
-                auto& state = *reinterpret_cast<std::atomic_size_t*>(addr);
-                state.fetch_sub(1, std::memory_order_acquire);
-            },
-            state
-        );
     }
 
     bool semaphore::enter_wait_until(const task& task, enter_state& state, fast_task::time_point time_point) {
         interrupt_unsafe_region region;
-        size_t expected = values.state.load(std::memory_order_relaxed);
-        while ((expected & SEM_COUNT_MASK) > 0) {
-            if (values.state.compare_exchange_weak(expected, expected - 1, std::memory_order_acquire, std::memory_order_relaxed))
+        get_data(task).set_time_end(false);
+        while (true) {
+            size_t expected = values.state.load(std::memory_order_relaxed);
+            while ((expected & SEM_COUNT_MASK) > 0) {
+                if (values.state.compare_exchange_weak(expected, expected - 1, std::memory_order_acquire, std::memory_order_relaxed))
+                    return true;
+            }
+            bool immediate = false;
+            bool called = false;
+            bool acquired = false;
+            {
+                sem_enter_lock_scope scope(g_sem_enter_lock_ctx);
+                immediate = futex::enter_wait_on_address_lock_until(
+                    task,
+                    &values.state,
+                    &sem_enter_check_callback,
+                    &sem_enter_lock_callback,
+                    state,
+                    time_point
+                );
+                called = g_sem_enter_lock_ctx.called;
+                acquired = g_sem_enter_lock_ctx.acquired;
+            }
+            if (!immediate)
+                return false;
+            if (!called || acquired)
                 return true;
         }
-        return futex::enter_wait_on_address_lock_until(
-            task,
-            &values.state,
-            [](void* addr) {
-                auto& state = *reinterpret_cast<std::atomic_size_t*>(addr);
-                size_t cur = state.load(std::memory_order_relaxed);
-                while (true) {
-                    if ((cur & SEM_COUNT_MASK) > 0)
-                        return true;
-                    if (state.compare_exchange_weak(cur, cur | SEM_HAS_WAITER, std::memory_order_release, std::memory_order_relaxed))
-                        return false;
-                }
-            },
-            [](void* addr, auto&, auto) {
-                auto& state = *reinterpret_cast<std::atomic_size_t*>(addr);
-                state.fetch_sub(1, std::memory_order_acquire);
-            },
-            state,
-            time_point
-        );
     }
 }

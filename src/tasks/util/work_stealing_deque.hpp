@@ -26,7 +26,7 @@ template <typename T>
 class work_stealing_deque {
 public:
     explicit work_stealing_deque(std::int64_t capacity = 1024)
-        : _capacity(capacity), _mask(capacity - 1), _buffer(std::make_unique<T[]>(capacity)) {
+        : _capacity(capacity), _mask(capacity - 1), _buffer(std::make_unique<std::atomic<T>[]>(capacity)) {
         assert(capacity > 0 && (capacity & (capacity - 1)) == 0 && "Capacity must be a power of 2!");
     }
 
@@ -55,7 +55,7 @@ public:
         if (b - t >= _capacity)
             return false;
 
-        _buffer[b & _mask] = item;
+        _buffer[b & _mask].store(item, std::memory_order_relaxed);
 
         _bottom.store(b + 1, std::memory_order_release);
         return true;
@@ -76,21 +76,21 @@ public:
         t = _top.load(std::memory_order_relaxed);
 
         if (t < b) {
-            item = _buffer[b & _mask];
+            item = _buffer[b & _mask].load(std::memory_order_relaxed);
             return true;
         }
 
         if (t > b) {
-            _bottom.store(b + 1, std::memory_order_relaxed);
+            _bottom.store(b + 1, std::memory_order_release);
             return false;
         }
 
         if (_top.compare_exchange_strong(t, t + 1, std::memory_order_seq_cst, std::memory_order_relaxed)) {
-            _bottom.store(b + 1, std::memory_order_relaxed);
-            item = _buffer[b & _mask];
+            item = _buffer[b & _mask].load(std::memory_order_relaxed);
+            _bottom.store(b + 1, std::memory_order_release);
             return true;
         } else {
-            _bottom.store(b + 1, std::memory_order_relaxed);
+            _bottom.store(b + 1, std::memory_order_release);
             return false;
         }
     }
@@ -98,11 +98,12 @@ public:
     bool steal(T& item) noexcept {
         while (true) {
             auto t = _top.load(std::memory_order_acquire);
+            std::atomic_thread_fence(std::memory_order_seq_cst);
             auto b = _bottom.load(std::memory_order_acquire);
 
             if (t >= b)
                 return false;
-            item = _buffer[t & _mask];
+            item = _buffer[t & _mask].load(std::memory_order_relaxed);
             if (_top.compare_exchange_strong(t, t + 1, std::memory_order_seq_cst, std::memory_order_relaxed))
                 return true;
         }
@@ -115,7 +116,7 @@ private:
     alignas(hardware_destructive_interference_size) std::atomic<std::int64_t> _top{0};
     alignas(hardware_destructive_interference_size) std::atomic<std::int64_t> _bottom{0};
 
-    std::unique_ptr<T[]> _buffer;
+    std::unique_ptr<std::atomic<T>[]> _buffer;
 };
 
 #endif /* LIBRARY_FAST_TASK_SRC_TASKS_UTIL_WORK_STEALING_DEQUE */

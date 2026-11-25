@@ -119,6 +119,8 @@ namespace fast_task {
 
         void unchecked_unlock();
         void check_deadlock(size_t lock_id);
+        static ptrdiff_t state_to_limiter_offset(const limiter* self = nullptr) noexcept;
+        static limiter* from_state_addr(void* addr) noexcept;
 
     public:
         limiter();

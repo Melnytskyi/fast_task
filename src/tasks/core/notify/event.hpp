@@ -33,16 +33,19 @@ namespace fast_task {
             std::atomic_thread_fence(std::memory_order_seq_cst);
 
             uint64_t state = park.load(std::memory_order_acquire);
-            if (pool_park_line::sleepers_in(state) == 0)
-                return false;
-            if (pool_park_line::spinners_in(state) != 0 || pool_park_line::pending_in(state))
-                return true;
+            for (;;) {
+                if (pool_park_line::sleepers_in(state) == 0)
+                    return false;
+                if (pool_park_line::spinners_in(state) != 0 || pool_park_line::pending_in(state))
+                    return true;
 
-            if (!park.begin_wake(state))
-                return true;
-            park.bump_epoch();
-            native_futex_wake(&park.wake_epoch, 1);
-            return true;
+                if (park.begin_wake(state)) {
+                    park.bump_epoch();
+                    native_futex_wake(&park.wake_epoch, 1);
+                    return true;
+                }
+                state = park.load(std::memory_order_acquire);
+            }
         }
 
         bool cascade() noexcept {

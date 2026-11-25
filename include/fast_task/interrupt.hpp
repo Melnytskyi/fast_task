@@ -14,6 +14,10 @@ namespace fast_task {
     struct FT_API interrupt_unsafe_region {
         interrupt_unsafe_region();
         ~interrupt_unsafe_region();
+        interrupt_unsafe_region(const interrupt_unsafe_region&) = delete;
+        interrupt_unsafe_region& operator=(const interrupt_unsafe_region&) = delete;
+        interrupt_unsafe_region(interrupt_unsafe_region&&) = delete;
+        interrupt_unsafe_region& operator=(interrupt_unsafe_region&&) = delete;
         static void lock();
         static void unlock();
         static std::size_t lock_swap(std::size_t);

@@ -115,8 +115,15 @@ namespace fast_task::native {
         }
 
         thread& operator=(thread&& other) noexcept {
-            if (joinable())
-                detach();
+            if (this == &other)
+                return *this;
+            if (joinable()) {
+                try {
+                    detach();
+                } catch (...) {
+                    _thread = nullptr;
+                }
+            }
             _id = other._id;
             _thread = other._thread;
             _affinity_applied = other._affinity_applied;
@@ -126,8 +133,13 @@ namespace fast_task::native {
         }
 
         ~thread() {
-            if (_thread)
-                detach();
+            if (_thread) {
+                try {
+                    detach();
+                } catch (...) {
+                    _thread = nullptr;
+                }
+            }
         }
 
         [[nodiscard]] id get_id() const noexcept;
@@ -188,7 +200,7 @@ namespace fast_task::native {
         id(unsigned long id)
             : _id(id) {}
 
-        unsigned long _id;
+        unsigned long _id = 0;
     };
 }
 

@@ -50,12 +50,16 @@ namespace fast_task {
         return (state.load(std::memory_order_acquire) & (state_f::completed)) != 0;
     }
 
+    bool task_object::get_resume_requested() const noexcept {
+        return (state.load(std::memory_order_acquire) & (state_f::resume_requested)) != 0;
+    }
+
     template <fast_task::task_object::state_f::f flag>
-    void set_flag(std::atomic<fast_task::task_object::state_f::f>& state, bool on) noexcept {
+    void set_flag(std::atomic<uint16_t>& state, bool on) noexcept {
         if (on)
-            reinterpret_cast<std::atomic_uint16_t&>(state).fetch_or(flag, std::memory_order_acq_rel);
+            state.fetch_or(static_cast<uint16_t>(flag), std::memory_order_acq_rel);
         else
-            reinterpret_cast<std::atomic_uint16_t&>(state).fetch_and(~flag, std::memory_order_acq_rel);
+            state.fetch_and(static_cast<uint16_t>(~static_cast<uint16_t>(flag)), std::memory_order_acq_rel);
     }
 
     void task_object::set_time_end(bool on) noexcept {
@@ -67,8 +71,8 @@ namespace fast_task {
     }
 
     void task_object::reset_wait_flags() noexcept {
-        reinterpret_cast<std::atomic_uint16_t&>(state).fetch_and(
-            static_cast<uint16_t>(~(state_f::time_end | state_f::awaked)),
+        state.fetch_and(
+            static_cast<uint16_t>(~(static_cast<uint16_t>(state_f::time_end) | static_cast<uint16_t>(state_f::awaked))),
             std::memory_order_acq_rel
         );
     }
@@ -101,6 +105,10 @@ namespace fast_task {
         set_flag<state_f::completed>(state, on);
     }
 
+    void task_object::set_resume_requested(bool on) noexcept {
+        set_flag<state_f::resume_requested>(state, on);
+    }
+
     task_object::execution_mode task_object::get_execution_mode() const noexcept {
         return static_cast<task_object::execution_mode>(state.load(std::memory_order_relaxed) & 0x03);
     }
@@ -115,10 +123,10 @@ namespace fast_task {
 
     void task_object::lock() noexcept {
         interrupt_unsafe_region::lock();
-        state_f::f cur = state.load(std::memory_order_relaxed);
+        uint16_t cur = state.load(std::memory_order_relaxed);
         for (;;) {
-            cur = state_f::f(cur & ~state_f::spin_lock_locked);
-            if (state.compare_exchange_weak(cur, state_f::f(cur | state_f::spin_lock_locked), std::memory_order_acquire, std::memory_order_relaxed))
+            cur = static_cast<uint16_t>(cur & ~static_cast<uint16_t>(state_f::spin_lock_locked));
+            if (state.compare_exchange_weak(cur, static_cast<uint16_t>(cur | state_f::spin_lock_locked), std::memory_order_acquire, std::memory_order_relaxed))
                 return;
 #if defined(PLATFORM_WINDOWS)
     #ifdef __IS_X86_OR_X64
@@ -133,9 +141,9 @@ namespace fast_task {
     }
 
     void task_object::unlock() noexcept {
-        state_f::f cur = state.load(std::memory_order_relaxed), next;
+        uint16_t cur = state.load(std::memory_order_relaxed), next;
         do {
-            next = state_f::f(cur & ~state_f::spin_lock_locked);
+            next = static_cast<uint16_t>(cur & ~static_cast<uint16_t>(state_f::spin_lock_locked));
         } while (!state.compare_exchange_weak(cur, next, std::memory_order_release, std::memory_order_relaxed));
         interrupt_unsafe_region::unlock();
     }
@@ -154,6 +162,10 @@ namespace fast_task {
 
     bool task_object::is_running() const noexcept {
         return status.load(std::memory_order_acquire) == status_e::running;
+    }
+
+    bool task_object::is_suspending() const noexcept {
+        return status.load(std::memory_order_acquire) == status_e::suspending;
     }
 
     bool task_object::is_suspended() const noexcept {
@@ -264,7 +276,7 @@ namespace fast_task {
         obj->relock = nullptr;
         obj->relock_type = 0;
         obj->status.store(status_e::created, std::memory_order_relaxed);
-        obj->state.store(static_cast<state_f::f>(0), std::memory_order_relaxed);
+        obj->state.store(0, std::memory_order_relaxed);
         obj->pool_index = global_pool_index;
         obj->priority = task_priority::high;
         obj->awake_check = 0;

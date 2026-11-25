@@ -105,3 +105,10 @@ TEST_F(TaskSemaphoreTest, TryLockForTimeout) {
 
     EXPECT_TRUE(timed_out);
 }
+
+TEST_F(TaskSemaphoreTest, DefaultConstructedDestruction) {
+    EXPECT_NO_THROW({
+        fast_task::semaphore sem;
+        (void)sem;
+    });
+}

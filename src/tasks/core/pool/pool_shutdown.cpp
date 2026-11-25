@@ -46,19 +46,15 @@ namespace fast_task {
             wake_control(storage);
         };
 
-        const uint16_t expected = storage.threads.target();
-        auto active_reached = [&storage, expected] {
-            return storage.threads.active() >= expected;
-        };
-        wait_until_quiet(active_reached, wake);
-
         retire_workers();
 
         auto all_retired = [&storage] {
-            return storage.threads.active() == 0;
+            return storage.threads.active() == 0 &&
+                   storage.threads.live() == 0 &&
+                   storage.threads.foreign() == 0;
         };
         auto retire_or_wake = [&storage, &retire_workers] {
-            if (storage.ops.queue.pending(storage) == 0)
+            if (storage.ops.queue.pending(storage) == 0 && storage.threads.active() != 0)
                 retire_workers();
             else
                 wake_control(storage);
@@ -105,6 +101,11 @@ namespace fast_task {
 
         if (!storage.is_global) {
             release_pool_slot(storage.pool_index);
+            auto no_refs = [&storage] {
+                return storage.active_refs.load(std::memory_order_acquire) == 0;
+            };
+            auto noop = [] {};
+            wait_until_quiet(no_refs, noop);
             storage.pool_index = global_pool_index;
         }
     }

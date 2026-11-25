@@ -12,45 +12,67 @@ namespace fast_task {
         : value{muts} {}
 
     void multiply_mutex::lock() {
-        for (auto& mut : value.mu)
-            mut.lock();
+        size_t locked_count = 0;
+        try {
+            for (auto& mut : value.mu) {
+                mut.lock();
+                ++locked_count;
+            }
+        } catch (...) {
+            while (locked_count != 0) {
+                --locked_count;
+                value.mu[locked_count].unlock();
+            }
+            throw;
+        }
     }
 
     bool multiply_mutex::try_lock() {
-        std::vector<mutex_unify> locked;
-        locked.reserve(value.mu.size());
-        for (auto& mut : value.mu) {
-            if (mut.try_lock())
-                locked.push_back(mut);
-            else
-                goto fail;
+        size_t locked_count = 0;
+        try {
+            for (auto& mut : value.mu) {
+                if (mut.try_lock())
+                    ++locked_count;
+                else {
+                    while (locked_count != 0) {
+                        --locked_count;
+                        value.mu[locked_count].unlock();
+                    }
+                    return false;
+                }
+            }
+            return true;
+        } catch (...) {
+            while (locked_count != 0) {
+                --locked_count;
+                value.mu[locked_count].unlock();
+            }
+            throw;
         }
-        return true;
-    fail:
-        size_t i = locked.size();
-        while (i != 0) {
-            locked[i - 1].unlock();
-            --i;
-        }
-        return false;
     }
 
     bool multiply_mutex::try_lock_until(fast_task::time_point time_point) {
-        std::vector<mutex_unify> locked;
-        for (auto& mut : value.mu) {
-            if (mut.try_lock_until(time_point))
-                locked.push_back(mut);
-            else
-                goto fail;
+        size_t locked_count = 0;
+        try {
+            for (auto& mut : value.mu) {
+                if (mut.try_lock_until(time_point))
+                    ++locked_count;
+                else {
+                    while (locked_count != 0) {
+                        --locked_count;
+                        value.mu[locked_count].unlock();
+                    }
+                    return false;
+                }
+            }
+            return true;
+        } catch (...) {
+            while (locked_count != 0) {
+                --locked_count;
+                value.mu[locked_count].unlock();
+            }
+            throw;
         }
-        return true;
-    fail:
-        size_t i = locked.size();
-        while (i != 0) {
-            locked[i - 1].unlock();
-            --i;
-        }
-        return false;
     }
 
     void multiply_mutex::unlock() {
@@ -62,33 +84,56 @@ namespace fast_task {
     }
 
     bool multiply_mutex::enter_wait(const task& parent_coro, enter_state&) {
-        if (try_lock())
+        if (try_lock()) {
+            donate_ownership(const_cast<task*>(&parent_coro));
             return true;
+        }
 
         task::run([this, parent_coro = parent_coro]() mutable {
             this->lock();
             for (auto& mut : this->value.mu)
                 mut.donate_ownership(&parent_coro);
 
-            transfer_task(std::move(parent_coro));
+            bool should_transfer = true;
+            {
+                fast_task::lock_guard guard(get_data(parent_coro));
+                if (get_data(parent_coro).is_suspending()) {
+                    get_data(parent_coro).set_resume_requested(true);
+                    should_transfer = false;
+                }
+            }
+            if (should_transfer)
+                transfer_task(std::move(parent_coro));
         });
 
         return false;
     }
 
     bool multiply_mutex::enter_wait_until(const task& parent_coro, enter_state&, fast_task::time_point time_point) {
-        if (try_lock())
+        if (try_lock()) {
+            donate_ownership(const_cast<task*>(&parent_coro));
+            get_data(parent_coro).set_time_end(false);
             return true;
+        }
 
         task::run([this, parent_coro = parent_coro, time_point]() mutable {
-            if (this->try_lock_until(time_point)) {
-                for (auto& mut : this->value.mu) {
+            bool acquired = this->try_lock_until(time_point);
+            if (acquired) {
+                for (auto& mut : this->value.mu)
                     mut.donate_ownership(&parent_coro);
-                }
-            } else
-                get_data(parent_coro).set_time_end(true);
+            }
 
-            transfer_task(std::move(parent_coro));
+            bool should_transfer = true;
+            {
+                fast_task::lock_guard guard(get_data(parent_coro));
+                get_data(parent_coro).set_time_end(!acquired);
+                if (get_data(parent_coro).is_suspending()) {
+                    get_data(parent_coro).set_resume_requested(true);
+                    should_transfer = false;
+                }
+            }
+            if (should_transfer)
+                transfer_task(std::move(parent_coro));
         });
 
         return false;

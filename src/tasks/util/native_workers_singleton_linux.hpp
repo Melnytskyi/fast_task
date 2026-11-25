@@ -6,14 +6,18 @@
 // http://www.boost.org/LICENSE_1_0.txt)
 #ifndef SRC_TASKS_UTIL_NATIVE_WORKERS_SINGLETON_LINUX
 #define SRC_TASKS_UTIL_NATIVE_WORKERS_SINGLETON_LINUX
+#include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <concurrentqueue/moodycamel/concurrentqueue.h>
+#include <cstdio>
 #include <cstring>
 #include <fast_task/native/thread.hpp>
 #include <fast_task/shared.hpp>
 #include <liburing.h>
 #include <list>
+#include <system_error>
 #include <vector>
 
 #include <fcntl.h>
@@ -117,6 +121,7 @@ namespace fast_task::util {
             };
 
             int32_t flags = 0;
+            int32_t linked_error = 0;
         } request_data;
 
     public:
@@ -136,14 +141,45 @@ namespace fast_task::util {
         native_worker_handle& operator=(native_worker_handle&&) = delete;
     };
 
+    static_assert(alignof(native_worker_handle) >= 4, "native_worker_handle alignment too small for user_data tagging");
+
     class FT_API_LOCAL native_workers_singleton {
-        io_uring ring;
+        static constexpr uintptr_t WAKEUP_USER_DATA = 1;
+        static constexpr uintptr_t LINKED_PREREQ_TAG = 2;
+        static constexpr uint32_t MAX_SPLICE_CHUNK = 65536u;
+
+        io_uring ring{};
         moodycamel::ConcurrentQueue<native_worker_handle*> queue;
         int wakeup_eventfd = -1;
         bool wake_armed = false;
+        bool ring_initialized = false;
+        int ring_init_error = 0;
 
         std::atomic<uint32_t> pending_submissions{0};
         static inline std::atomic<bool> ring_live{false};
+
+        static void* linked_prereq_data(native_worker_handle* h) noexcept {
+            return reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(h) | LINKED_PREREQ_TAG);
+        }
+
+        static unsigned needed_sqes_for(const native_worker_handle* h) noexcept {
+            switch (h->request_data.opcode) {
+            case operations::fast_connect:
+                return (h->request_data.b.buf && h->request_data.b.len > 0) ? 2u : 1u;
+            case operations::sendfile:
+                return 2u;
+            case operations::sendv_file: {
+                unsigned n = 2u;
+                if (h->request_data.send_file_v.prefix_len > 0)
+                    ++n;
+                if (h->request_data.send_file_v.postfix_len > 0)
+                    ++n;
+                return n;
+            }
+            default:
+                return 1u;
+            }
+        }
 
         native_workers_singleton() {
             wakeup_eventfd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
@@ -209,15 +245,21 @@ namespace fast_task::util {
                             locked_kb,
                             ring_bytes_estimate(candidates[num_candidates - 1]) / 1024);
                 }
-                assert(false && "io_uring_queue_init_params failed");
-                std::terminate();
+                ring_initialized = false;
+                ring_init_error = -uring_ret;
+                return;
             }
 
+            ring_initialized = true;
             arm_wakeup_on(*this);
             ring_live.store(true, std::memory_order_release);
         }
 
         static void arm_wakeup_on(native_workers_singleton& self) {
+            if (!self.ring_initialized || self.wakeup_eventfd < 0) {
+                self.wake_armed = false;
+                return;
+            }
             io_uring_sqe* sqe = io_uring_get_sqe(&self.ring);
             if (!sqe) {
                 io_uring_submit(&self.ring);
@@ -228,7 +270,7 @@ namespace fast_task::util {
                 return;
             }
             io_uring_prep_poll_add(sqe, self.wakeup_eventfd, POLLIN);
-            io_uring_sqe_set_data(sqe, reinterpret_cast<void*>(1));
+            io_uring_sqe_set_data(sqe, reinterpret_cast<void*>(WAKEUP_USER_DATA));
             self.wake_armed = true;
         }
 
@@ -236,109 +278,166 @@ namespace fast_task::util {
             arm_wakeup_on(get_instance());
         }
 
-        static void prepare_handle_sqe(native_worker_handle* h) {
+        static bool prepare_handle_sqe(native_worker_handle* h) {
             auto& self = get_instance();
-            io_uring_sqe* sqe = io_uring_get_sqe(&self.ring);
-            if (!sqe) {
+            if (!self.ring_initialized)
+                return false;
+
+            const unsigned needed = needed_sqes_for(h);
+            if (io_uring_sq_space_left(&self.ring) < needed)
                 io_uring_submit(&self.ring);
-                sqe = io_uring_get_sqe(&self.ring);
+            if (io_uring_sq_space_left(&self.ring) < needed) {
+                drain();
+                io_uring_submit(&self.ring);
             }
+            if (io_uring_sq_space_left(&self.ring) < needed)
+                return false;
+
+            io_uring_sqe* sqes[4] = {};
+            for (unsigned i = 0; i < needed; ++i) {
+                sqes[i] = io_uring_get_sqe(&self.ring);
+                if (!sqes[i]) {
+                    for (unsigned j = 0; j < i; ++j) {
+                        io_uring_prep_nop(sqes[j]);
+                        io_uring_sqe_set_data(sqes[j], nullptr);
+                    }
+                    return false;
+                }
+            }
+
+            h->request_data.linked_error = 0;
+
             switch (h->request_data.opcode) {
             case operations::nop:
-                io_uring_prep_nop(sqe);
+                io_uring_prep_nop(sqes[0]);
+                io_uring_sqe_set_data(sqes[0], h);
                 break;
             case operations::connect:
-                io_uring_prep_connect(sqe, h->request_data.fd, h->request_data.addr_target.addr, h->request_data.addr_target.len);
+                io_uring_prep_connect(sqes[0], h->request_data.fd, h->request_data.addr_target.addr, h->request_data.addr_target.len);
+                io_uring_sqe_set_data(sqes[0], h);
                 break;
             case operations::fast_connect:
-                io_uring_prep_connect(sqe, h->request_data.fd, h->request_data.addr_target.addr, h->request_data.addr_target.len);
-                io_uring_sqe_set_data(sqe, nullptr);
-                sqe->flags |= IOSQE_IO_LINK;
-                sqe = io_uring_get_sqe(&self.ring);
-                io_uring_prep_recv(sqe, h->request_data.fd, const_cast<void*>(h->request_data.b.buf), h->request_data.b.len, 0);
+                io_uring_prep_connect(sqes[0], h->request_data.fd, h->request_data.addr_target.addr, h->request_data.addr_target.len);
+                if (needed == 2u) {
+                    io_uring_sqe_set_data(sqes[0], linked_prereq_data(h));
+                    sqes[0]->flags |= IOSQE_IO_LINK;
+                    io_uring_prep_send(sqes[1], h->request_data.fd, h->request_data.b.buf, h->request_data.b.len, 0);
+                    io_uring_sqe_set_data(sqes[1], h);
+                } else {
+                    io_uring_sqe_set_data(sqes[0], h);
+                }
                 break;
             case operations::recv:
-                io_uring_prep_recv(sqe, h->request_data.fd, const_cast<void*>(h->request_data.b.buf), h->request_data.b.len, h->request_data.flags);
+                io_uring_prep_recv(sqes[0], h->request_data.fd, const_cast<void*>(h->request_data.b.buf), h->request_data.b.len, h->request_data.flags);
+                io_uring_sqe_set_data(sqes[0], h);
                 break;
             case operations::send:
-                io_uring_prep_send(sqe, h->request_data.fd, h->request_data.b.buf, h->request_data.b.len, h->request_data.flags);
+                io_uring_prep_send(sqes[0], h->request_data.fd, h->request_data.b.buf, h->request_data.b.len, h->request_data.flags);
+                io_uring_sqe_set_data(sqes[0], h);
                 break;
             case operations::close:
-                io_uring_prep_close(sqe, h->request_data.fd);
+                io_uring_prep_close(sqes[0], h->request_data.fd);
+                io_uring_sqe_set_data(sqes[0], h);
                 break;
             case operations::accept:
-                io_uring_prep_accept(sqe, h->request_data.fd, h->request_data.addr_recv.addr, h->request_data.addr_recv.len, h->request_data.flags);
+                io_uring_prep_accept(sqes[0], h->request_data.fd, h->request_data.addr_recv.addr, h->request_data.addr_recv.len, h->request_data.flags);
+                io_uring_sqe_set_data(sqes[0], h);
                 break;
             case operations::recvmsg:
-                io_uring_prep_recvmsg(sqe, h->request_data.fd, h->request_data.pMsg, h->request_data.flags);
+                io_uring_prep_recvmsg(sqes[0], h->request_data.fd, h->request_data.pMsg, h->request_data.flags);
+                io_uring_sqe_set_data(sqes[0], h);
                 break;
             case operations::sendmsg:
-                io_uring_prep_sendmsg(sqe, h->request_data.fd, h->request_data.pMsg, h->request_data.flags);
+                io_uring_prep_sendmsg(sqes[0], h->request_data.fd, h->request_data.pMsg, h->request_data.flags);
+                io_uring_sqe_set_data(sqes[0], h);
                 break;
             case operations::sendfile: {
-                io_uring_prep_splice(sqe, h->request_data.splice_fds.file_fd, (int64_t)h->request_data.offset, h->request_data.splice_fds.pipe_wfd, -1, h->request_data.splice_fds.len, SPLICE_F_MOVE);
-                io_uring_sqe_set_data(sqe, nullptr);
-                sqe->flags |= IOSQE_IO_LINK;
-                sqe = io_uring_get_sqe(&self.ring);
-                io_uring_prep_splice(sqe, h->request_data.splice_fds.pipe_rfd, -1, h->request_data.fd, -1, h->request_data.splice_fds.len, SPLICE_F_MOVE);
+                const uint32_t splice_len = std::min<uint32_t>(h->request_data.splice_fds.len, MAX_SPLICE_CHUNK);
+                io_uring_prep_splice(sqes[0], h->request_data.splice_fds.file_fd, static_cast<int64_t>(h->request_data.offset), h->request_data.splice_fds.pipe_wfd, -1, splice_len, SPLICE_F_MOVE);
+                io_uring_sqe_set_data(sqes[0], linked_prereq_data(h));
+                sqes[0]->flags |= IOSQE_IO_LINK;
+                io_uring_prep_splice(sqes[1], h->request_data.splice_fds.pipe_rfd, -1, h->request_data.fd, -1, splice_len, SPLICE_F_MOVE);
+                io_uring_sqe_set_data(sqes[1], h);
                 break;
             }
             case operations::sendv_file: {
+                const uint32_t splice_len = std::min<uint32_t>(h->request_data.splice_fds.len, MAX_SPLICE_CHUNK);
+                unsigned idx = 0;
                 if (h->request_data.send_file_v.prefix_len > 0) {
-                    io_uring_prep_send(sqe, h->request_data.fd, h->request_data.send_file_v.prefix, h->request_data.send_file_v.prefix_len, 0);
-                    io_uring_sqe_set_data(sqe, nullptr);
-                    sqe->flags |= IOSQE_IO_LINK;
-                    sqe = io_uring_get_sqe(&self.ring);
+                    io_uring_prep_send(sqes[idx], h->request_data.fd, h->request_data.send_file_v.prefix, h->request_data.send_file_v.prefix_len, 0);
+                    io_uring_sqe_set_data(sqes[idx], linked_prereq_data(h));
+                    sqes[idx]->flags |= IOSQE_IO_LINK;
+                    ++idx;
                 }
-                io_uring_prep_splice(sqe, h->request_data.splice_fds.file_fd, (int64_t)h->request_data.offset, h->request_data.splice_fds.pipe_wfd, -1, h->request_data.splice_fds.len, SPLICE_F_MOVE);
-                io_uring_sqe_set_data(sqe, nullptr);
-                sqe->flags |= IOSQE_IO_LINK;
-                sqe = io_uring_get_sqe(&self.ring);
-                io_uring_prep_splice(sqe, h->request_data.splice_fds.pipe_rfd, -1, h->request_data.fd, -1, h->request_data.splice_fds.len, SPLICE_F_MOVE);
+                io_uring_prep_splice(sqes[idx], h->request_data.splice_fds.file_fd, static_cast<int64_t>(h->request_data.offset), h->request_data.splice_fds.pipe_wfd, -1, splice_len, SPLICE_F_MOVE);
+                io_uring_sqe_set_data(sqes[idx], linked_prereq_data(h));
+                sqes[idx]->flags |= IOSQE_IO_LINK;
+                ++idx;
+                io_uring_prep_splice(sqes[idx], h->request_data.splice_fds.pipe_rfd, -1, h->request_data.fd, -1, splice_len, SPLICE_F_MOVE);
                 if (h->request_data.send_file_v.postfix_len > 0) {
-                    io_uring_sqe_set_data(sqe, nullptr);
-                    sqe->flags |= IOSQE_IO_LINK;
-                    sqe = io_uring_get_sqe(&self.ring);
-                    io_uring_prep_send(sqe, h->request_data.fd, h->request_data.send_file_v.postfix, h->request_data.send_file_v.postfix_len, 0);
+                    io_uring_sqe_set_data(sqes[idx], linked_prereq_data(h));
+                    sqes[idx]->flags |= IOSQE_IO_LINK;
+                    ++idx;
+                    io_uring_prep_send(sqes[idx], h->request_data.fd, h->request_data.send_file_v.postfix, h->request_data.send_file_v.postfix_len, 0);
                 }
+                io_uring_sqe_set_data(sqes[idx], h);
                 break;
             }
             case operations::read:
-                io_uring_prep_read(sqe, h->request_data.fd, const_cast<void*>(h->request_data.b.buf), h->request_data.b.len, h->request_data.offset);
+                io_uring_prep_read(sqes[0], h->request_data.fd, const_cast<void*>(h->request_data.b.buf), h->request_data.b.len, h->request_data.offset);
+                io_uring_sqe_set_data(sqes[0], h);
                 break;
             case operations::write:
-                io_uring_prep_write(sqe, h->request_data.fd, h->request_data.b.buf, h->request_data.b.len, h->request_data.offset);
+                io_uring_prep_write(sqes[0], h->request_data.fd, h->request_data.b.buf, h->request_data.b.len, h->request_data.offset);
+                io_uring_sqe_set_data(sqes[0], h);
                 break;
             case operations::readv:
-                io_uring_prep_readv(sqe, h->request_data.fd, h->request_data.vector.iovs, h->request_data.vector.iovcnt, h->request_data.offset);
+                io_uring_prep_readv2(sqes[0], h->request_data.fd, h->request_data.vector.iovs, h->request_data.vector.iovcnt, h->request_data.offset, h->request_data.flags);
+                io_uring_sqe_set_data(sqes[0], h);
                 break;
             case operations::writev:
-                io_uring_prep_writev(sqe, h->request_data.fd, h->request_data.vector.iovs, h->request_data.vector.iovcnt, h->request_data.offset);
+                io_uring_prep_writev2(sqes[0], h->request_data.fd, h->request_data.vector.iovs, h->request_data.vector.iovcnt, h->request_data.offset, h->request_data.flags);
+                io_uring_sqe_set_data(sqes[0], h);
                 break;
             case operations::poll_add:
-                io_uring_prep_poll_add(sqe, h->request_data.fd, (uint32_t)(unsigned short)h->request_data.mask);
+                io_uring_prep_poll_add(sqes[0], h->request_data.fd, (uint32_t)(unsigned short)h->request_data.mask);
+                io_uring_sqe_set_data(sqes[0], h);
                 break;
             default:
+                io_uring_prep_nop(sqes[0]);
+                io_uring_sqe_set_data(sqes[0], h);
                 break;
             }
-            io_uring_sqe_set_data(sqe, h);
+            return true;
         }
 
         static void drain() {
             auto& self = get_instance();
-            io_uring_cqe* cqe;
-            unsigned head;
-            uint32_t cqe_count = 0;
+            if (!self.ring_initialized)
+                return;
 
-            io_uring_for_each_cqe(&self.ring, head, cqe) {
-                ++cqe_count;
+            io_uring_cqe* cqe = nullptr;
+            while (io_uring_peek_cqe(&self.ring, &cqe) == 0) {
                 auto user_data = reinterpret_cast<uintptr_t>(io_uring_cqe_get_data(cqe));
+                int32_t res = cqe->res;
+                uint32_t flags = cqe->flags;
+                io_uring_cqe_seen(&self.ring, cqe);
 
-                if (user_data == 1) {
-                    uint64_t val;
-                    read(self.wakeup_eventfd, &val, sizeof(val));
+                if (user_data == WAKEUP_USER_DATA) {
+                    if (self.wakeup_eventfd >= 0) {
+                        uint64_t val = 0;
+                        ssize_t r = read(self.wakeup_eventfd, &val, sizeof(val));
+                        (void)r;
+                    }
                     self.wake_armed = false;
                     arm_wakeup_on(self);
+                    continue;
+                }
+
+                if ((user_data & LINKED_PREREQ_TAG) != 0) {
+                    auto handle = reinterpret_cast<native_worker_handle*>(user_data & ~LINKED_PREREQ_TAG);
+                    if (handle && res < 0 && handle->request_data.linked_error == 0)
+                        handle->request_data.linked_error = res;
                     continue;
                 }
 
@@ -346,22 +445,38 @@ namespace fast_task::util {
                 if (!handle || !handle->manager)
                     continue;
 
-                handle->manager->handle(handle, cqe->res, cqe->flags);
-            }
+                if (res == -ECANCELED && handle->request_data.linked_error < 0)
+                    res = handle->request_data.linked_error;
 
-            io_uring_cq_advance(&self.ring, cqe_count);
+                handle->manager->handle(handle, res, flags);
+            }
         }
 
         static void build_submissions() {
             auto& self = get_instance();
+            if (!self.ring_initialized)
+                return;
+
             native_worker_handle* handles[256];
             size_t count;
             while ((count = self.queue.try_dequeue_bulk(handles, 256)) > 0) {
-                for (size_t i = 0; i < count; ++i)
-                    prepare_handle_sqe(handles[i]);
+                bool stalled = false;
+                for (size_t i = 0; i < count; ++i) {
+                    if (!prepare_handle_sqe(handles[i])) {
+                        size_t remaining = count - i;
+                        self.pending_submissions.fetch_add(
+                            static_cast<uint32_t>(remaining), std::memory_order_release
+                        );
+                        self.queue.enqueue_bulk(handles + i, remaining);
+                        stalled = true;
+                        break;
+                    }
+                }
                 self.pending_submissions.fetch_sub(
-                    static_cast<uint32_t>(count), std::memory_order_release
+                    static_cast<uint32_t>(count), std::memory_order_acq_rel
                 );
+                if (stalled)
+                    break;
             }
         }
 
@@ -372,14 +487,27 @@ namespace fast_task::util {
 
         static void sumbmit(native_worker_handle* handle, int /*hFile*/) {
             auto& self = get_instance();
-            self.queue.enqueue(handle);
+            if (!self.ring_initialized)
+                throw std::system_error(
+                    self.ring_init_error ? self.ring_init_error : ENOSYS,
+                    std::generic_category(),
+                    "io_uring is not initialized"
+                );
             self.pending_submissions.fetch_add(1, std::memory_order_release);
+            try {
+                self.queue.enqueue(handle);
+            } catch (...) {
+                self.pending_submissions.fetch_sub(1, std::memory_order_release);
+                throw;
+            }
             driver_notify_io_submission();
         }
 
     public:
         ~native_workers_singleton() {
-            io_uring_queue_exit(&ring);
+            ring_live.store(false, std::memory_order_release);
+            if (ring_initialized)
+                io_uring_queue_exit(&ring);
             if (wakeup_eventfd >= 0)
                 close(wakeup_eventfd);
         }
@@ -388,6 +516,8 @@ namespace fast_task::util {
             if (!ring_live.load(std::memory_order_acquire))
                 return false;
             auto& self = get_instance();
+            if (!self.ring_initialized)
+                return false;
             if (self.pending_submissions.load(std::memory_order_acquire) != 0)
                 return true;
             return io_uring_cq_ready(&self.ring) != 0;
@@ -395,7 +525,9 @@ namespace fast_task::util {
 
         static bool poll_all(int timeout_ms) {
             auto& self = get_instance();
-            if (!self.wake_armed)
+            if (!self.ring_initialized)
+                return false;
+            if (!self.wake_armed && self.wakeup_eventfd >= 0)
                 arm_wakeup_on(self);
             build_submissions();
 
@@ -413,17 +545,24 @@ namespace fast_task::util {
             }
 
             int ret = io_uring_submit_and_wait_timeout(&self.ring, &cqe, 1, ts_ptr, nullptr);
-            if (ret < 0 && ret != -ETIME && ret != -EINTR)
+            if (ret < 0 && ret != -ETIME && ret != -EINTR && ret != -EBUSY && ret != -EAGAIN) {
+                drain();
                 return false;
+            }
 
             drain();
             return true;
         }
 
         static void wake_all() {
+            if (!ring_live.load(std::memory_order_acquire))
+                return;
             auto& self = get_instance();
+            if (!self.ring_initialized || self.wakeup_eventfd < 0)
+                return;
             uint64_t val = 1;
-            write(self.wakeup_eventfd, &val, sizeof(val));
+            ssize_t r = write(self.wakeup_eventfd, &val, sizeof(val));
+            (void)r;
         }
 
         static void post_connect(native_worker_handle* handle, int hSocket, const sockaddr* pAddr, socklen_t addrLen) {
@@ -542,6 +681,7 @@ namespace fast_task::util {
         static void post_readv(native_worker_handle* handle, int hSocket, struct iovec* iovs, uint32_t iovcnt, int32_t flags) {
             handle->request_data.opcode = operations::readv;
             handle->request_data.fd = hSocket;
+            handle->request_data.offset = 0;
             handle->request_data.vector.iovs = iovs;
             handle->request_data.vector.iovcnt = iovcnt;
             handle->request_data.flags = flags;
@@ -551,6 +691,7 @@ namespace fast_task::util {
         static void post_writev(native_worker_handle* handle, int hSocket, struct iovec* iovs, uint32_t iovcnt, int32_t flags) {
             handle->request_data.opcode = operations::writev;
             handle->request_data.fd = hSocket;
+            handle->request_data.offset = 0;
             handle->request_data.vector.iovs = iovs;
             handle->request_data.vector.iovcnt = iovcnt;
             handle->request_data.flags = flags;

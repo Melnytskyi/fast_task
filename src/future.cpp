@@ -7,8 +7,6 @@
 #include <functional>
 
 namespace fast_task {
-    template class FT_API future<void>;
-
     std::shared_ptr<future<void>> future<void>::make_ready() {
         std::shared_ptr<future> future_ = std::make_shared<future>();
         future_->task_ = task::callback_dummy(nullptr, nullptr, nullptr, nullptr, nullptr);
@@ -34,8 +32,7 @@ namespace fast_task {
     }
 
     void future<void>::wait() {
-        if (!task_.is_ended())
-            task_.await_task();
+        wait_impl();
         if (ex_ptr)
             std::rethrow_exception(ex_ptr);
         if (task_.is_cancellation_requested())
@@ -43,9 +40,8 @@ namespace fast_task {
     }
 
     bool future<void>::wait_until(fast_task::time_point time) {
-        if (!task_.is_ended())
-            if (!task_.await_task_until(time))
-                return false;
+        if (!wait_until_impl(time))
+            return false;
         if (ex_ptr)
             std::rethrow_exception(ex_ptr);
         if (task_.is_cancellation_requested())
@@ -54,19 +50,15 @@ namespace fast_task {
     }
 
     void future<void>::wait_no_except() {
-        if (!task_.is_ended())
-            task_.await_task();
+        wait_impl();
     }
 
     bool future<void>::wait_until_no_except(fast_task::time_point time) {
-        if (!task_.is_ended())
-            if (!task_.await_task_until(time))
-                return false;
-        return true;
+        return wait_until_impl(time);
     }
 
     bool future<void>::has_exception() const {
-        return (bool)ex_ptr;
+        return task_.is_ended() && static_cast<bool>(ex_ptr);
     }
 
     void future<void>::cancel() {

@@ -64,7 +64,7 @@ namespace fast_task::scheduler {
         stats.timers_pending = glob.timing.wheel.size();
 
         for (uint16_t i = 0; i < pool_table_size; ++i) {
-            auto* pool = pool_for_index(i);
+            auto pool = acquire_pool_ref(static_cast<uint8_t>(i));
             if (!pool)
                 continue;
 

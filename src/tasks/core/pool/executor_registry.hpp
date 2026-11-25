@@ -24,7 +24,7 @@ namespace fast_task {
     struct FT_API_LOCAL executor_registry {
         std::atomic<work_stealing_deque<task_object*>*> slots[MaxSlots]{};
         std::atomic<uint32_t> active_indices[MaxSlots]{};
-        fast_task::native::spin_lock slot_locks[MaxSlots];
+        mutable fast_task::native::spin_lock slot_locks[MaxSlots];
         std::atomic<uint8_t> slot_flags[MaxSlots]{};
         std::atomic<uint8_t> slot_llc[MaxSlots]{};
 
@@ -108,8 +108,13 @@ namespace fast_task {
                 const uint32_t idx = active_indices[pos].load(std::memory_order_acquire);
                 if (idx >= MaxSlots)
                     continue;
+                if (slots[idx].load(std::memory_order_acquire) == nullptr)
+                    continue;
+                slot_locks[idx].lock();
                 auto* deque = slots[idx].load(std::memory_order_acquire);
-                if (deque && deque->size() != 0)
+                const bool non_empty = deque != nullptr && deque->size() != 0;
+                slot_locks[idx].unlock();
+                if (non_empty)
                     return true;
             }
             return false;
@@ -152,6 +157,21 @@ namespace fast_task {
                     if (last_index)
                         *last_index = idx;
                     return true;
+                }
+            }
+            if (llc != UINT8_MAX) {
+                for (uint32_t i = 0; i < n; ++i) {
+                    uint32_t pos = start + i;
+                    if (pos >= n)
+                        pos -= n;
+                    const uint32_t idx = active_indices[pos].load(std::memory_order_acquire);
+                    if (idx < MaxSlots && slot_llc[idx].load(std::memory_order_relaxed) == llc)
+                        continue;
+                    if (steal_from(idx)) {
+                        if (last_index)
+                            *last_index = idx;
+                        return true;
+                    }
                 }
             }
             return false;

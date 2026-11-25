@@ -4,8 +4,10 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
+#include <atomic>
 #include <fast_task/internal/futex.hpp>
 #include <tasks/_internal.hpp>
+#include <thread>
 
 #ifdef PLATFORM_LINUX
     #include <linux/futex.h>
@@ -69,24 +71,34 @@ namespace fast_task {
     }
 
     bool native_futex_wait_until(std::atomic<uint32_t>* address, uint32_t expected_value, fast_task::time_point time_point) {
-        auto now = fast_task::clock::now();
-        if (now >= time_point)
-            return false;
+        for (;;) {
+            auto now = fast_task::clock::now();
+            if (now >= time_point)
+                return false;
 
-        DWORD wait_ms = INFINITE;
-        if (time_point != fast_task::time_point::max()) {
-            auto ms = std::chrono::ceil<std::chrono::milliseconds>(time_point - now);
-            if (ms.count() > 0)
-                wait_ms = ms.count() > 0x7FFFFFFF ? 0x7FFFFFFF : static_cast<DWORD>(ms.count());
-            else
-                wait_ms = 0;
+            DWORD wait_ms = INFINITE;
+            bool clamped = false;
+            if (time_point != fast_task::time_point::max()) {
+                auto ms = std::chrono::ceil<std::chrono::milliseconds>(time_point - now);
+                if (ms.count() > 0x7FFFFFFF) {
+                    wait_ms = 0x7FFFFFFF;
+                    clamped = true;
+                } else if (ms.count() > 0) {
+                    wait_ms = static_cast<DWORD>(ms.count());
+                } else {
+                    wait_ms = 0;
+                }
+            }
+
+            BOOL res = WaitOnAddress(address, &expected_value, sizeof(uint32_t), wait_ms);
+
+            if (!res && GetLastError() == ERROR_TIMEOUT) {
+                if (clamped && fast_task::clock::now() < time_point)
+                    continue;
+                return false;
+            }
+            return true;
         }
-
-        BOOL res = WaitOnAddress(address, &expected_value, sizeof(uint32_t), wait_ms);
-
-        if (!res && GetLastError() == ERROR_TIMEOUT)
-            return false;
-        return true;
     }
 
     void native_futex_wake(std::atomic_uint32_t* address, uint32_t count) {
@@ -112,12 +124,13 @@ namespace fast_task::futex {
         bool is_second_locked = false;
 
         two_bucket_guard(bucket_t& b0, bucket_t& b1)
-            : first(&b0 < &b1 ? b1 : b0), second(&b1 < &b0 ? b1 : b0), is_the_same(&b0 == &b1), order(&b0 > &b1) {
+            : first(&b0 < &b1 ? b1 : b0), second(&b1 < &b0 ? b1 : b0), is_the_same(&b0 == &b1), order(&b0 >= &b1) {
             first.lock.lock();
             is_first_locked = true;
-            if (!is_the_same)
+            if (!is_the_same) {
                 second.lock.lock();
-            is_second_locked = true;
+                is_second_locked = true;
+            }
         }
 
         ~two_bucket_guard() {
@@ -128,13 +141,17 @@ namespace fast_task::futex {
         }
 
         void unlock_0() {
-            first.lock.unlock();
-            is_first_locked = false;
+            if (is_first_locked) {
+                is_first_locked = false;
+                first.lock.unlock();
+            }
         }
 
         void unlock_1() {
-            second.lock.unlock();
-            is_second_locked = false;
+            if (is_second_locked) {
+                is_second_locked = false;
+                second.lock.unlock();
+            }
         }
 
         void lock_0() {
@@ -158,13 +175,15 @@ namespace fast_task::futex {
         }
 
         void unlock_b0() {
-            if (order)
+            if (is_the_same || order)
                 unlock_0();
             else
                 unlock_1();
         }
 
         void unlock_b1() {
+            if (is_the_same)
+                return;
             if (order)
                 unlock_1();
             else
@@ -172,13 +191,15 @@ namespace fast_task::futex {
         }
 
         void lock_b0() {
-            if (order)
+            if (is_the_same || order)
                 lock_0();
             else
                 lock_1();
         }
 
         void lock_b1() {
+            if (is_the_same)
+                return;
             if (order)
                 lock_1();
             else
@@ -186,13 +207,15 @@ namespace fast_task::futex {
         }
 
         auto release_b0() {
-            if (order)
+            if (is_the_same || order)
                 return release_0();
             else
                 return release_1();
         }
 
         auto release_b1() {
+            if (is_the_same)
+                return release_0();
             if (order)
                 return release_1();
             else
@@ -323,17 +346,18 @@ namespace fast_task::futex {
         return extracted;
     }
 
-    bool more_than_selector(wait_node_t* curr, size_t max_count, node_data key) {
+    bool more_than_selector(wait_node_t* curr, size_t check_count, node_data key) {
         size_t found = 0;
 
-        while (curr && found < max_count) {
-            wait_node_t* w = curr;
-            curr = w->next_waiter;
-
-            if (w->node_data == key.data)
+        while (curr) {
+            if (curr->node_data == key.data) {
                 found++;
+                if (found > check_count)
+                    return true;
+            }
+            curr = curr->next_waiter;
         }
-        return found == max_count;
+        return false;
     }
 
     void make_wait(bucket_t& bucket, wait_node_t* item) {
@@ -362,22 +386,30 @@ namespace fast_task::futex {
 
     void wake_item_and_lock(wait_node_t* item) {
         if (item->waiter) {
-            auto& wd = get_data(item->waiter);
-            fast_task::lock_guard guard(wd);
-            if (item->needs_awake_check) {
-                if (wd.awake_check == item->awake_check && !wd.get_time_end()) {
-                    item->lock_callback(item->wait_address, item->waiter, {item->node_data});
-                    wd.set_awaked(true);
-                    transfer_task(std::move(item->waiter), reinterpret_cast<enter_state*>(item));
+            task waiter = std::move(item->waiter);
+            auto& wd = get_data(waiter);
+            bool should_transfer = false;
+            {
+                fast_task::lock_guard guard(wd);
+                if (item->needs_awake_check) {
+                    if (wd.awake_check == item->awake_check && !wd.get_time_end()) {
+                        item->lock_callback(item->wait_address, waiter, {item->node_data});
+                        wd.set_awaked(true);
+                        should_transfer = true;
+                    }
+                } else {
+                    item->lock_callback(item->wait_address, waiter, {item->node_data});
+                    should_transfer = true;
                 }
-            } else {
-                item->lock_callback(item->wait_address, item->waiter, {item->node_data});
-                transfer_task(std::move(item->waiter), reinterpret_cast<enter_state*>(item));
             }
+            item->native_wake.store(1, std::memory_order_release);
+            if (should_transfer)
+                transfer_task(std::move(waiter), reinterpret_cast<enter_state*>(item));
         } else {
             item->lock_callback(item->wait_address, item->waiter, {item->node_data});
-            item->native_wake.store(1, std::memory_order_release);
-            native_futex_wake(&item->native_wake, 1);
+            auto* wake_addr = &item->native_wake;
+            wake_addr->store(1, std::memory_order_release);
+            native_futex_wake(wake_addr, 1);
         }
     }
 
@@ -387,15 +419,23 @@ namespace fast_task::futex {
             return;
         }
         if (item->waiter) {
-            auto& wd = get_data(item->waiter);
-            fast_task::lock_guard guard(wd);
-            if (item->needs_awake_check) {
-                if (wd.awake_check == item->awake_check && !wd.get_time_end()) {
-                    wd.set_awaked(true);
-                    transfer_task(std::move(item->waiter), reinterpret_cast<enter_state*>(item));
+            task waiter = std::move(item->waiter);
+            auto& wd = get_data(waiter);
+            bool should_transfer = false;
+            {
+                fast_task::lock_guard guard(wd);
+                if (item->needs_awake_check) {
+                    if (wd.awake_check == item->awake_check && !wd.get_time_end()) {
+                        wd.set_awaked(true);
+                        should_transfer = true;
+                    }
+                } else {
+                    should_transfer = true;
                 }
-            } else
-                transfer_task(std::move(item->waiter), reinterpret_cast<enter_state*>(item));
+            }
+            item->native_wake.store(1, std::memory_order_release);
+            if (should_transfer)
+                transfer_task(std::move(waiter), reinterpret_cast<enter_state*>(item));
         } else {
             auto* wake_addr = &item->native_wake;
             wake_addr->store(1, std::memory_order_release);
@@ -406,29 +446,22 @@ namespace fast_task::futex {
     void process_unlock_and_wait(wait_node_t* head, size_t& wake_ups) {
         if (wake_ups) {
             --wake_ups;
-            if (head->next_wait_addr_check_callback(head->next_wait_addr, false))
+            if (head->next_wait_addr_check_callback(head->next_wait_addr, false)) {
                 wake_item(head);
-            else {
-                head->wait_address = head->next_wait_addr;
-                head->type = node_type::wait;
-                bucket_t& bucket = glob.futex_global.get_bucket(head->wait_address);
-                std::unique_lock guard(bucket.lock);
-                if (head->next_wait_addr_check_callback(head->next_wait_addr, true)) {
-                    guard.unlock();
-                    wake_item(head);
-                } else
-                    make_wait(bucket, head);
+                return;
             }
+        }
+        void* next_addr = head->next_wait_addr;
+        bucket_t& bucket = glob.futex_global.get_bucket(next_addr);
+        std::unique_lock guard(bucket.lock);
+        std::atomic_ref<void*>(head->wait_address).store(next_addr, std::memory_order_release);
+        head->type = node_type::wait;
+        if (head->next_wait_addr_check_callback(next_addr, true)) {
+            guard.unlock();
+            wake_item(head);
         } else {
-            head->wait_address = head->next_wait_addr;
-            head->type = node_type::wait;
-            bucket_t& bucket = glob.futex_global.get_bucket(head->wait_address);
-            std::unique_lock guard(bucket.lock);
-            if (head->next_wait_addr_check_callback(head->next_wait_addr, true)) {
-                guard.unlock();
-                wake_item(head);
-            } else
-                make_wait(bucket, head);
+            make_wait(bucket, head);
+            head->native_wake.store(2, std::memory_order_release);
         }
     }
 
@@ -462,7 +495,8 @@ namespace fast_task::futex {
                     w->prev_addr->next_addr = next_w;
                 else
                     bucket.addresses = next_w;
-                next_w->tail_waiter = w->tail_waiter;
+                next_w->tail_waiter = (w->tail_waiter == w) ? next_w : w->tail_waiter;
+                next_w->prev_waiter = nullptr;
             } else {
                 if (w->next_addr)
                     w->next_addr->prev_addr = w->prev_addr;
@@ -526,11 +560,60 @@ namespace fast_task::futex {
         return to_wake_head;
     }
 
+    bool cancel_or_wait_node(wait_node_t& me) {
+        if (me.native_wake.load(std::memory_order_acquire) == 1)
+            return true;
+
+        bool checked_after_requeue = false;
+        for (;;) {
+            void* addr = std::atomic_ref<void*>(me.wait_address).load(std::memory_order_acquire);
+            bucket_t& my_bucket = glob.futex_global.get_bucket(addr);
+            std::unique_lock my_guard(my_bucket.lock);
+            void* cur_addr = std::atomic_ref<void*>(me.wait_address).load(std::memory_order_acquire);
+            if (cur_addr != addr)
+                continue;
+
+            if (me.in_bucket) {
+                remove_waiter(my_bucket, &me);
+                return false;
+            }
+            my_guard.unlock();
+
+            uint32_t state = me.native_wake.load(std::memory_order_acquire);
+            if (state == 1)
+                return true;
+            if (state == 2) {
+                if (!checked_after_requeue) {
+                    checked_after_requeue = true;
+                    continue;
+                }
+                while (me.native_wake.load(std::memory_order_acquire) != 1)
+                    std::this_thread::yield();
+                return true;
+            }
+            while ((state = me.native_wake.load(std::memory_order_acquire)) == 0)
+                std::this_thread::yield();
+            if (state == 1)
+                return true;
+            checked_after_requeue = true;
+        }
+    }
+
+    struct wait_node_cleanup_guard {
+        wait_node_t& node;
+        bool active = true;
+
+        void dismiss() noexcept { active = false; }
+
+        ~wait_node_cleanup_guard() {
+            if (active)
+                cancel_or_wait_node(node);
+        }
+    };
+
     struct self_remove : wait_node_t {
         ~self_remove() {
-            bucket_t& bucket = glob.futex_global.get_bucket(wait_address);
-            std::unique_lock guard(bucket.lock);
-            remove_waiter(bucket, this);
+            cancel_or_wait_node(*this);
         }
     };
 
@@ -550,13 +633,14 @@ namespace fast_task::futex {
         auto loc = get_loc();
         if (loc && loc->is_task_thread && loc->curr_task) {
             me.waiter = loc->curr_task;
+            wait_node_cleanup_guard cleanup{me};
             swapCtxUnlock(*guard.release());
+            cleanup.dismiss();
         } else {
             guard.unlock();
 
-            uint32_t expected = 0;
-            while (me.native_wake.load(std::memory_order_acquire) == 0)
-                native_futex_wait(&me.native_wake, expected);
+            for (uint32_t cur = me.native_wake.load(std::memory_order_acquire); cur != 1; cur = me.native_wake.load(std::memory_order_acquire))
+                native_futex_wait(&me.native_wake, cur);
         }
     }
 
@@ -566,6 +650,9 @@ namespace fast_task::futex {
 
         if (check_callback(address))
             return true;
+
+        if (fast_task::is_no_deadline(time_point) || fast_task::clock::now() >= time_point)
+            return false;
 
         wait_node_t me;
         me.wait_address = address;
@@ -581,33 +668,19 @@ namespace fast_task::futex {
             me.awake_check = get_data(loc->curr_task).awake_check;
 
             loc->pending_timer = time_point;
+            wait_node_cleanup_guard cleanup{me};
             swapCtxUnlock(*guard.release());
+            cleanup.dismiss();
 
-            if (get_loc()->curr_task.has_wait_timed_out()) {
-                auto& my_bucket = glob.futex_global.get_bucket(me.wait_address);
-                std::unique_lock my_guard(my_bucket.lock);
-                remove_waiter(my_bucket, &me);
-                return false;
-            }
+            if (get_loc()->curr_task.has_wait_timed_out())
+                return cancel_or_wait_node(me);
             return true;
         } else {
             guard.unlock();
 
-            uint32_t expected = 0;
-            while (me.native_wake.load(std::memory_order_acquire) == 0) {
-                if (!native_futex_wait_until(&me.native_wake, expected, time_point)) {
-                    auto& my_bucket = glob.futex_global.get_bucket(me.wait_address);
-                    std::unique_lock my_guard(my_bucket.lock);
-                    if (me.in_bucket) {
-                        remove_waiter(my_bucket, &me);
-                        return false;
-                    }
-                    my_guard.unlock();
-
-                    while (me.native_wake.load(std::memory_order_acquire) == 0)
-                        native_futex_wait(&me.native_wake, 0);
-                    return false;
-                }
+            for (uint32_t cur = me.native_wake.load(std::memory_order_acquire); cur != 1; cur = me.native_wake.load(std::memory_order_acquire)) {
+                if (!native_futex_wait_until(&me.native_wake, cur, time_point))
+                    return cancel_or_wait_node(me);
             }
             return true;
         }
@@ -648,13 +721,14 @@ namespace fast_task::futex {
         auto loc = get_loc();
         if (loc && loc->is_task_thread && loc->curr_task) {
             me.waiter = loc->curr_task;
+            wait_node_cleanup_guard cleanup{me};
             swapCtxUnlock(*guard.release_b0());
+            cleanup.dismiss();
         } else {
             guard.unlock_b0();
 
-            uint32_t expected = 0;
-            while (me.native_wake.load(std::memory_order_acquire) == 0)
-                native_futex_wait(&me.native_wake, expected);
+            for (uint32_t cur = me.native_wake.load(std::memory_order_acquire); cur != 1; cur = me.native_wake.load(std::memory_order_acquire))
+                native_futex_wait(&me.native_wake, cur);
         }
     }
 
@@ -682,6 +756,9 @@ namespace fast_task::futex {
         if (check_callback(address))
             return true;
 
+        if (fast_task::is_no_deadline(time_point) || fast_task::clock::now() >= time_point)
+            return false;
+
         wait_node_t me;
         me.wait_address = address;
         me.next_wait_addr = lock_address;
@@ -698,33 +775,19 @@ namespace fast_task::futex {
             me.awake_check = get_data(loc->curr_task).awake_check;
 
             loc->pending_timer = time_point;
+            wait_node_cleanup_guard cleanup{me};
             swapCtxUnlock(*guard.release_b0());
+            cleanup.dismiss();
 
-            if (get_loc()->curr_task.has_wait_timed_out()) {
-                auto& my_bucket = glob.futex_global.get_bucket(me.wait_address);
-                std::unique_lock my_guard(my_bucket.lock);
-                remove_waiter(my_bucket, &me);
-                return false;
-            }
+            if (get_loc()->curr_task.has_wait_timed_out())
+                return cancel_or_wait_node(me);
             return true;
         } else {
             guard.unlock_b0();
 
-            uint32_t expected = 0;
-            while (me.native_wake.load(std::memory_order_acquire) == 0) {
-                if (!native_futex_wait_until(&me.native_wake, expected, time_point)) {
-                    auto& my_bucket = glob.futex_global.get_bucket(me.wait_address);
-                    std::unique_lock my_guard(my_bucket.lock);
-                    if (me.in_bucket) {
-                        remove_waiter(my_bucket, &me);
-                        return false;
-                    }
-                    my_guard.unlock();
-
-                    while (me.native_wake.load(std::memory_order_acquire) == 0)
-                        native_futex_wait(&me.native_wake, 0);
-                    return false;
-                }
+            for (uint32_t cur = me.native_wake.load(std::memory_order_acquire); cur != 1; cur = me.native_wake.load(std::memory_order_acquire)) {
+                if (!native_futex_wait_until(&me.native_wake, cur, time_point))
+                    return cancel_or_wait_node(me);
             }
             return true;
         }
@@ -747,6 +810,7 @@ namespace fast_task::futex {
         me->wait_address = address;
         me->waiter = task_obj;
         me->type = node_type::wait;
+        me->native_wake.store(0, std::memory_order_relaxed);
         me->node_data = data.data;
         make_wait(bucket, me);
         return false;
@@ -766,12 +830,18 @@ namespace fast_task::futex {
         if (check_callback(address))
             return true;
 
+        if (fast_task::is_no_deadline(time_point) || fast_task::clock::now() >= time_point) {
+            get_data(task_obj).set_time_end(true);
+            return true;
+        }
+
         wait_node_t* me = state.template use<self_remove>();
         me->wait_address = address;
         me->waiter = task_obj;
         me->needs_awake_check = true;
         me->awake_check = get_data(task_obj).awake_check;
         me->type = node_type::wait;
+        me->native_wake.store(0, std::memory_order_relaxed);
         me->node_data = data.data;
         make_wait(bucket, me);
 
@@ -811,6 +881,7 @@ namespace fast_task::futex {
         me->next_wait_addr_check_callback = is_unlocked_callback;
         me->waiter = task_obj;
         me->type = node_type::unlock_and_wait;
+        me->native_wake.store(0, std::memory_order_relaxed);
         me->node_data = data.data;
         make_wait(bucket, me);
         return false;
@@ -841,6 +912,11 @@ namespace fast_task::futex {
         if (check_callback(address))
             return true;
 
+        if (fast_task::is_no_deadline(time_point) || fast_task::clock::now() >= time_point) {
+            get_data(task_obj).set_time_end(true);
+            return true;
+        }
+
         wait_node_t* me = state.template use<self_remove>();
         me->wait_address = address;
         me->next_wait_addr = lock_address;
@@ -849,6 +925,7 @@ namespace fast_task::futex {
         me->needs_awake_check = true;
         me->awake_check = get_data(task_obj).awake_check;
         me->type = node_type::unlock_and_wait;
+        me->native_wake.store(0, std::memory_order_relaxed);
         me->node_data = data.data;
         make_wait(bucket, me);
 
@@ -878,6 +955,7 @@ namespace fast_task::futex {
         me->lock_callback = lock_callback;
         me->waiter = task_obj;
         me->type = node_type::enter_wait_and_lock;
+        me->native_wake.store(0, std::memory_order_relaxed);
         me->node_data = data.data;
         make_wait(bucket, me);
         return false;
@@ -900,6 +978,11 @@ namespace fast_task::futex {
             return true;
         }
 
+        if (fast_task::is_no_deadline(time_point) || fast_task::clock::now() >= time_point) {
+            get_data(task_obj).set_time_end(true);
+            return true;
+        }
+
         wait_node_t* me = state.template use<self_remove>();
         me->wait_address = address;
         me->lock_callback = lock_callback;
@@ -907,6 +990,7 @@ namespace fast_task::futex {
         me->needs_awake_check = true;
         me->awake_check = get_data(task_obj).awake_check;
         me->type = node_type::enter_wait_and_lock;
+        me->native_wake.store(0, std::memory_order_relaxed);
         me->node_data = data.data;
         make_wait(bucket, me);
 
@@ -1100,7 +1184,7 @@ namespace fast_task::futex {
         while (curr && curr->wait_address != address)
             curr = curr->next_addr;
 
-        return more_than_selector(curr, 1, key);
+        return more_than_selector(curr, 0, key);
     }
 
     bool FT_API has_waiters(void* address, void (*callback)(void* address, void* data, bool result), void* data, node_data key) {
@@ -1110,7 +1194,7 @@ namespace fast_task::futex {
         wait_node_t* curr = bucket.addresses;
         while (curr && curr->wait_address != address)
             curr = curr->next_addr;
-        auto res = more_than_selector(curr, 1, key);
+        auto res = more_than_selector(curr, 0, key);
         callback(address, data, res);
         return res;
     }
@@ -1223,7 +1307,7 @@ namespace fast_task::futex {
             waiter_info info{
                 .task_id = id,
                 .key = node_data{curr->node_data},
-                .is_native = (id & native_thread_flag) != 0
+                .is_native = !curr->waiter
             };
             callback(address, data, info);
             ++count;
@@ -1250,7 +1334,7 @@ namespace fast_task::futex {
                 waiter_info info{
                     .task_id = id,
                     .key = node_data{curr->node_data},
-                    .is_native = (id & native_thread_flag) != 0
+                    .is_native = !curr->waiter
                 };
                 callback(address, data, info);
                 ++count;

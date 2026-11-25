@@ -39,8 +39,9 @@ namespace fast_task {
         if (loc.ex_ptr) {
             if (data->vtable && data->vtable->on_exception) {
                 try {
-                    data->vtable->on_exception(data->user_data(), loc.ex_ptr);
+                    std::exception_ptr ex = loc.ex_ptr;
                     loc.ex_ptr = nullptr;
+                    data->vtable->on_exception(data->user_data(), ex);
                 } catch (const task_cancellation& cancel) {
                     forceCancelCancellation(cancel);
                     loc.ex_ptr = nullptr;
@@ -58,18 +59,42 @@ namespace fast_task {
         data->awake_check++;
         try {
             if (!checkCancellation()) {
+                {
+                    fast_task::lock_guard guard(*data);
+                    data->set_resume_requested(false);
+                    data->set_status(task_object::status_e::suspending);
+                }
                 if (data->on_start_override)
                     data->on_start_override->callback(data);
                 else if (data->vtable && data->vtable->on_start)
                     data->vtable->on_start(data->user_data());
                 data->get_relock().relock_start();
-                data->set_status(task_object::status_e::suspended);
-            } else
-                data->set_is_restartable(false);
-            if (!data->get_is_restartable())
+                bool ended = false;
+                {
+                    fast_task::lock_guard guard(*data);
+                    if (!data->get_is_restartable()) {
+                        ended = true;
+                    } else {
+                        bool wake_now = data->get_resume_requested();
+                        data->set_resume_requested(false);
+                        data->set_status(task_object::status_e::suspended);
+                        if (wake_now)
+                            transfer_task(task{loc.curr_task});
+                    }
+                }
+                if (ended)
+                    data->end_of_life_notify();
+            } else {
+                {
+                    fast_task::lock_guard guard(*data);
+                    data->set_is_restartable(false);
+                    data->set_resume_requested(false);
+                }
                 data->end_of_life_notify();
+            }
         } catch (const task_cancellation& cancel) {
             forceCancelCancellation(cancel);
+            data->set_is_restartable(false);
             data->end_of_life_notify();
         } catch (...) {
             loc.ex_ptr = std::current_exception();
@@ -77,8 +102,9 @@ namespace fast_task {
         if (loc.ex_ptr) {
             if (data->vtable && data->vtable->on_exception) {
                 try {
-                    data->vtable->on_exception(data->user_data(), loc.ex_ptr);
+                    std::exception_ptr ex = loc.ex_ptr;
                     loc.ex_ptr = nullptr;
+                    data->vtable->on_exception(data->user_data(), ex);
                 } catch (const task_cancellation& cancel) {
                     forceCancelCancellation(cancel);
                     loc.ex_ptr = nullptr;
@@ -86,6 +112,7 @@ namespace fast_task {
                     loc.ex_ptr = std::current_exception();
                 }
             }
+            data->set_is_restartable(false);
             data->end_of_life_notify();
         }
         task_run_exit(&loc);
@@ -104,8 +131,8 @@ namespace fast_task {
         auto& stack_current_context = get_execution_data(data).context;
         if (stack_current_context) {
             stack_current_context = std::move(stack_current_context).resume();
-            arm_pending_timer(loc);
             data->get_relock().relock_start();
+            arm_pending_timer(loc);
         } else {
             light_stack stack_alloc(1048576 /*1 mb*/);
             auto ss = stack_alloc.allocate();
@@ -115,8 +142,8 @@ namespace fast_task {
 #endif
             task_run_enter(&loc);
             stack_current_context = boost::context::callcc(std::allocator_arg, boost::context::preallocated(ss.sp, ss.size, ss), stack_alloc, context_exec);
-            arm_pending_timer(loc);
             data->get_relock().relock_start();
+            arm_pending_timer(loc);
         }
         if (loc.ex_ptr) {
             light_stack stack_alloc(1048576 /*1 mb*/);
@@ -127,8 +154,8 @@ namespace fast_task {
 #endif
             task_run_enter(&loc);
             stack_current_context = boost::context::callcc(std::allocator_arg, boost::context::preallocated(ss.sp, ss.size, ss), stack_alloc, context_ex_handle);
-            arm_pending_timer(loc);
             data->get_relock().relock_start();
+            arm_pending_timer(loc);
             loc.ex_ptr = nullptr;
         }
     }
@@ -141,8 +168,18 @@ namespace fast_task {
             return true;
         task_object* data = &get_data(loc.curr_task);
         auto& vtable = data->vtable;
-        if (vtable && vtable->on_start == nullptr && vtable->on_destruct == nullptr) {
+        if (!vtable || (vtable->on_start == nullptr && vtable->on_destruct == nullptr)) {
             data->end_of_life_notify();
+            bool should_decrement = false;
+            {
+                fast_task::lock_guard guard(*data);
+                if (!data->get_completed()) {
+                    data->set_completed(true);
+                    should_decrement = true;
+                }
+            }
+            if (should_decrement)
+                task_mark_completed(*data, &loc);
             loc.curr_task = nullptr;
             return true;
         } else if (!vtable->on_start) {
@@ -225,15 +262,17 @@ namespace fast_task {
             end_of_life = finished.is_ended();
 
             if (!end_of_life) {
-                if (!do_yield_transfer && finished.link_counter == 1) {
-                    do_invalid_transfer = true;
-                    finished.set_invalid_switch_caught(true);
-                }
+                if (finished.get_execution_mode() != task_object::execution_mode::as_coroutine) {
+                    if (!do_yield_transfer && finished.link_counter == 1) {
+                        do_invalid_transfer = true;
+                        finished.set_invalid_switch_caught(true);
+                    }
 
-                if (!do_yield_transfer && !do_invalid_transfer)
-                    finished.set_status(task_object::status_e::suspended);
-                else
-                    finished.set_status(task_object::status_e::running);
+                    if (!do_yield_transfer && !do_invalid_transfer)
+                        finished.set_status(task_object::status_e::suspended);
+                    else
+                        finished.set_status(task_object::status_e::running);
+                }
             } else if (!finished.get_completed()) {
                 finished.set_completed(true);
                 should_decrement = true;

@@ -13,6 +13,8 @@
 #include <atomic>
 #include <chrono>
 #include <exception>
+#include <memory>
+#include <new>
 
 namespace fast_task {
     enum class task_priority : uint8_t {
@@ -49,6 +51,26 @@ namespace fast_task {
         };
 
         template <typename State>
+        struct sbo_guarded_state {
+            union {
+                State state;
+            };
+            bool constructed = false;
+
+            sbo_guarded_state() noexcept {}
+            ~sbo_guarded_state() {
+                if (constructed)
+                    state.~State();
+            }
+
+            template <typename Func, typename ExHandle>
+            void emplace(Func&& func, ExHandle&& ex_handle) {
+                new (&state) State{std::forward<Func>(func), std::forward<ExHandle>(ex_handle)};
+                constructed = true;
+            }
+        };
+
+        template <typename State>
         static void start_thunk(void* ptr) {
             if constexpr (!std::is_same_v<decltype(State::func), std::nullptr_t>) {
                 static_cast<State*>(ptr)->func();
@@ -59,6 +81,22 @@ namespace fast_task {
         static void exception_thunk(void* ptr, const std::exception_ptr& ex) {
             if constexpr (!std::is_same_v<decltype(State::ex_handle), std::nullptr_t>) {
                 static_cast<State*>(ptr)->ex_handle(ex);
+            }
+        }
+
+        template <typename State>
+        static void guarded_start_thunk(void* ptr) {
+            auto& st = static_cast<sbo_guarded_state<State>*>(ptr)->state;
+            if constexpr (!std::is_same_v<decltype(State::func), std::nullptr_t>) {
+                st.func();
+            }
+        }
+
+        template <typename State>
+        static void guarded_exception_thunk(void* ptr, const std::exception_ptr& ex) {
+            auto& st = static_cast<sbo_guarded_state<State>*>(ptr)->state;
+            if constexpr (!std::is_same_v<decltype(State::ex_handle), std::nullptr_t>) {
+                st.ex_handle(ex);
             }
         }
 
@@ -79,7 +117,7 @@ namespace fast_task {
 
 
     public:
-        static size_t max_running_tasks;
+        static std::atomic<size_t> max_running_tasks;
         static bool enable_task_naming;
         static constexpr size_t sbo_size = 64; // must match task_object::sbo_buffer size
 
@@ -165,24 +203,50 @@ namespace fast_task {
                 res.init_pointer(nullptr, &empty_vtable, false, is_on_scheduler);
             } else {
                 using State = task_state<std::decay_t<Func>, std::decay_t<ExHandle>>;
-                constexpr bool use_sbo = sizeof(State) <= sbo_size &&
-                                         alignof(State) <= alignof(std::max_align_t);
-
-                static task_vtable vtable{
-                    nullptr,
-                    nullptr,
-                    start_thunk<State>,
-                    std::is_same_v<std::decay_t<ExHandle>, std::nullptr_t> ? nullptr : exception_thunk<State>,
-                    use_sbo ? sbo_destruct_thunk<State> : heap_destruct_thunk<State>,
-                    false
-                };
+                constexpr bool nothrow_init =
+                    std::is_nothrow_constructible_v<std::decay_t<Func>, Func&&> &&
+                    std::is_nothrow_constructible_v<std::decay_t<ExHandle>, ExHandle&&>;
+                using SboState = std::conditional_t<nothrow_init, State, sbo_guarded_state<State>>;
+                constexpr bool use_sbo = sizeof(SboState) <= sbo_size &&
+                                         alignof(SboState) <= alignof(std::max_align_t);
 
                 if constexpr (use_sbo) {
-                    void* storage = res.init_inplace(&vtable, false, is_on_scheduler);
-                    new (storage) State{std::forward<Func>(func), std::forward<ExHandle>(ex_handle)};
+                    if constexpr (nothrow_init) {
+                        static task_vtable vtable{
+                            nullptr,
+                            nullptr,
+                            start_thunk<State>,
+                            std::is_same_v<std::decay_t<ExHandle>, std::nullptr_t> ? nullptr : exception_thunk<State>,
+                            sbo_destruct_thunk<State>,
+                            false
+                        };
+                        void* storage = res.init_inplace(&vtable, false, is_on_scheduler);
+                        new (storage) State{std::forward<Func>(func), std::forward<ExHandle>(ex_handle)};
+                    } else {
+                        static task_vtable vtable{
+                            nullptr,
+                            nullptr,
+                            guarded_start_thunk<State>,
+                            std::is_same_v<std::decay_t<ExHandle>, std::nullptr_t> ? nullptr : guarded_exception_thunk<State>,
+                            sbo_destruct_thunk<SboState>,
+                            false
+                        };
+                        void* storage = res.init_inplace(&vtable, false, is_on_scheduler);
+                        auto* guard = new (storage) SboState();
+                        guard->emplace(std::forward<Func>(func), std::forward<ExHandle>(ex_handle));
+                    }
                 } else {
-                    State* ptr = new State{std::forward<Func>(func), std::forward<ExHandle>(ex_handle)};
-                    res.init_pointer(ptr, &vtable, false, is_on_scheduler);
+                    static task_vtable vtable{
+                        nullptr,
+                        nullptr,
+                        start_thunk<State>,
+                        std::is_same_v<std::decay_t<ExHandle>, std::nullptr_t> ? nullptr : exception_thunk<State>,
+                        heap_destruct_thunk<State>,
+                        false
+                    };
+                    std::unique_ptr<State> ptr(new State{std::forward<Func>(func), std::forward<ExHandle>(ex_handle)});
+                    res.init_pointer(ptr.get(), &vtable, false, is_on_scheduler);
+                    ptr.release();
                 }
 
                 res.set_timeout(timeout);

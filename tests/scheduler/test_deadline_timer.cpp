@@ -84,3 +84,28 @@ TEST_F(DeadlineTimerTest, AsyncWaitTask) {
 
     EXPECT_TRUE(ran.load());
 }
+
+TEST_F(DeadlineTimerTest, WaitAndCancelNativeAndTask) {
+    {
+        fast_task::deadline_timer timer(std::chrono::seconds(5));
+        auto canceler = fast_task::task::run([&] {
+            fast_task::this_task::sleep_for(std::chrono::milliseconds(15));
+            timer.cancel();
+        });
+        auto st = timer.wait();
+        canceler.await_task();
+        EXPECT_EQ(st, fast_task::deadline_timer::status::canceled);
+    }
+
+    {
+        fast_task::deadline_timer timer(std::chrono::seconds(5));
+        fast_task::deadline_timer::status st = fast_task::deadline_timer::status::timeouted;
+        auto waiter = fast_task::task::run([&] {
+            st = timer.wait();
+        });
+        std::this_thread::sleep_for(std::chrono::milliseconds(15));
+        timer.cancel();
+        waiter.await_task();
+        EXPECT_EQ(st, fast_task::deadline_timer::status::canceled);
+    }
+}

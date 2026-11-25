@@ -96,3 +96,30 @@ TEST(ConditionVariable, WaitForSucceeds) {
     EXPECT_EQ(status, fast_task::cv_status::no_timeout);
     EXPECT_TRUE(got_ready);
 }
+
+TEST(ConditionVariable, WaitForRecursiveMutexContention) {
+    fast_task::native::recursive_mutex rmtx;
+    fast_task::native::condition_variable cv;
+    std::atomic<bool> waiter_entered{false};
+    std::atomic<bool> contender_acquired{false};
+
+    std::thread contender([&] {
+        while (!waiter_entered.load(std::memory_order_acquire))
+            std::this_thread::yield();
+        rmtx.lock();
+        contender_acquired.store(true, std::memory_order_release);
+        rmtx.unlock();
+    });
+
+    rmtx.lock();
+    rmtx.lock();
+    waiter_entered.store(true, std::memory_order_release);
+
+    (void)cv.wait_for(rmtx, std::chrono::milliseconds(30));
+
+    EXPECT_NO_THROW(rmtx.unlock());
+    EXPECT_NO_THROW(rmtx.unlock());
+
+    contender.join();
+    EXPECT_TRUE(contender_acquired.load(std::memory_order_acquire));
+}

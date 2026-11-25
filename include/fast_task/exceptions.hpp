@@ -70,6 +70,8 @@ namespace fast_task {
 
     public:
         task_cancellation();
+        task_cancellation(const task_cancellation& other);
+        task_cancellation& operator=(const task_cancellation& other) noexcept;
         ~task_cancellation();
         bool _in_landing();
     };

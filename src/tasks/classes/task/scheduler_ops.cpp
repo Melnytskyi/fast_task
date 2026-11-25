@@ -70,30 +70,34 @@ namespace fast_task::scheduler {
     }
 
     void schedule_until(const task& _task, fast_task::time_point time_point) {
+        if (!_task)
+            return;
         ensure_global_worker();
         task lgr_task = _task;
+        uint16_t awake_check = 0;
         {
-            fast_task::lock_guard guard(get_data(_task));
-            if (get_data(_task).is_running() || get_data(_task).is_ended()) {
+            auto& td = get_data(lgr_task);
+            fast_task::lock_guard guard(td);
+            if (td.is_running() || td.is_ended()) {
 #ifdef FT_ENABLE_ABORT_IF_ALREADY_STARTED
                 assert(false && "The task is already running or stopped.");
                 std::abort();
 #endif
                 return;
             }
-            if (get_data(_task).is_scheduled() && (!get_data(_task).is_suspended() && get_data(_task).get_is_on_scheduler())) {
+            if (td.is_scheduled() && (!td.is_suspended() && td.get_is_on_scheduler())) {
 #ifdef FT_ENABLE_ABORT_IF_ALREADY_STARTED
                 assert(false && "The task is already started.");
                 std::abort();
 #endif
                 return;
             }
+            if (td.is_created())
+                task_account_pool(td).runtime.executing_tasks.fetch_add(1, std::memory_order_acq_rel);
+
+            td.set_status(task_object::status_e::scheduled);
+            awake_check = td.awake_check;
         }
-        if (get_data(lgr_task).is_created())
-            task_account_pool(get_data(lgr_task)).runtime.executing_tasks.fetch_add(1, std::memory_order_acq_rel);
-
-        get_data(lgr_task).set_status(task_object::status_e::scheduled);
-
 
         if (glob.shutdown.requested.load(std::memory_order_acquire)) {
             transfer_task(std::move(lgr_task));
@@ -102,9 +106,8 @@ namespace fast_task::scheduler {
 
         startTimeController();
 
-
         uint64_t ticks = glob.timing.wheel.to_ticks(time_point);
-        glob.timing.wheel.insert(ticks, lgr_task, get_data(lgr_task).awake_check, !can_be_scheduled_task_to_hot());
+        glob.timing.wheel.insert(ticks, lgr_task, awake_check, !can_be_scheduled_task_to_hot());
 
         notify_driver_of_timer(ticks);
     }
@@ -152,11 +155,13 @@ namespace fast_task::scheduler {
             return;
         }
 
+        bool pre_scheduled = false;
         {
-            fast_task::lock_guard guard(get_data(tsk));
+            auto& td = get_data(tsk);
+            fast_task::lock_guard guard(td);
 
             // Reject if currently executing or completely dead
-            if (get_data(tsk).is_running() || get_data(tsk).is_ended()) {
+            if (td.is_running() || td.is_ended()) {
 #ifdef FT_ENABLE_ABORT_IF_ALREADY_STARTED
                 assert(false && "The task is already running or stopped.");
                 std::abort();
@@ -165,16 +170,22 @@ namespace fast_task::scheduler {
             }
 
             // Reject if it is already scheduled but not yet executing
-            if (get_data(tsk).is_scheduled() && !get_data(tsk).is_suspended()) {
+            if (td.is_scheduled() && !td.is_suspended()) {
 #ifdef FT_ENABLE_ABORT_IF_ALREADY_STARTED
                 assert(false && "The task is already started.");
                 std::abort();
 #endif
                 return;
             }
+
+            pre_scheduled = td.is_created();
+            td.set_status(task_object::status_e::scheduled);
         }
 
-        transfer_task(task(tsk));
+        if (pre_scheduled)
+            route_task(task(tsk), nullptr, true);
+        else
+            transfer_task(task(tsk));
     }
 
     void become_task_executor() {
@@ -234,7 +245,7 @@ namespace fast_task::scheduler {
             fast_task::unique_lock l(uni);
             no_tasks_waiter_guard waiter;
 
-            if (get_loc())
+            if (auto* loc = get_loc(); loc && loc->is_task_thread)
                 while (total_executing_tasks() != 1) {
                     ensure_global_worker();
                     glob.no_tasks.notifier.wait_for(l, std::chrono::milliseconds(1));

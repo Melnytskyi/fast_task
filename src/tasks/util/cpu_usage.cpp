@@ -10,16 +10,15 @@ static double calculate_cpu_load(fast_task::util::cpu::usage_prev_stat& prev_sta
     uint64_t total_ticks_since_last_time = total_ticks - prev_stat.total_ticks;
     uint64_t idle_ticks_since_last_time = idle_ticks - prev_stat.idle_ticks;
 
-    double result = 1.0 -
-                    ((total_ticks_since_last_time > 0)
-                         ? ((double)idle_ticks_since_last_time) / total_ticks_since_last_time
-                         : 0);
+    double result = (total_ticks_since_last_time > 0)
+                        ? (1.0 - ((double)idle_ticks_since_last_time) / total_ticks_since_last_time)
+                        : 0.0;
 
     prev_stat.total_ticks = total_ticks;
     prev_stat.idle_ticks = idle_ticks;
     return result;
 }
-#if _WIN64
+#ifdef _WIN32
     #define NOMINMAX
     #include <windows.h>
 

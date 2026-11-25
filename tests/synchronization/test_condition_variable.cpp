@@ -4,8 +4,8 @@
 // (See accompanying file LICENSE or copy at
 // http://www.boost.org/LICENSE_1_0.txt)
 
-#include <helpers.hpp>
 #include <atomic>
+#include <helpers.hpp>
 
 class TaskCvTest : public SchedulerFixture {};
 
@@ -142,4 +142,43 @@ TEST_F(TaskCvTest, AsyncWait) {
     });
 
     EXPECT_TRUE(completed);
+}
+
+TEST_F(TaskCvTest, FutexHeadWaiterTimeoutWhileSecondRemains) {
+    fast_task::mutex mtx;
+    fast_task::condition_variable cv;
+    bool ready = false;
+    std::atomic<bool> t1_done{false};
+    std::atomic<bool> t1_woke_ready{true};
+    std::atomic<bool> t2_waiting{false};
+    std::atomic<bool> t2_woke_ready{false};
+
+    auto t1 = fast_task::task::run([&] {
+        fast_task::unique_lock<fast_task::mutex> lk(mtx);
+        bool notified = cv.wait_for(lk, std::chrono::milliseconds(20));
+        t1_woke_ready.store(notified && ready, std::memory_order_release);
+        t1_done.store(true, std::memory_order_release);
+    });
+
+    auto t2 = fast_task::task::run([&] {
+        fast_task::unique_lock<fast_task::mutex> lk(mtx);
+        t2_waiting.store(true, std::memory_order_release);
+        while (!ready)
+            cv.wait(lk);
+        t2_woke_ready.store(ready, std::memory_order_release);
+    });
+
+    while (!t2_waiting.load(std::memory_order_acquire) || !t1_done.load(std::memory_order_acquire))
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+
+    {
+        fast_task::lock_guard<fast_task::mutex> lk(mtx);
+        ready = true;
+    }
+    cv.notify_all();
+
+    t1.await_task();
+    t2.await_task();
+    EXPECT_FALSE(t1_woke_ready.load(std::memory_order_acquire));
+    EXPECT_TRUE(t2_woke_ready.load(std::memory_order_acquire));
 }

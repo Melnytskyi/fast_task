@@ -6,13 +6,16 @@
 
 #pragma once
 #include <atomic>
+#include <bit>
 #include <chrono>
 #include <concurrentqueue/moodycamel/concurrentqueue.h>
 #include <cstddef>
 #include <cstdint>
 #include <fast_task/task.hpp>
+#include <mutex>
 #include <tasks/util/macro.hpp>
 #include <tasks/util/os_alloc.hpp>
+#include <vector>
 
 namespace fast_task {
     struct task_object;
@@ -35,7 +38,7 @@ namespace fast_task {
         uint8_t wheel_level = 0;
         uint8_t wheel_slot = 0;
         std::atomic<flags_f::t> flags{0};
-        uint16_t arena_offset_pages = 0;
+        uint16_t arena_offset_pages;
 
         timing() = default;
 
@@ -100,8 +103,11 @@ namespace fast_task {
         static_assert(sizeof(tagged_node) == 16, "tagged_node must be 16 bytes for DWCAS");
 
     private:
+        static constexpr uint32_t CLEANING_BIT = 1u << 31;
+
         std::atomic<tagged_node> global_stack_;
         std::atomic<size_t> global_available_{0};
+        std::atomic<uint32_t> pop_state_{0};
         std::atomic<bool> expanding_{false};
         std::atomic<bool> is_cleaning{false};
 
@@ -168,16 +174,17 @@ namespace fast_task {
         template <typename F>
         void collect_expired(fast_task::time_point now, F&& handler) {
             uint64_t target = to_ticks(now);
-            if (target > current_tick_) {
-                while (current_tick_ < target) {
-                    uint64_t next_tick = current_tick_ + 1;
+            uint64_t cur = current_tick_.load(std::memory_order_acquire);
+            if (target > cur) {
+                while (cur < target) {
+                    uint64_t next_tick = cur + 1;
                     if ((next_tick & 0xFFFFFFFFULL) == 0)
                         drain_overflow();
 
-                    advance_one_tick(handler);
+                    cur = advance_one_tick(handler);
                 }
 
-                collect_slot(static_cast<size_t>(current_tick_ & (SLOTS - 1)), handler);
+                collect_slot(static_cast<size_t>(cur & (SLOTS - 1)), handler);
                 drain_expired_overflow(now, handler);
             }
 
@@ -195,8 +202,11 @@ namespace fast_task {
         void clear(F&& handler) {
             for (size_t level = 0; level < LEVELS; ++level) {
                 for (size_t slot = 0; slot < SLOTS; ++slot) {
-                    timing* t =
-                        slots_[level][slot].exchange(nullptr, std::memory_order_acquire);
+                    timing* t = nullptr;
+                    {
+                        std::lock_guard guard(wheel_lock_);
+                        t = slots_[level][slot].exchange(nullptr, std::memory_order_acq_rel);
+                    }
                     while (t) {
                         timing* next =
                             t->wheel_next.load(std::memory_order_relaxed);
@@ -218,20 +228,25 @@ namespace fast_task {
                     deallocate_node(batch[i]);
                 }
             }
-            has_overflow_.store(false, std::memory_order_relaxed);
+            has_overflow_.store(false, std::memory_order_release);
 
-            for (auto& word : level0_occupancy_)
-                word.store(0, std::memory_order_relaxed);
-            for (auto& level : overdue_mask_)
-                for (auto& word : level)
+            {
+                std::lock_guard guard(wheel_lock_);
+                for (auto& word : level0_occupancy_)
                     word.store(0, std::memory_order_relaxed);
+                for (auto& level : overdue_mask_)
+                    for (auto& word : level)
+                        word.store(0, std::memory_order_relaxed);
 
-            epoch_ = fast_task::clock::now();
-            current_tick_ = 0;
+                epoch_ = fast_task::clock::now();
+                current_tick_.store(0, std::memory_order_release);
+            }
         }
 
     private:
         static constexpr size_t OCCUPANCY_WORDS = SLOTS / 64;
+
+        mutable fast_task::native::spin_lock wheel_lock_;
 
         std::atomic<timing*> slots_[LEVELS][SLOTS];
 
@@ -239,7 +254,7 @@ namespace fast_task {
 
         std::atomic<uint64_t> overdue_mask_[LEVELS][OCCUPANCY_WORDS];
 
-        uint64_t current_tick_ = 0;
+        std::atomic<uint64_t> current_tick_{0};
         fast_task::time_point epoch_;
 
         moodycamel::ConcurrentQueue<timing*> overflow_;
@@ -251,9 +266,8 @@ namespace fast_task {
         void push_slot(size_t level, size_t slot, timing* node);
 
         template <typename F>
-        void advance_one_tick(F& handler) {
-            ++current_tick_;
-            uint64_t tick = current_tick_;
+        uint64_t advance_one_tick(F& handler) {
+            uint64_t tick = current_tick_.fetch_add(1, std::memory_order_seq_cst) + 1;
             for (size_t L = 1; L < LEVELS; ++L) {
                 uint64_t mask = (uint64_t(1) << (L * SLOT_BITS)) - 1;
                 if ((tick & mask) == 0)
@@ -261,7 +275,8 @@ namespace fast_task {
                 else
                     break;
             }
-            collect_slot(static_cast<size_t>(current_tick_ & (SLOTS - 1)), handler);
+            collect_slot(static_cast<size_t>(tick & (SLOTS - 1)), handler);
+            return tick;
         }
 
         void cascade_from(size_t level);
@@ -274,10 +289,10 @@ namespace fast_task {
                 for (size_t word = 0; word < OCCUPANCY_WORDS; ++word) {
                     uint64_t bits = overdue_mask_[level][word].load(std::memory_order_acquire);
                     while (bits != 0) {
-                        const size_t slot = word * 64 + static_cast<size_t>(__builtin_ctzll(bits));
+                        const size_t slot = word * 64 + static_cast<size_t>(std::countr_zero(bits));
                         bits &= bits - 1;
                         overdue_mask_[level][word].fetch_and(
-                            ~(uint64_t(1) << (slot & (64 - 1))), std::memory_order_relaxed
+                            ~(uint64_t(1) << (slot & (64 - 1))), std::memory_order_acq_rel
                         );
                         sweep_slot(level, slot, handler);
                     }
@@ -287,31 +302,51 @@ namespace fast_task {
 
         template <typename F>
         void sweep_slot(size_t level, size_t slot, F& handler) {
-            if (level == 0)
-                level0_occupancy_[slot >> 6].fetch_and(
-                    ~(uint64_t(1) << (slot & (64 - 1))), std::memory_order_relaxed
-                );
-            timing* chain = slots_[level][slot].exchange(nullptr, std::memory_order_acquire);
+            timing* chain = nullptr;
+            {
+                std::lock_guard guard(wheel_lock_);
+                if (level == 0)
+                    level0_occupancy_[slot >> 6].fetch_and(
+                        ~(uint64_t(1) << (slot & (64 - 1))), std::memory_order_acq_rel
+                    );
+                chain = slots_[level][slot].exchange(nullptr, std::memory_order_acq_rel);
+            }
+            const uint64_t cur = current_tick_.load(std::memory_order_acquire);
             while (chain) {
                 timing* next = chain->wheel_next.load(std::memory_order_relaxed);
                 chain->wheel_next.store(nullptr, std::memory_order_relaxed);
                 if (chain->get_is_canceled())
                     deallocate_node(chain);
-                else if (chain->wait_ticks <= current_tick_) {
+                else if (chain->wait_ticks <= cur) {
                     handler(*chain);
                     deallocate_node(chain);
-                } else
-                    push_slot(level, slot_of(chain->wait_ticks, level), chain);
+                } else {
+                    const uint64_t delta = chain->wait_ticks - cur;
+                    if (delta >= MAX_TICK_RANGE) {
+                        chain->set_is_overflow(true);
+                        overflow_.enqueue(chain);
+                        has_overflow_.store(true, std::memory_order_release);
+                    } else {
+                        size_t target_level = 0;
+                        while (target_level + 1 < LEVELS && delta >= ticks_per_level(target_level + 1))
+                            ++target_level;
+                        push_slot(target_level, slot_of(chain->wait_ticks, target_level), chain);
+                    }
+                }
                 chain = next;
             }
         }
 
         template <typename F>
         void collect_slot(size_t slot, F& handler) {
-            level0_occupancy_[slot >> 6].fetch_and(
-                ~(uint64_t(1) << (slot & 63)), std::memory_order_relaxed
-            );
-            timing* chain = slots_[0][slot].exchange(nullptr, std::memory_order_acquire);
+            timing* chain = nullptr;
+            {
+                std::lock_guard guard(wheel_lock_);
+                level0_occupancy_[slot >> 6].fetch_and(
+                    ~(uint64_t(1) << (slot & 63)), std::memory_order_acq_rel
+                );
+                chain = slots_[0][slot].exchange(nullptr, std::memory_order_acq_rel);
+            }
             while (chain) {
                 timing* next =
                     chain->wheel_next.load(std::memory_order_relaxed);
@@ -325,31 +360,36 @@ namespace fast_task {
 
         template <typename F>
         void drain_expired_overflow(fast_task::time_point now, F& handler) {
-            if (!has_overflow_.load(std::memory_order_relaxed))
+            if (!has_overflow_.exchange(false, std::memory_order_acq_rel))
                 return;
 
-            timing* batch[256];
-            size_t n = overflow_.try_dequeue_bulk(batch, 256);
-            size_t requeue = 0;
+            constexpr size_t BATCH = 256;
+            timing* batch[BATCH];
+            std::vector<timing*> requeue;
+            size_t n;
 
-            for (size_t i = 0; i < n; ++i) {
-                timing* t = batch[i];
-                if (t->get_is_canceled()) {
-                    deallocate_node(t);
-                    continue;
+            while ((n = overflow_.try_dequeue_bulk(batch, BATCH)) > 0) {
+                for (size_t i = 0; i < n; ++i) {
+                    timing* t = batch[i];
+                    if (t->get_is_canceled()) {
+                        deallocate_node(t);
+                        continue;
+                    }
+
+                    auto tp = to_timepoint(t->wait_ticks);
+                    if (tp <= now) {
+                        t->set_is_overflow(false);
+                        handler(*t);
+                        deallocate_node(t);
+                    } else
+                        requeue.push_back(t);
                 }
-
-                auto tp = to_timepoint(t->wait_ticks);
-                if (tp <= now) {
-                    t->set_is_overflow(false);
-                    handler(*t);
-                    deallocate_node(t);
-                } else
-                    batch[requeue++] = t;
             }
 
-            if (requeue > 0)
-                overflow_.enqueue_bulk(batch, requeue);
+            if (!requeue.empty()) {
+                overflow_.enqueue_bulk(requeue.data(), requeue.size());
+                has_overflow_.store(true, std::memory_order_release);
+            }
         }
 
         static timing* allocate_node();

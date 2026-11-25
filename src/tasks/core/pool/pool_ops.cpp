@@ -74,14 +74,14 @@ namespace fast_task {
             if (!raw) {
                 pool.queue_data.tasks.enqueue(nullptr);
                 if (pool_accepts_wake(pool))
-                    wake_work(pool);
+                    pool_wake_work(pool);
                 return true;
             }
 
             const bool self_publish = loc && loc->curr_task && &get_data(loc->curr_task) == raw;
             if (!self_publish && loc && loc->owner_pool == &base && loc->local_tasks.emplace(raw)) {
                 if (loc->local_tasks.size() > 1 && pool_accepts_wake(pool))
-                    wake_work(pool);
+                    pool_wake_work(pool);
                 mark_local_nonempty(loc, base);
                 return true;
             }
@@ -91,7 +91,7 @@ namespace fast_task {
             else
                 pool.queue_data.tasks.enqueue(raw);
             if (pool_accepts_wake(pool))
-                wake_work(pool);
+                pool_wake_work(pool);
             return false;
         }
 
@@ -128,7 +128,7 @@ namespace fast_task {
             const auto& pool = storage_as<StorageT>(base);
             if (pool.queue_data.tasks.size_approx() != 0)
                 return true;
-            if (pool.is_global && pool.queue_data.cold_tasks.size_approx() != 0)
+            if (pool.is_global && pool.queue_data.cold_tasks.size_approx() != 0 && can_be_scheduled_task_to_hot())
                 return true;
             return false;
         }
@@ -153,7 +153,7 @@ namespace fast_task {
             if (!raw) {
                 pool.queue_data.tasks[priority_level_count - 1].enqueue(nullptr);
                 if (pool_accepts_wake(pool))
-                    wake_work(pool);
+                    pool_wake_work(pool);
                 return false;
             }
 
@@ -162,7 +162,7 @@ namespace fast_task {
             else
                 pool.queue_data.tasks[priority_index(raw)].enqueue(raw);
             if (pool_accepts_wake(pool))
-                wake_work(pool);
+                pool_wake_work(pool);
             return false;
         }
 
@@ -218,7 +218,7 @@ namespace fast_task {
                 if (pool.queue_data.tasks[level].size_approx() != 0)
                     return true;
             }
-            if (pool.is_global && pool.queue_data.cold_tasks.size_approx() != 0)
+            if (pool.is_global && pool.queue_data.cold_tasks.size_approx() != 0 && can_be_scheduled_task_to_hot())
                 return true;
             return false;
         }
@@ -253,7 +253,9 @@ namespace fast_task {
                     cpu_relax();
                 budget -= slice;
 
-                if (scheduler_stopping() || glob.stw.request.load(std::memory_order_relaxed) ||
+                if (scheduler_stopping() ||
+                    pool.runtime.stop_requested.load(std::memory_order_relaxed) ||
+                    glob.stw.request.load(std::memory_order_relaxed) ||
                     HasQueued(pool, loc) || work_event.current_epoch() != epoch) {
                     found = true;
                     break;
@@ -276,6 +278,7 @@ namespace fast_task {
 
             auto pred = [&base, loc] {
                 return scheduler_stopping() ||
+                       base.runtime.stop_requested.load(std::memory_order_acquire) ||
                        driver_claimable(loc) ||
                        base.threads.surplus() ||
                        HasRunnable(base, loc);
@@ -290,22 +293,23 @@ namespace fast_task {
         bool busy_spin_until(worker_pool_storage& base, executors_local* loc, fast_task::time_point deadline) noexcept {
             for (unsigned bursts = 0;; ++bursts) {
                 if (scheduler_stopping() ||
-                    driver_claimable(loc) ||
-                    HasQueued(base, loc) ||
                     base.threads.surplus() ||
                     base.runtime.stop_requested.load(std::memory_order_acquire))
                     return true;
 
-                if (base.runtime.paused.load(std::memory_order_relaxed)) {
-                    auto pred = [&base, loc] {
+                if (base.runtime.paused.load(std::memory_order_acquire)) {
+                    auto pred = [&base] {
                         return scheduler_stopping() ||
-                               driver_claimable(loc) ||
-                               HasQueued(base, loc) ||
-                               base.runtime.stop_requested.load(std::memory_order_acquire);
+                               base.runtime.stop_requested.load(std::memory_order_acquire) ||
+                               base.threads.surplus() ||
+                               !base.runtime.paused.load(std::memory_order_acquire);
                     };
                     base.work_event.wait(pred, deadline);
                     return true;
                 }
+
+                if (driver_claimable(loc) || HasQueued(base, loc))
+                    return true;
 
                 for (unsigned i = 0; i < probe_burst; ++i)
                     cpu_relax();
@@ -405,7 +409,7 @@ namespace fast_task {
         }
 
         template <scheduler::queue_policy Q, scheduler::idle_policy I, scheduler::worker_balancer B, bool IsGlobal, worker_scale S>
-        constexpr worker_pool_ops make_ops() noexcept {
+        worker_pool_ops make_ops() noexcept {
             using storage_t = configured_worker_pool_storage<Q, I, B, IsGlobal, S>;
 
             worker_pool_ops ops{};
@@ -440,6 +444,7 @@ namespace fast_task {
             static_assert(I == scheduler::idle_policy::wait || I == scheduler::idle_policy::busy_spin, "unknown idle_policy: add its wait implementation to pool_ops.cpp");
             ops.queue.drain_cold = &common_drain_cold<storage_t>;
             ops.queue.destroy = &storage_destroy<storage_t>;
+            ops.queue.multi_worker_steal = &steal_from_pool<storage_t>;
             if constexpr (S == worker_scale::single_worker)
                 ops.queue.steal = &no_steal;
             else
@@ -500,6 +505,10 @@ namespace fast_task {
     configured_worker_pool_storage<Q, I, B, IsGlobal, S>::configured_worker_pool_storage()
         : queue_data() {
         this->ops = make_ops<Q, I, B, IsGlobal, S>();
+    }
+
+    void FT_API_LOCAL validate_pool_policies(scheduler::queue_policy queue, scheduler::idle_policy idle) {
+        validate_policies(queue, idle);
     }
 
     worker_pool_storage* FT_API_LOCAL construct_pool_storage(void* buffer, scheduler::queue_policy queue, scheduler::idle_policy idle, scheduler::worker_balancer balancer, bool single_worker) {

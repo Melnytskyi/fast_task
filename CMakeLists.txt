@@ -16,7 +16,7 @@ target_link_libraries(fast_task PRIVATE fast_task_dependencies)
 target_include_directories(fast_task PUBLIC "include")
 target_include_directories(fast_task PRIVATE "src")
 
-target_compile_options(fast_task PUBLIC -g )
+target_compile_options(fast_task PUBLIC $<$<CXX_COMPILER_ID:MSVC>:/Zc:__cplusplus>)
 
 include(cmake/Module.cmake)
 

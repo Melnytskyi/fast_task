@@ -99,6 +99,7 @@ namespace fast_task {
                 deadline_timer& timer;
                 fast_task::time_point timeout_time;
                 task task_obj;
+                bool suspended = false;
 
                 bool await_ready() noexcept {
                     return timer.timed_out();
@@ -106,17 +107,20 @@ namespace fast_task {
 
                 bool await_suspend(const base_coro_handle& h) {
                     task_obj = h.promise->task_object;
-                    return !timer.enter_wait(mut, task_obj, state, timeout_time);
+                    suspended = !timer.enter_wait(mut, task_obj, state, timeout_time);
+                    return suspended;
                 }
 
-                deadline_timer::status await_resume() noexcept {
+                deadline_timer::status await_resume() {
+                    if (suspended)
+                        mut.lock();
                     if (!task_obj)
                         return deadline_timer::status::timeouted;
                     return timer.get_status(task_obj, timeout_time);
                 }
             };
 
-            return awaiter{{}, *lock.mutex(), *this, {}, {}};
+            return awaiter{{}, *lock.mutex(), *this, {}, {}, false};
         }
 
         [[nodiscard]] auto async_wait(std::unique_lock<mutex_unify>& lock) {
@@ -126,6 +130,7 @@ namespace fast_task {
                 deadline_timer& timer;
                 fast_task::time_point timeout_time;
                 task task_obj;
+                bool suspended = false;
 
                 bool await_ready() noexcept {
                     return timer.timed_out();
@@ -133,17 +138,20 @@ namespace fast_task {
 
                 bool await_suspend(const base_coro_handle& h) {
                     task_obj = h.promise->task_object;
-                    return !timer.enter_wait(mut, task_obj, state, timeout_time);
+                    suspended = !timer.enter_wait(mut, task_obj, state, timeout_time);
+                    return suspended;
                 }
 
-                deadline_timer::status await_resume() noexcept {
+                deadline_timer::status await_resume() {
+                    if (suspended)
+                        mut.lock();
                     if (!task_obj)
                         return deadline_timer::status::timeouted;
                     return timer.get_status(task_obj, timeout_time);
                 }
             };
 
-            return awaiter{{}, *lock.mutex(), *this, {}, {}};
+            return awaiter{{}, *lock.mutex(), *this, {}, {}, false};
         }
 #endif
     };

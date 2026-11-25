@@ -93,29 +93,36 @@ namespace fast_task::scheduler {
     }
 
     void worker_pool::configure_global(worker_pool_options options) {
-        fast_task::unique_lock guard(glob.pools.safety);
-        auto* current = &global_storage();
-        if (!pool_pristine(*current))
-            throw std::logic_error("worker_pool: the global pool is already in use");
+        validate_pool_policies(options.queue, options.idle);
+        if (options.affinity.mode == scheduler::pool_affinity_mode::round_robin &&
+            options.affinity.cpus.empty())
+            throw std::invalid_argument("worker_pool: round_robin affinity requires at least one cpu");
 
-        const uint8_t index = current->pool_index;
-        scheduler::worker_pool* handle = current->public_handle;
-        current->ops.queue.destroy(*current);
+        {
+            fast_task::unique_lock guard(glob.pools.safety);
+            auto* current = &global_storage();
+            if (!pool_pristine(*current))
+                throw std::logic_error("worker_pool: the global pool is already in use");
 
-        auto* storage = construct_global_pool_storage(glob.pools.global_storage_buffer, options.queue, options.idle, options.balancer, options.max_workers <= 1);
-        if (options.name.empty())
-            options.name = "global";
-        options.allow_driver_polling = true;
-        storage->pool_index = index;
-        storage->is_global = true;
-        storage->started = true;
-        storage->explicitly_configured = true;
-        storage->public_handle = handle;
-        storage->config = std::move(options);
-        glob.pools.slots[index].store(storage, std::memory_order_release);
+            const uint8_t index = current->pool_index;
+            scheduler::worker_pool* handle = current->public_handle;
+            current->ops.queue.destroy(*current);
 
-        storage->threads.set_limits(storage->config.min_workers, storage->config.max_workers);
-        storage->ops.balancer.arm(*storage);
+            auto* storage = construct_global_pool_storage(glob.pools.global_storage_buffer, options.queue, options.idle, options.balancer, options.max_workers <= 1);
+            if (options.name.empty())
+                options.name = "global";
+            options.allow_driver_polling = true;
+            storage->pool_index = index;
+            storage->is_global = true;
+            storage->started = true;
+            storage->explicitly_configured = true;
+            storage->public_handle = handle;
+            storage->config = std::move(options);
+            glob.pools.slots[index].store(storage, std::memory_order_release);
+
+            storage->threads.set_limits(storage->config.min_workers, storage->config.max_workers);
+            storage->ops.balancer.arm(*storage);
+        }
         refresh_dormant_sharing();
     }
 
@@ -246,6 +253,8 @@ namespace fast_task::scheduler {
             if (pool->closing)
                 throw std::logic_error("worker_pool: cannot reconfigure a stopping pool");
         }
+        if (max > 1 && pool->config.queue == scheduler::queue_policy::work_stealing_lifo && pool->ops.queue.multi_worker_steal)
+            pool->ops.queue.steal = pool->ops.queue.multi_worker_steal;
         pool->threads.set_max(max);
         const uint16_t target = pool->threads.target();
         if (target > max)

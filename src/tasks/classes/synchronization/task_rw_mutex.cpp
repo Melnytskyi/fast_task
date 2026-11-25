@@ -7,8 +7,30 @@
 #include <fast_task/internal/futex.hpp>
 #include <fast_task/task.hpp>
 #include <tasks/_internal.hpp>
+#include <thread>
 
 namespace fast_task {
+    namespace {
+        struct rw_enter_lock_ctx {
+            bool active = false;
+            bool called = false;
+            bool acquired = false;
+        };
+
+        thread_local rw_enter_lock_ctx g_rw_enter_lock_ctx;
+
+        struct rw_enter_lock_scope {
+            rw_enter_lock_ctx& ctx;
+
+            rw_enter_lock_scope(rw_enter_lock_ctx& c) noexcept : ctx(c) {
+                ctx = {true, false, false};
+            }
+
+            ~rw_enter_lock_scope() noexcept {
+                ctx.active = false;
+            }
+        };
+    }
     bool rw_mutex::read_probe(void* state_address) noexcept {
         private_values& values = values_of(state_address);
         uint64_t state = values.state.load(std::memory_order_relaxed);
@@ -60,9 +82,14 @@ namespace fast_task {
     void rw_mutex::reader_left(private_values& values, uint64_t state) noexcept {
         if ((state & private_values::READER_COUNT_MASK) != private_values::READER_ONE)
             return;
-        if ((state & private_values::HAS_WRITER_WAITERS) == 0)
+        if ((state & private_values::WRITER_LOCKED) != 0)
             return;
-        wake_writers(values, 1);
+        if ((state & private_values::HAS_WRITER_WAITERS) != 0) {
+            if (wake_writers(values, 1) == 0 && (values.state.load(std::memory_order_acquire) & private_values::HAS_READER_WAITERS) != 0)
+                wake_readers(values);
+        } else if ((state & private_values::HAS_READER_WAITERS) != 0) {
+            wake_readers(values);
+        }
     }
 
     rw_mutex::rw_mutex() {
@@ -75,7 +102,7 @@ namespace fast_task {
             assert(false && "Mutex destroyed while locked");
             std::terminate();
         }
-        if (futex::has_waiters(&values.state, futex::node_data{0})) {
+        if (futex::has_waiters(&values.state)) {
             assert(false && "Mutex destroyed while waited");
             std::terminate();
         }
@@ -131,12 +158,19 @@ namespace fast_task {
 
     void rw_mutex::read_unlock() {
         interrupt_unsafe_region region;
-        uint64_t previous = values.state.fetch_sub(private_values::READER_ONE, std::memory_order_acq_rel);
-        if ((previous & private_values::READER_COUNT_MASK) == 0) {
-            values.state.fetch_add(private_values::READER_ONE, std::memory_order_relaxed);
-            throw std::logic_error("Tried unlock non owned mutex");
+        uint64_t expected = values.state.load(std::memory_order_relaxed);
+        while (true) {
+            if ((expected & private_values::READER_COUNT_MASK) == 0)
+                throw std::logic_error("Tried unlock non owned mutex");
+            if (values.state.compare_exchange_weak(
+                    expected,
+                    expected - private_values::READER_ONE,
+                    std::memory_order_acq_rel,
+                    std::memory_order_relaxed
+                ))
+                break;
         }
-        reader_left(values, previous);
+        reader_left(values, expected);
     }
 
     bool rw_mutex::is_read_locked() {
@@ -250,10 +284,12 @@ namespace fast_task {
         )) {
         }
 
-        if ((expected & private_values::HAS_WRITER_WAITERS) != 0)
-            wake_writers(values, 1);
-        else if ((expected & private_values::HAS_READER_WAITERS) != 0)
+        if ((expected & private_values::HAS_WRITER_WAITERS) != 0) {
+            if (wake_writers(values, 1) == 0 && (values.state.load(std::memory_order_acquire) & private_values::HAS_READER_WAITERS) != 0)
+                wake_readers(values);
+        } else if ((expected & private_values::HAS_READER_WAITERS) != 0) {
             wake_readers(values);
+        }
     }
 
     bool rw_mutex::is_write_locked() {
@@ -287,119 +323,275 @@ namespace fast_task {
 
     bool rw_mutex::enter_read_wait(const task& task_obj, enter_state& state) {
         interrupt_unsafe_region region;
-        return futex::enter_wait_on_address_lock(
-            task_obj,
-            &values.state,
-            &rw_mutex::read_probe,
-            [](void* address, const task&, futex::node_data) {
-                private_values& values = values_of(address);
-                uint64_t current = values.state.load(std::memory_order_relaxed);
-                while (true) {
-                    if (!reader_can_acquire(current)) {
-                        current = values.state.load(std::memory_order_relaxed);
-                        continue;
-                    }
-                    if (values.state.compare_exchange_weak(
+        auto lock_cb = [](void* address, const task&, futex::node_data) {
+            private_values& vals = values_of(address);
+            uint64_t current = vals.state.load(std::memory_order_relaxed);
+            bool try_only = g_rw_enter_lock_ctx.active;
+            if (try_only)
+                g_rw_enter_lock_ctx.called = true;
+            while (true) {
+                if (reader_can_acquire(current)) {
+                    if (vals.state.compare_exchange_weak(
                             current,
                             current + private_values::READER_ONE,
                             std::memory_order_acquire,
                             std::memory_order_relaxed
-                        ))
+                        )) {
+                        if (try_only)
+                            g_rw_enter_lock_ctx.acquired = true;
                         return;
+                    }
+                    continue;
                 }
-            },
-            state,
-            {private_values::READER_KEY}
-        );
+                if (try_only) {
+                    g_rw_enter_lock_ctx.acquired = false;
+                    return;
+                }
+                std::this_thread::yield();
+                current = vals.state.load(std::memory_order_relaxed);
+            }
+        };
+
+        while (true) {
+            uint64_t current = values.state.load(std::memory_order_relaxed);
+            while (reader_can_acquire(current)) {
+                if (values.state.compare_exchange_weak(
+                        current,
+                        current + private_values::READER_ONE,
+                        std::memory_order_acquire,
+                        std::memory_order_relaxed
+                    ))
+                    return true;
+            }
+
+            bool immediate = false;
+            bool called = false;
+            bool acquired = false;
+            {
+                rw_enter_lock_scope scope(g_rw_enter_lock_ctx);
+                immediate = futex::enter_wait_on_address_lock(
+                    task_obj,
+                    &values.state,
+                    &rw_mutex::read_probe,
+                    lock_cb,
+                    state,
+                    {private_values::READER_KEY}
+                );
+                called = g_rw_enter_lock_ctx.called;
+                acquired = g_rw_enter_lock_ctx.acquired;
+            }
+            if (!immediate)
+                return false;
+            if (!called || acquired)
+                return true;
+        }
     }
 
     bool rw_mutex::enter_read_wait_until(const task& task_obj, enter_state& state, fast_task::time_point time_point) {
         interrupt_unsafe_region region;
-        return futex::enter_wait_on_address_lock_until(
-            task_obj,
-            &values.state,
-            &rw_mutex::read_probe,
-            [](void* address, const task&, futex::node_data) {
-                private_values& values = values_of(address);
-                uint64_t current = values.state.load(std::memory_order_relaxed);
-                while (true) {
-                    if (!reader_can_acquire(current)) {
-                        current = values.state.load(std::memory_order_relaxed);
-                        continue;
-                    }
-                    if (values.state.compare_exchange_weak(
+        get_data(task_obj).set_time_end(false);
+        auto lock_cb = [](void* address, const task&, futex::node_data) {
+            private_values& vals = values_of(address);
+            uint64_t current = vals.state.load(std::memory_order_relaxed);
+            bool try_only = g_rw_enter_lock_ctx.active;
+            if (try_only)
+                g_rw_enter_lock_ctx.called = true;
+            while (true) {
+                if (reader_can_acquire(current)) {
+                    if (vals.state.compare_exchange_weak(
                             current,
                             current + private_values::READER_ONE,
                             std::memory_order_acquire,
                             std::memory_order_relaxed
-                        ))
+                        )) {
+                        if (try_only)
+                            g_rw_enter_lock_ctx.acquired = true;
                         return;
+                    }
+                    continue;
                 }
-            },
-            state,
-            time_point,
-            {private_values::READER_KEY}
-        );
+                if (try_only) {
+                    g_rw_enter_lock_ctx.acquired = false;
+                    return;
+                }
+                std::this_thread::yield();
+                current = vals.state.load(std::memory_order_relaxed);
+            }
+        };
+
+        while (true) {
+            uint64_t current = values.state.load(std::memory_order_relaxed);
+            while (reader_can_acquire(current)) {
+                if (values.state.compare_exchange_weak(
+                        current,
+                        current + private_values::READER_ONE,
+                        std::memory_order_acquire,
+                        std::memory_order_relaxed
+                    ))
+                    return true;
+            }
+
+            bool immediate = false;
+            bool called = false;
+            bool acquired = false;
+            {
+                rw_enter_lock_scope scope(g_rw_enter_lock_ctx);
+                immediate = futex::enter_wait_on_address_lock_until(
+                    task_obj,
+                    &values.state,
+                    &rw_mutex::read_probe,
+                    lock_cb,
+                    state,
+                    time_point,
+                    {private_values::READER_KEY}
+                );
+                called = g_rw_enter_lock_ctx.called;
+                acquired = g_rw_enter_lock_ctx.acquired;
+            }
+            if (!immediate)
+                return false;
+            if (!called || acquired)
+                return true;
+        }
     }
 
     bool rw_mutex::enter_write_wait(const task& task_obj, enter_state& state) {
         interrupt_unsafe_region region;
-        return futex::enter_wait_on_address_lock(
-            task_obj,
-            &values.state,
-            &rw_mutex::write_probe,
-            [](void* address, const task& task_obj, futex::node_data) {
-                private_values& values = values_of(address);
-                uint64_t current = values.state.load(std::memory_order_relaxed);
-                while (true) {
-                    if (writer_can_acquire(current)) {
-                        if (values.state.compare_exchange_weak(
-                                current,
-                                current | private_values::WRITER_LOCKED,
-                                std::memory_order_acquire,
-                                std::memory_order_relaxed
-                            )) {
-                            values.writer_owner.store(task_obj.get_id(), std::memory_order_relaxed);
-                            return;
-                        }
-                        continue;
+        auto lock_cb = [](void* address, const task& t, futex::node_data) {
+            private_values& vals = values_of(address);
+            uint64_t current = vals.state.load(std::memory_order_relaxed);
+            bool try_only = g_rw_enter_lock_ctx.active;
+            if (try_only)
+                g_rw_enter_lock_ctx.called = true;
+            while (true) {
+                if (writer_can_acquire(current)) {
+                    if (vals.state.compare_exchange_weak(
+                            current,
+                            current | private_values::WRITER_LOCKED,
+                            std::memory_order_acquire,
+                            std::memory_order_relaxed
+                        )) {
+                        vals.writer_owner.store(t.get_id(), std::memory_order_relaxed);
+                        if (try_only)
+                            g_rw_enter_lock_ctx.acquired = true;
+                        return;
                     }
-                    current = values.state.load(std::memory_order_relaxed);
+                    continue;
                 }
-            },
-            state,
-            {private_values::WRITER_KEY}
-        );
+                if (try_only) {
+                    g_rw_enter_lock_ctx.acquired = false;
+                    return;
+                }
+                std::this_thread::yield();
+                current = vals.state.load(std::memory_order_relaxed);
+            }
+        };
+
+        while (true) {
+            uint64_t current = values.state.load(std::memory_order_relaxed);
+            while (writer_can_acquire(current)) {
+                if (values.state.compare_exchange_weak(
+                        current,
+                        current | private_values::WRITER_LOCKED,
+                        std::memory_order_acquire,
+                        std::memory_order_relaxed
+                    )) {
+                    values.writer_owner.store(task_obj.get_id(), std::memory_order_relaxed);
+                    return true;
+                }
+            }
+
+            bool immediate = false;
+            bool called = false;
+            bool acquired = false;
+            {
+                rw_enter_lock_scope scope(g_rw_enter_lock_ctx);
+                immediate = futex::enter_wait_on_address_lock(
+                    task_obj,
+                    &values.state,
+                    &rw_mutex::write_probe,
+                    lock_cb,
+                    state,
+                    {private_values::WRITER_KEY}
+                );
+                called = g_rw_enter_lock_ctx.called;
+                acquired = g_rw_enter_lock_ctx.acquired;
+            }
+            if (!immediate)
+                return false;
+            if (!called || acquired)
+                return true;
+        }
     }
 
     bool rw_mutex::enter_write_wait_until(const task& task_obj, enter_state& state, fast_task::time_point time_point) {
         interrupt_unsafe_region region;
-        return futex::enter_wait_on_address_lock_until(
-            task_obj,
-            &values.state,
-            &rw_mutex::write_probe,
-            [](void* address, const task& task_obj, futex::node_data) {
-                private_values& values = values_of(address);
-                uint64_t current = values.state.load(std::memory_order_relaxed);
-                while (true) {
-                    if (writer_can_acquire(current)) {
-                        if (values.state.compare_exchange_weak(
-                                current,
-                                current | private_values::WRITER_LOCKED,
-                                std::memory_order_acquire,
-                                std::memory_order_relaxed
-                            )) {
-                            values.writer_owner.store(task_obj.get_id(), std::memory_order_relaxed);
-                            return;
-                        }
-                        continue;
+        get_data(task_obj).set_time_end(false);
+        auto lock_cb = [](void* address, const task& t, futex::node_data) {
+            private_values& vals = values_of(address);
+            uint64_t current = vals.state.load(std::memory_order_relaxed);
+            bool try_only = g_rw_enter_lock_ctx.active;
+            if (try_only)
+                g_rw_enter_lock_ctx.called = true;
+            while (true) {
+                if (writer_can_acquire(current)) {
+                    if (vals.state.compare_exchange_weak(
+                            current,
+                            current | private_values::WRITER_LOCKED,
+                            std::memory_order_acquire,
+                            std::memory_order_relaxed
+                        )) {
+                        vals.writer_owner.store(t.get_id(), std::memory_order_relaxed);
+                        if (try_only)
+                            g_rw_enter_lock_ctx.acquired = true;
+                        return;
                     }
-                    current = values.state.load(std::memory_order_relaxed);
+                    continue;
                 }
-            },
-            state,
-            time_point,
-            {private_values::WRITER_KEY}
-        );
+                if (try_only) {
+                    g_rw_enter_lock_ctx.acquired = false;
+                    return;
+                }
+                std::this_thread::yield();
+                current = vals.state.load(std::memory_order_relaxed);
+            }
+        };
+
+        while (true) {
+            uint64_t current = values.state.load(std::memory_order_relaxed);
+            while (writer_can_acquire(current)) {
+                if (values.state.compare_exchange_weak(
+                        current,
+                        current | private_values::WRITER_LOCKED,
+                        std::memory_order_acquire,
+                        std::memory_order_relaxed
+                    )) {
+                    values.writer_owner.store(task_obj.get_id(), std::memory_order_relaxed);
+                    return true;
+                }
+            }
+
+            bool immediate = false;
+            bool called = false;
+            bool acquired = false;
+            {
+                rw_enter_lock_scope scope(g_rw_enter_lock_ctx);
+                immediate = futex::enter_wait_on_address_lock_until(
+                    task_obj,
+                    &values.state,
+                    &rw_mutex::write_probe,
+                    lock_cb,
+                    state,
+                    time_point,
+                    {private_values::WRITER_KEY}
+                );
+                called = g_rw_enter_lock_ctx.called;
+                acquired = g_rw_enter_lock_ctx.acquired;
+            }
+            if (!immediate)
+                return false;
+            if (!called || acquired)
+                return true;
+        }
     }
 }

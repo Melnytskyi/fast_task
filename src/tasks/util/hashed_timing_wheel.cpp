@@ -8,6 +8,7 @@
 #include <limits>
 #include <new>
 #include <tasks/_internal.hpp>
+#include <tasks/util/cpu_relax.hpp>
 #include <tasks/util/macro.hpp>
 
 namespace fast_task {
@@ -24,9 +25,14 @@ namespace fast_task {
             return;
         interrupt_unsafe_region ir;
 
+        size_t prev_arena_size = 0;
+        {
+            std::lock_guard guard(arena_lock);
+            prev_arena_size = last_arena_size_;
+        }
         size_t num_blocks = min_arena_blocks;
-        if (last_arena_size_ != 0) {
-            num_blocks = last_arena_size_ / block_size * 2;
+        if (prev_arena_size != 0) {
+            num_blocks = prev_arena_size / block_size * 2;
             if (num_blocks < min_arena_blocks)
                 num_blocks = min_arena_blocks;
             if (num_blocks > max_arena_blocks)
@@ -83,7 +89,7 @@ namespace fast_task {
                 break;
             }
         }
-        global_available_.fetch_add(num_blocks, std::memory_order_relaxed);
+        global_available_.fetch_add(num_blocks - 1, std::memory_order_relaxed);
         expanding_.store(false, std::memory_order_release);
     }
 
@@ -109,30 +115,50 @@ namespace fast_task {
         size_t popped = 0;
 
         while (popped < count) {
-            tagged_node old = global_stack_.load(std::memory_order_acquire);
-            if (!old.ptr) {
-                if (popped == 0) {
-                    expand();
+            uint32_t s = pop_state_.load(std::memory_order_relaxed);
+            while (true) {
+                if (s & CLEANING_BIT) {
+                    cpu_relax();
+                    s = pop_state_.load(std::memory_order_relaxed);
                     continue;
                 }
-                break;
+                if (pop_state_.compare_exchange_weak(s, s + 1, std::memory_order_seq_cst, std::memory_order_relaxed))
+                    break;
             }
-            tagged_node desired{old.ptr->next, old.counter + 1};
-            if (global_stack_.compare_exchange_weak(
-                    old,
-                    desired,
-                    std::memory_order_release,
-                    std::memory_order_acquire
-                )) {
-                old.ptr->next = nullptr;
-                if (!head) {
-                    head = tail = old.ptr;
-                } else {
-                    tail->next = old.ptr;
-                    tail = old.ptr;
+
+            bool need_expand = false;
+            while (popped < count) {
+                tagged_node old = global_stack_.load(std::memory_order_acquire);
+                if (!old.ptr) {
+                    if (popped == 0)
+                        need_expand = true;
+                    break;
                 }
-                ++popped;
+                tagged_node desired{old.ptr->next, old.counter + 1};
+                if (global_stack_.compare_exchange_weak(
+                        old,
+                        desired,
+                        std::memory_order_release,
+                        std::memory_order_acquire
+                    )) {
+                    old.ptr->next = nullptr;
+                    if (!head) {
+                        head = tail = old.ptr;
+                    } else {
+                        tail->next = old.ptr;
+                        tail = old.ptr;
+                    }
+                    ++popped;
+                }
             }
+
+            pop_state_.fetch_sub(1, std::memory_order_release);
+
+            if (need_expand) {
+                expand();
+                continue;
+            }
+            break;
         }
 
         global_available_.fetch_sub(popped, std::memory_order_relaxed);
@@ -181,16 +207,24 @@ namespace fast_task {
         tagged_node old = global_stack_.load(std::memory_order_acquire);
         while (true) {
             tagged_node desired{nullptr, old.counter + 1};
-            if (global_stack_.compare_exchange_weak(old, desired, std::memory_order_release, std::memory_order_acquire))
+            if (global_stack_.compare_exchange_weak(old, desired, std::memory_order_seq_cst, std::memory_order_acquire))
                 break;
         }
-        global_available_.store(0, std::memory_order_relaxed);
+
+        pop_state_.fetch_or(CLEANING_BIT, std::memory_order_seq_cst);
+        while ((pop_state_.load(std::memory_order_acquire) & ~CLEANING_BIT) != 0)
+            cpu_relax();
+        pop_state_.fetch_and(~CLEANING_BIT, std::memory_order_release);
 
         if (!old.ptr)
             return;
 
-        for (auto cur = old.ptr; cur; cur = cur->next)
+        size_t drained_count = 0;
+        for (auto cur = old.ptr; cur; cur = cur->next) {
             get_arena(cur)->cleanup_current_free++;
+            ++drained_count;
+        }
+        global_available_.fetch_sub(drained_count, std::memory_order_relaxed);
 
         arena* old_head;
         {
@@ -345,7 +379,9 @@ namespace fast_task {
                 word.store(0, std::memory_order_relaxed);
     }
 
-    hashed_timing_wheel::~hashed_timing_wheel() = default;
+    hashed_timing_wheel::~hashed_timing_wheel() {
+        clear([](timing&) {});
+    }
 
     uint64_t hashed_timing_wheel::ticks_per_level(size_t level) {
         uint64_t t = 1;
@@ -359,8 +395,12 @@ namespace fast_task {
     }
 
     uint64_t hashed_timing_wheel::to_ticks(fast_task::time_point tp) const {
+        if (tp <= epoch_)
+            return 0;
         auto dur = tp - epoch_;
         auto us = std::chrono::duration_cast<std::chrono::microseconds>(dur).count();
+        if (us <= 0)
+            return 0;
 #if FT_TIMER_PRECISION == 1
         return static_cast<uint64_t>(us);
 #elif FT_TIMER_PRECISION == 1000
@@ -405,9 +445,11 @@ namespace fast_task {
 
     timing* hashed_timing_wheel::insert(uint64_t wait_ticks, task awake_task, uint16_t check_id, bool is_cold) {
         timing* node = allocate_node();
+        const uint16_t saved_offset = node->arena_offset_pages;
         ::new (node) timing(wait_ticks, std::move(awake_task), check_id, is_cold);
+        node->arena_offset_pages = saved_offset;
 
-        uint64_t cur = current_tick_;
+        uint64_t cur = current_tick_.load(std::memory_order_acquire);
         uint64_t tick = node->wait_ticks;
         if (tick <= cur) {
             tick = cur + 1;
@@ -431,10 +473,12 @@ namespace fast_task {
         const size_t slot = slot_of(tick, level);
         push_slot(level, slot, node);
 
-        if (tick <= current_tick_)
+        std::atomic_thread_fence(std::memory_order_seq_cst);
+        const uint64_t cur_after = current_tick_.load(std::memory_order_seq_cst);
+        if ((cur_after >> (level * SLOT_BITS)) >= (tick >> (level * SLOT_BITS)))
             overdue_mask_[level][slot >> 6].fetch_or(
                 uint64_t(1) << (slot & (64 - 1)),
-                std::memory_order_release
+                std::memory_order_acq_rel
             );
         return node;
     }
@@ -447,8 +491,13 @@ namespace fast_task {
     }
 
     void hashed_timing_wheel::cascade_from(size_t level) {
-        size_t slot = slot_of(current_tick_, level);
-        timing* chain = slots_[level][slot].exchange(nullptr, std::memory_order_acquire);
+        const uint64_t cur = current_tick_.load(std::memory_order_acquire);
+        size_t slot = slot_of(cur, level);
+        timing* chain = nullptr;
+        {
+            std::lock_guard guard(wheel_lock_);
+            chain = slots_[level][slot].exchange(nullptr, std::memory_order_acq_rel);
+        }
 
         while (chain) {
             timing* next = chain->wheel_next.load(std::memory_order_relaxed);
@@ -461,12 +510,12 @@ namespace fast_task {
             }
 
             uint64_t tick = chain->wait_ticks;
-            if (tick <= current_tick_) {
-                tick = current_tick_ + 1;
+            if (tick <= cur) {
+                tick = cur + 1;
                 chain->wait_ticks = tick;
             }
 
-            uint64_t delta = tick - current_tick_;
+            uint64_t delta = tick - cur;
             size_t finer = 0;
             while (finer + 1 < level && delta >= ticks_per_level(finer + 1))
                 ++finer;
@@ -477,12 +526,13 @@ namespace fast_task {
     }
 
     void hashed_timing_wheel::drain_overflow() {
-        if (!has_overflow_.load(std::memory_order_relaxed))
+        if (!has_overflow_.exchange(false, std::memory_order_acq_rel))
             return;
 
         constexpr size_t BATCH = 256;
         timing* batch[BATCH];
-        size_t drained = 0;
+        std::vector<timing*> requeue;
+        const uint64_t cur = current_tick_.load(std::memory_order_acquire);
 
         size_t n;
         while ((n = overflow_.try_dequeue_bulk(batch, BATCH)) > 0) {
@@ -495,15 +545,15 @@ namespace fast_task {
                 }
 
                 uint64_t tick = t->wait_ticks;
-                if (tick <= current_tick_) {
-                    tick = current_tick_ + 1;
+                if (tick <= cur) {
+                    tick = cur + 1;
                     t->wait_ticks = tick;
                 }
 
-                uint64_t delta = tick - current_tick_;
+                uint64_t delta = tick - cur;
 
                 if (delta >= MAX_TICK_RANGE) {
-                    batch[drained++] = t;
+                    requeue.push_back(t);
                     continue;
                 }
 
@@ -515,10 +565,10 @@ namespace fast_task {
             }
         }
 
-        if (drained > 0)
-            overflow_.enqueue_bulk(batch, drained);
-
-        has_overflow_.store(drained > 0, std::memory_order_relaxed);
+        if (!requeue.empty()) {
+            overflow_.enqueue_bulk(requeue.data(), requeue.size());
+            has_overflow_.store(true, std::memory_order_release);
+        }
     }
 
     int hashed_timing_wheel::next_occupied_slot(const uint64_t* occupancy, size_t from) noexcept {
@@ -528,7 +578,7 @@ namespace fast_task {
             const size_t bit = slot & 63;
             const uint64_t masked = occupancy[word] & (~uint64_t(0) << bit);
             if (masked)
-                return static_cast<int>(word * 64 + __builtin_ctzll(masked));
+                return static_cast<int>(word * 64 + static_cast<size_t>(std::countr_zero(masked)));
             const size_t step = 64 - bit;
             scanned += step;
             slot = (slot + step) & (SLOTS - 1);
@@ -537,31 +587,58 @@ namespace fast_task {
     }
 
     fast_task::time_point hashed_timing_wheel::next_deadline() const {
+        std::lock_guard guard(wheel_lock_);
         auto earliest = fast_task::time_point::max();
+        const uint64_t cur = current_tick_.load(std::memory_order_acquire);
+
+        for (size_t level = 0; level < LEVELS; ++level) {
+            for (size_t word = 0; word < OCCUPANCY_WORDS; ++word) {
+                uint64_t bits = overdue_mask_[level][word].load(std::memory_order_acquire);
+                while (bits != 0) {
+                    const size_t slot = word * 64 + static_cast<size_t>(std::countr_zero(bits));
+                    bits &= bits - 1;
+                    for (timing* t = slots_[level][slot].load(std::memory_order_acquire);
+                         t;
+                         t = t->wheel_next.load(std::memory_order_acquire)) {
+                        if (t->get_is_canceled())
+                            continue;
+                        auto tp = to_timepoint(t->wait_ticks);
+                        if (tp < earliest)
+                            earliest = tp;
+                    }
+                }
+            }
+        }
 
         uint64_t occupancy[OCCUPANCY_WORDS];
         for (size_t i = 0; i < OCCUPANCY_WORDS; ++i)
             occupancy[i] = level0_occupancy_[i].load(std::memory_order_acquire);
 
-        size_t from = static_cast<size_t>((current_tick_ + 1) & (SLOTS - 1));
-        while (earliest == fast_task::time_point::max()) {
+        size_t from = static_cast<size_t>((cur + 1) & (SLOTS - 1));
+        bool found_l0 = false;
+        for (size_t checked = 0; checked < SLOTS && !found_l0; ++checked) {
             const int slot = next_occupied_slot(occupancy, from);
             if (slot < 0)
                 break;
-            for (timing* t = slots_[0][static_cast<size_t>(slot)].load(std::memory_order_acquire);
+            const size_t s = static_cast<size_t>(slot);
+            occupancy[s >> 6] &= ~(uint64_t(1) << (s & 63));
+            for (timing* t = slots_[0][s].load(std::memory_order_acquire);
                  t;
                  t = t->wheel_next.load(std::memory_order_acquire)) {
                 if (t->get_is_canceled())
                     continue;
-                earliest = to_timepoint(t->wait_ticks);
-                break;
+                auto tp = to_timepoint(t->wait_ticks);
+                if (tp < earliest)
+                    earliest = tp;
+                found_l0 = true;
             }
-            from = (static_cast<size_t>(slot) + 1) & (SLOTS - 1);
+            from = (s + 1) & (SLOTS - 1);
         }
 
-        if (earliest == fast_task::time_point::max()) {
-            for (size_t L = 1; L < LEVELS && earliest == fast_task::time_point::max(); ++L) {
-                const size_t start = slot_of(current_tick_, L);
+        if (!found_l0) {
+            for (size_t L = 1; L < LEVELS; ++L) {
+                const size_t start = (slot_of(cur, L) + 1) & (SLOTS - 1);
+                bool found_level = false;
                 for (size_t i = 0; i < SLOTS; ++i) {
                     const size_t slot = (start + i) & (SLOTS - 1);
                     for (timing* t = slots_[L][slot].load(std::memory_order_acquire);
@@ -572,16 +649,19 @@ namespace fast_task {
                         auto tp = to_timepoint(t->wait_ticks);
                         if (tp < earliest)
                             earliest = tp;
+                        found_level = true;
                     }
-                    if (earliest != fast_task::time_point::max())
+                    if (found_level)
                         break;
                 }
+                if (found_level)
+                    break;
             }
         }
 
         if (has_overflow_.load(std::memory_order_acquire)) {
-            auto now_plus_range = to_timepoint(current_tick_ + MAX_TICK_RANGE);
-            if (earliest == fast_task::time_point::max() || now_plus_range < earliest)
+            auto now_plus_range = to_timepoint(cur + MAX_TICK_RANGE);
+            if (now_plus_range < earliest)
                 earliest = now_plus_range;
         }
 
@@ -599,6 +679,7 @@ namespace fast_task {
     }
 
     size_t hashed_timing_wheel::size() const {
+        std::lock_guard guard(wheel_lock_);
         size_t n = 0;
         for (auto& level : slots_)
             for (auto& slot : level)

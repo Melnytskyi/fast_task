@@ -4,10 +4,9 @@
 // this and hill_climbing.hpp file licensed under MIT license
 
 #include <tasks/util/hill_climbing.hpp>
-#define _USE_MATH_DEFINES
 #include <algorithm>
 #include <cassert>
-#include <math.h>
+#include <cmath>
 #include <numbers>
 
 #include <tasks/util/cpu_usage.hpp>
@@ -21,7 +20,7 @@ namespace fast_task::util {
         // Calculate the sinusoid with the given period
         // Goertzel algorithm http://en.wikipedia.org/wiki/Goertzel_algorithm
         //
-        double w = 2 * M_PI / period;
+        double w = 2 * std::numbers::pi / period;
         double cos = std::cos(w);
         double coeff = 2 * cos;
         double q0, q1 = 0, q2 = 0;
@@ -43,7 +42,7 @@ namespace fast_task::util {
 
     std::pair<uint32_t, uint32_t> hill_climb::climb(uint32_t current_thread_count, double sample_duration_seconds, uint32_t num_completions, uint32_t min_threads, uint32_t max_threads) {
         if (current_thread_count != last_thread_count) {
-            current_control_setting += current_thread_count - last_thread_count;
+            current_control_setting += static_cast<double>(static_cast<int64_t>(current_thread_count) - static_cast<int64_t>(last_thread_count));
             set_thread_count(current_thread_count);
         }
 
@@ -80,7 +79,7 @@ namespace fast_task::util {
         // two "low" samples and one "high" sample.  this will appear as periodic variation right in the frequency
         // range we're targeting, which will not be filtered by the frequency-domain translation.
         //
-        if (total_samples > 0 && ((current_thread_count - 1.0) / num_completions) >= max_sample_error) {
+        if (total_samples > 0 && (num_completions == 0 || ((current_thread_count - 1.0) / num_completions) >= max_sample_error)) {
             // not accurate enough yet.  let's accumulate the data so far, and tell the thread_pool
             // to collect a little more.
             accumulated_sample_duration_seconds = sample_duration_seconds;
@@ -97,7 +96,7 @@ namespace fast_task::util {
         //
         // add the current thread count and throughput sample to our history
         //
-        double throughput = num_completions / sample_duration_seconds;
+        double throughput = sample_duration_seconds > 0.0 ? (num_completions / sample_duration_seconds) : 0.0;
 
         size_t sample_index = total_samples % samples_to_measure;
         samples[sample_index] = throughput;
@@ -246,8 +245,8 @@ namespace fast_task::util {
         new_thread_wave_magnitude = std::min(new_thread_wave_magnitude, max_thread_wave_magnitude);
         new_thread_wave_magnitude = std::max(new_thread_wave_magnitude, (uint32_t)1);
 
-        current_control_setting =
-            std::min(double(max_threads - new_thread_wave_magnitude), current_control_setting);
+        const uint32_t max_control = max_threads > new_thread_wave_magnitude ? max_threads - new_thread_wave_magnitude : 0;
+        current_control_setting = std::min(double(max_control), current_control_setting);
         current_control_setting = std::max(double(min_threads), current_control_setting);
 
         //

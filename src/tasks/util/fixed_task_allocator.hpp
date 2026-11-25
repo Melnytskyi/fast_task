@@ -41,8 +41,11 @@ namespace fast_task {
         static_assert(sizeof(tagged_node) == 16, "tagged_node must be exactly 16 bytes for DWCAS");
 
     private:
+        static constexpr uint32_t CLEANING_BIT = 1u << 31;
+
         std::atomic<tagged_node> global_stack_;
         std::atomic<size_t> global_available_{0};
+        std::atomic<uint32_t> pop_state_{0};
         std::atomic<bool> expanding_{false};
         std::atomic<bool> is_cleaning{false};
 

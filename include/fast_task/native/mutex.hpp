@@ -9,6 +9,7 @@
 #include "../shared.hpp"
 #include "../shared/primitives.hpp"
 #include "thread.hpp"
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <memory>
@@ -18,6 +19,7 @@
 namespace fast_task::native {
     class FT_API mutex {
         friend class condition_variable;
+        friend class timed_mutex;
 #ifdef _WIN32
         void* _mutex;
 #else
@@ -63,7 +65,7 @@ namespace fast_task::native {
         friend class condition_variable;
         mutex actual_mutex;
         size_t count = 0;
-        thread::id owner;
+        std::atomic<unsigned long> owner{0};
 
     public:
         struct FT_API relock_state {
@@ -86,7 +88,7 @@ namespace fast_task::native {
     class FT_API timed_mutex {
         friend class condition_variable;
 #ifdef _WIN32
-        condition_variable _cond;
+        void* _cond;
         mutex _mutex;
         unsigned int locked = 0;
 #else

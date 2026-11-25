@@ -7,6 +7,7 @@
 #include "fixed_task_allocator.hpp"
 #include <tasks/_internal.hpp>
 #include <tasks/util/cpu.hpp>
+#include <tasks/util/cpu_relax.hpp>
 #include <tasks/util/os_alloc.hpp>
 
 namespace fast_task {
@@ -23,11 +24,18 @@ namespace fast_task {
             return;
         interrupt_unsafe_region ir;
 
+        size_t prev_arena_size = 0;
+        {
+            std::lock_guard guard(arena_lock);
+            prev_arena_size = last_arena_size_;
+        }
         size_t num_blocks = min_arena_blocks;
-        if (last_arena_size_ != 0) {
-            num_blocks = last_arena_size_ / block_size * 2;
+        if (prev_arena_size != 0) {
+            num_blocks = prev_arena_size / block_size * 2;
             if (num_blocks < min_arena_blocks)
                 num_blocks = min_arena_blocks;
+            if (num_blocks > max_arena_blocks)
+                num_blocks = max_arena_blocks;
         }
         size_t arena_size = num_blocks * block_size;
 
@@ -82,7 +90,7 @@ namespace fast_task {
                 break;
             }
         }
-        global_available_.fetch_add(num_blocks, std::memory_order_relaxed);
+        global_available_.fetch_add(num_blocks - 1, std::memory_order_relaxed);
         expanding_.store(false, std::memory_order_release);
     }
 
@@ -126,30 +134,50 @@ namespace fast_task {
         size_t popped = 0;
 
         while (popped < count) {
-            tagged_node old = global_stack_.load(std::memory_order_acquire);
-            if (!old.ptr) {
-                if (popped == 0) {
-                    expand();
+            uint32_t s = pop_state_.load(std::memory_order_relaxed);
+            while (true) {
+                if (s & CLEANING_BIT) {
+                    cpu_relax();
+                    s = pop_state_.load(std::memory_order_relaxed);
                     continue;
                 }
-                break;
+                if (pop_state_.compare_exchange_weak(s, s + 1, std::memory_order_seq_cst, std::memory_order_relaxed))
+                    break;
             }
-            tagged_node desired{old.ptr->next, old.counter + 1};
-            if (global_stack_.compare_exchange_weak(
-                    old,
-                    desired,
-                    std::memory_order_release,
-                    std::memory_order_acquire
-                )) {
-                old.ptr->next = nullptr;
-                if (!head)
-                    head = tail = old.ptr;
-                else {
-                    tail->next = old.ptr;
-                    tail = old.ptr;
+
+            bool need_expand = false;
+            while (popped < count) {
+                tagged_node old = global_stack_.load(std::memory_order_acquire);
+                if (!old.ptr) {
+                    if (popped == 0)
+                        need_expand = true;
+                    break;
                 }
-                ++popped;
+                tagged_node desired{old.ptr->next, old.counter + 1};
+                if (global_stack_.compare_exchange_weak(
+                        old,
+                        desired,
+                        std::memory_order_release,
+                        std::memory_order_acquire
+                    )) {
+                    old.ptr->next = nullptr;
+                    if (!head)
+                        head = tail = old.ptr;
+                    else {
+                        tail->next = old.ptr;
+                        tail = old.ptr;
+                    }
+                    ++popped;
+                }
             }
+
+            pop_state_.fetch_sub(1, std::memory_order_release);
+
+            if (need_expand) {
+                expand();
+                continue;
+            }
+            break;
         }
 
         global_available_.fetch_sub(popped, std::memory_order_relaxed);
@@ -169,6 +197,7 @@ namespace fast_task {
     }
 
     void global_task_allocator::iterate_all(void (*callback)(task_object* item, void* data), void* data) {
+        std::lock_guard guard(arena_lock);
         auto* a = arena_list_;
         while (a) {
             auto* next = a->next;
@@ -252,6 +281,10 @@ namespace fast_task {
         get_alloc_loc().task_cache.deallocate(p);
     }
 
+    void task_alloc::release() {
+        get_alloc_loc().task_cache.release();
+    }
+
     void global_task_allocator::claim_unused() {
         bool expected = false;
         if (!is_cleaning.compare_exchange_strong(expected, true))
@@ -277,16 +310,24 @@ namespace fast_task {
         tagged_node old = global_stack_.load(std::memory_order_acquire);
         while (true) {
             tagged_node desired{nullptr, old.counter + 1};
-            if (global_stack_.compare_exchange_weak(old, desired, std::memory_order_release, std::memory_order_acquire))
+            if (global_stack_.compare_exchange_weak(old, desired, std::memory_order_seq_cst, std::memory_order_acquire))
                 break;
         }
-        global_available_.store(0, std::memory_order_relaxed);
+
+        pop_state_.fetch_or(CLEANING_BIT, std::memory_order_seq_cst);
+        while ((pop_state_.load(std::memory_order_acquire) & ~CLEANING_BIT) != 0)
+            cpu_relax();
+        pop_state_.fetch_and(~CLEANING_BIT, std::memory_order_release);
 
         if (!old.ptr)
             return;
 
-        for (auto cur = old.ptr; cur; cur = cur->next)
+        size_t drained_count = 0;
+        for (auto cur = old.ptr; cur; cur = cur->next) {
             get_arena(cur)->cleanup_current_free++;
+            ++drained_count;
+        }
+        global_available_.fetch_sub(drained_count, std::memory_order_relaxed);
 
         arena* old_head;
         {
@@ -349,7 +390,7 @@ namespace fast_task {
 
         while (to_free) {
             arena* next = to_free->next;
-            os_free(to_free, to_free->size + sizeof(arena));
+            os_free(to_free, to_free->size + block_size);
             to_free = next;
         }
     }

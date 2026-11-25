@@ -7,6 +7,7 @@
 #include <fast_task/debug.hpp>
 #include <fast_task/file.hpp>
 #include <fast_task/internal/futex.hpp>
+#include <fast_task/native/mutex.hpp>
 
 #include <atomic>
 #include <barrier>
@@ -18,6 +19,15 @@
 #include <tasks/_internal.hpp>
 #include <unordered_map>
 #include <vector>
+
+namespace fast_task::debug {
+    namespace {
+        std::mutex& stack_entry_resolve_mutex() {
+            static std::mutex mtx;
+            return mtx;
+        }
+    }
+}
 
 #ifdef FT_DEBUG_API_ENABLED
     #include <cpptrace/cpptrace.hpp>
@@ -59,11 +69,11 @@ namespace fast_task::debug {
         std::unordered_map<deadline_timer*, debug_data> dtimer_instances;
 
         uintptr_t task_id_counter{0};
-        bool _init_stack_trace;
+        bool _init_stack_trace = false;
     };
 
-    protected_value<debug_registry, rw_mutex>& dbg_registry() {
-        static protected_value<debug_registry, rw_mutex> d;
+    protected_value<debug_registry, native::rw_mutex>& dbg_registry() {
+        static protected_value<debug_registry, native::rw_mutex> d;
         return d;
     }
 
@@ -72,9 +82,10 @@ namespace fast_task::debug {
             init_trace = make_trace(1);
         auto* loc = get_loc();
         created_by_is_native = !loc || !loc->is_task_thread;
-        if (loc && loc->is_task_thread)
-            created_by_id = reg.task_instances.at(loc->curr_task.get_id()).virtual_id;
-        else
+        if (loc && loc->is_task_thread) {
+            auto it = reg.task_instances.find(loc->curr_task.get_id());
+            created_by_id = it != reg.task_instances.end() ? it->second.virtual_id : FT_DEBUG_OPTIONAL;
+        } else
             created_by_id = _thread_id();
     }
 
@@ -96,6 +107,43 @@ namespace fast_task::debug {
     }
 
     struct _debug_collect {
+        static uintptr_t lookup_task_id(const debug_registry& reg, size_t raw_id) {
+            if (!raw_id)
+                return FT_DEBUG_OPTIONAL;
+            auto it = reg.task_instances.find(raw_id);
+            return it != reg.task_instances.end() ? it->second.virtual_id : FT_DEBUG_OPTIONAL;
+        }
+
+        static array<awake_item> collect_futex_waiters(void* address, const debug_registry& reg) {
+            struct waiter_collect_ctx {
+                std::vector<awake_item> items;
+                const debug_registry* reg;
+            } ctx{{}, &reg};
+
+            futex::iterate_waiters(
+                address,
+                [](void*, void* data, const futex::waiter_info& waiter) {
+                    auto* c = reinterpret_cast<waiter_collect_ctx*>(data);
+                    awake_item item{};
+                    item.awake_check = 0;
+                    if (waiter.is_native) {
+                        item.native_awake = true;
+                        item.id = waiter.task_id ^ native_thread_flag;
+                    } else {
+                        item.native_awake = false;
+                        item.id = lookup_task_id(*c->reg, waiter.task_id);
+                    }
+                    c->items.push_back(item);
+                },
+                &ctx
+            );
+
+            array<awake_item> result(ctx.items.size());
+            for (size_t idx = 0; idx < ctx.items.size(); ++idx)
+                result[idx] = ctx.items[idx];
+            return result;
+        }
+
         static void collect_mut_inst(program_state_dump& dump, debug_registry& reg) {
             size_t i = 0;
             dump.mutexes = array<raw_mutex_info>(reg.mutex_instances.size());
@@ -103,32 +151,15 @@ namespace fast_task::debug {
                 auto& [id, trace, created_by_id, created_by_is_native] = ddata;
                 raw_mutex_info& info = dump.mutexes[i++];
                 info.mutex_id = id;
-                if (size_t(mutd->values.current_task) & native_thread_flag) {
+                size_t raw_owner = mutd->state.load(std::memory_order_relaxed) & ~native_thread_data;
+                if (raw_owner & native_thread_flag) {
                     info.owner_is_native = true;
-                    info.owner_id = size_t(mutd->values.current_task) ^ native_thread_flag;
+                    info.owner_id = raw_owner ^ native_thread_flag;
                 } else {
-                    info.owner_id = mutd->values.current_task ? reg.task_instances.at(mutd->values.current_task).virtual_id : FT_DEBUG_OPTIONAL;
+                    info.owner_id = lookup_task_id(reg, raw_owner);
                     info.owner_is_native = false;
                 }
-                size_t coll = 0;
-                size_t count = 0;
-                auto iter = mutd->values.begin;
-                while (iter) {
-                    ++count;
-                    iter = iter->next;
-                }
-
-                info.waiting_tasks_ids = array<awake_item>(count);
-                iter = mutd->values.begin;
-                while (iter) {
-                    auto& it = *iter;
-                    info.waiting_tasks_ids[coll++] = {
-                        .id = it.task ? reg.task_instances.at(it.task.get_id()).virtual_id : FT_DEBUG_OPTIONAL,
-                        .awake_check = it.awake_check,
-                        .native_awake = (bool)it.native_check
-                    };
-                    iter = iter->next;
-                }
+                info.waiting_tasks_ids = collect_futex_waiters(&mutd->state, reg);
                 info.created_by_id = created_by_id;
                 info.created_by_is_native = created_by_is_native;
                 if (trace)
@@ -143,8 +174,9 @@ namespace fast_task::debug {
                 auto& [id, trace, created_by_id, created_by_is_native] = ddata;
                 raw_recursive_mutex_info& info = dump.rec_mutexes[i++];
                 info.mutex_id = id;
-                info.internal_mutex_id = reg.mutex_instances.at(&mutd->mut).virtual_id;
-                info.recursion_count = mutd->recursive_count;
+                auto mit = reg.mutex_instances.find(&mutd->mut);
+                info.internal_mutex_id = mit != reg.mutex_instances.end() ? mit->second.virtual_id : FT_DEBUG_OPTIONAL;
+                info.recursion_count = mutd->recursive_count.load(std::memory_order_relaxed);
                 info.created_by_id = created_by_id;
                 info.created_by_is_native = created_by_is_native;
                 if (trace)
@@ -152,28 +184,25 @@ namespace fast_task::debug {
             }
         }
 
-        struct rw_waiter_fill {
-            raw_rw_mutex_info* info;
-            debug_registry* reg;
-            size_t index;
+        struct rw_waiter_collect {
+            std::vector<awake_item> items;
+            std::vector<uint8_t> keys;
+            const debug_registry* reg;
         };
 
-        static void fill_rw_waiter(void* address, void* data, const futex::waiter_info& waiter) {
-            auto* fill = reinterpret_cast<rw_waiter_fill*>(data);
-            raw_rw_mutex_info& info = *fill->info;
-            debug_registry& reg = *fill->reg;
-
-            awake_item& item = info.wait_tasks_ids[fill->index];
+        static void collect_rw_waiter(void*, void* data, const futex::waiter_info& waiter) {
+            auto* coll = reinterpret_cast<rw_waiter_collect*>(data);
+            awake_item item{};
             item.awake_check = 0;
             if (waiter.is_native) {
                 item.native_awake = true;
                 item.id = waiter.task_id ^ native_thread_flag;
             } else {
                 item.native_awake = false;
-                item.id = waiter.task_id ? reg.task_instances.at(waiter.task_id).virtual_id : FT_DEBUG_OPTIONAL;
+                item.id = lookup_task_id(*coll->reg, waiter.task_id);
             }
-            info.wait_tasks_keys[fill->index] = waiter.key.data;
-            ++fill->index;
+            coll->items.push_back(item);
+            coll->keys.push_back(waiter.key.data);
         }
 
         static void collect_rw_mut_inst(program_state_dump& dump, debug_registry& reg) {
@@ -189,18 +218,19 @@ namespace fast_task::debug {
                     info.writer_is_native = true;
                     info.writer_id = writer ^ native_thread_flag;
                 } else {
-                    info.writer_id = writer ? reg.task_instances.at(writer).virtual_id : FT_DEBUG_OPTIONAL;
+                    info.writer_id = lookup_task_id(reg, writer);
                     info.writer_is_native = false;
                 }
 
                 info.reader_tasks_ids = array<uintptr_t>(mutd->debug_reader_count());
 
-                size_t count = futex::iterate_waiters(&mutd->values.state, [](void*, void*, const futex::waiter_info&) {}, nullptr);
-                info.wait_tasks_ids = array<awake_item>(count);
-                info.wait_tasks_keys = array<uint8_t>(count);
-                if (count) {
-                    rw_waiter_fill fill{&info, &reg, 0};
-                    futex::iterate_waiters(&mutd->values.state, fill_rw_waiter, &fill);
+                rw_waiter_collect coll{{}, {}, &reg};
+                futex::iterate_waiters(&mutd->values.state, collect_rw_waiter, &coll);
+                info.wait_tasks_ids = array<awake_item>(coll.items.size());
+                info.wait_tasks_keys = array<uint8_t>(coll.keys.size());
+                for (size_t idx = 0; idx < coll.items.size(); ++idx) {
+                    info.wait_tasks_ids[idx] = coll.items[idx];
+                    info.wait_tasks_keys[idx] = coll.keys[idx];
                 }
                 info.created_by_id = created_by_id;
                 info.created_by_is_native = created_by_is_native;
@@ -210,35 +240,37 @@ namespace fast_task::debug {
         }
 
         static void collect_task_inst(program_state_dump& dump_z, debug_registry& reg_z) {
-            size_t size = 0;
-            fast_task::glob.allocators.gba.iterate_all(
-                [](fast_task::task_object* obj, void* d) {
-                    if (!obj->is_released())
-                        ++(*reinterpret_cast<size_t*>(d));
-                },
-                &size
-            );
-
-
-            dump_z.tasks = array<raw_task_info>(size);
-
             struct lambda_data_t {
-                program_state_dump& dump;
+                std::vector<raw_task_info> tasks;
                 debug_registry& reg;
-                size_t i = 0;
-            } lambda_data(dump_z, reg_z);
+            } lambda_data{{}, reg_z};
 
             fast_task::glob.allocators.gba.iterate_all(
                 [](fast_task::task_object* task_data, void* d) {
                     if (task_data->is_released())
                         return;
 
-                    auto& [dump, reg, i] = *reinterpret_cast<lambda_data_t*>(d);
+                    auto& data = *reinterpret_cast<lambda_data_t*>(d);
+                    auto& reg = data.reg;
 
-                    auto& [id, trace, created_by_id, created_by_is_native] = reg.task_instances[task_data->get_id()];
-                    raw_task_info& info = dump.tasks[i++];
-                    info.task_id = id;
-                    switch (task_data->status) {
+                    data.tasks.emplace_back();
+                    raw_task_info& info = data.tasks.back();
+
+                    auto reg_it = reg.task_instances.find(task_data->get_id());
+                    if (reg_it != reg.task_instances.end()) {
+                        auto& [id, trace, created_by_id, created_by_is_native] = reg_it->second;
+                        info.task_id = id;
+                        info.created_by_id = created_by_id;
+                        info.created_by_is_native = created_by_is_native;
+                        if (trace)
+                            info.init_call_stack = new raw_stack_trace(*trace);
+                    } else {
+                        info.task_id = FT_DEBUG_OPTIONAL;
+                        info.created_by_id = FT_DEBUG_OPTIONAL;
+                        info.created_by_is_native = false;
+                    }
+
+                    switch (task_data->status.load(std::memory_order_relaxed)) {
                     case task_object::status_e::created:
                         info.status = raw_task_info::status_e::created;
                         break;
@@ -272,72 +304,52 @@ namespace fast_task::debug {
                     info.invalid_switch_caught = task_data->get_invalid_switch_caught();
                     info.completed = task_data->get_completed();
                     info.stored_exception = false;
+
+                    auto* ex = task_data->exdata.load(std::memory_order_acquire);
     #if defined(FT_EXCEPTION_POLICY_PRESERVE)
-                    if (task_data->exdata)
-                        info.stored_exception = (bool)task_data->exdata.load().switch_preserve;
+                    if (ex)
+                        info.stored_exception = static_cast<bool>(ex->switch_preserve);
     #endif
-                    info.counter = task_data->link_counter;
+                    info.counter = task_data->link_counter.load(std::memory_order_relaxed);
                     info.tls_info = nullptr;
-
-                    {
-                        size_t count = 0, coll = 0;
-                        auto iter = task_data->on_wait.load();
-                        while (iter) {
-                            ++count;
-                            iter = iter->next;
-                        }
-
-                        info.waiting_tasks_ids = array<awake_item>(count);
-                        iter = task_data->on_wait.load();
-                        while (iter) {
-                            auto& it = *iter;
-                            info.waiting_tasks_ids[coll++] = {
-                                .id = it.waiter ? reg.task_instances.at(it.waiter.get_id()).virtual_id : FT_DEBUG_OPTIONAL,
-                                .awake_check = it.awake_check,
-                                .native_awake = (bool)it.native_check
-                            };
-                            iter = iter->next;
-                        }
-                    }
+                    info.waiting_tasks_ids = collect_futex_waiters(task_data, reg);
 
                     info.awake_check = task_data->awake_check;
                     info.pool_slot = task_data->pool_index;
-                    if (task_data->exdata) {
-                        auto& exdata = get_execution_data(task_data);
-                        info.timeout_timestamp = exdata.timeout;
-                        if (exdata.context)
-                            info.call_stack = capture_stack_trace(exdata.context);
+                    if (ex) {
+                        info.timeout_timestamp = ex->timeout;
+                        if (ex->context)
+                            info.call_stack = capture_stack_trace(ex->context);
     #ifdef FT_ENABLE_PREEMPTIVE_SCHEDULER
-                        info.counter_interrupt = exdata.interrupt_count;
-                        info.current_available_quantum_ns = exdata.current_available_quantum;
-                        info.priority = exdata.priority;
-                        info.counter_interrupt = exdata.interrupt_count.count();
+                        info.counter_interrupt = ex->interrupt_count;
+                        info.current_available_quantum_ns = static_cast<uint64_t>(ex->current_available_quantum.count());
+                        info.priority = ex->priority;
+                        info.interrupt_data = ex->interrupt_data;
     #else
                         info.counter_interrupt = 0;
                         info.current_available_quantum_ns = 0;
-                        info.priority = task_priority::high;
-                        info.counter_interrupt = 0;
+                        info.priority = task_data->get_priority();
+                        info.interrupt_data = 0;
     #endif
-                        info.counter_context_switch = exdata.context_switch_count;
+                        info.counter_context_switch = ex->context_switch_count;
                     } else {
+                        info.timeout_timestamp = fast_task::no_deadline.time_since_epoch().count();
                         info.counter_interrupt = 0;
                         info.counter_context_switch = 0;
-                        info.counter_interrupt = 0;
                         info.current_available_quantum_ns = 0;
-                        info.priority = task_priority::high;
-                        info.counter_interrupt = 0;
+                        info.priority = task_data->get_priority();
+                        info.interrupt_data = 0;
                     }
 
-
-                    info.created_by_id = created_by_id;
-                    info.created_by_is_native = created_by_is_native;
                     info.on_start_override = task_data->on_start_override;
                     info.vtable = task_data->vtable;
-                    if (trace)
-                        info.init_call_stack = new raw_stack_trace(*trace);
                 },
                 &lambda_data
             );
+
+            dump_z.tasks = array<raw_task_info>(lambda_data.tasks.size());
+            for (size_t idx = 0; idx < lambda_data.tasks.size(); ++idx)
+                dump_z.tasks[idx] = std::move(lambda_data.tasks[idx]);
         }
 
         static void collect_cv_inst(program_state_dump& dump, debug_registry& reg) {
@@ -347,25 +359,7 @@ namespace fast_task::debug {
                 auto& [id, trace, created_by_id, created_by_is_native] = ddata;
                 raw_condition_info& info = dump.condition_variables[i++];
                 info.condition_id = id;
-                size_t count = 0, coll = 0;
-                auto iter = mutd->values.begin;
-                while (iter) {
-                    ++count;
-                    iter = iter->next;
-                }
-
-                info.waiting_tasks_ids = array<awake_item>(count);
-                iter = mutd->values.begin;
-                while (iter) {
-                    auto& it = *iter;
-                    info.waiting_tasks_ids[coll++] = {
-                        .id = it.task ? reg.task_instances.at(it.task.get_id()).virtual_id : FT_DEBUG_OPTIONAL,
-                        .awake_check = it.awake_check,
-                        .native_awake = (bool)it.native_check
-                    };
-                    iter = iter->next;
-                }
-
+                info.waiting_tasks_ids = collect_futex_waiters(&mutd->address, reg);
                 info.created_by_id = created_by_id;
                 info.created_by_is_native = created_by_is_native;
                 if (trace)
@@ -380,26 +374,9 @@ namespace fast_task::debug {
                 auto& [id, trace, created_by_id, created_by_is_native] = ddata;
                 raw_semaphore_info& info = dump.semaphores[i++];
                 info.semaphore_id = id;
-                info.allow_threshold = mutd->values.allow_threshold;
-                info.max_threshold = mutd->values.max_threshold;
-                size_t count = 0, coll = 0;
-                auto iter = mutd->values.begin;
-                while (iter) {
-                    ++count;
-                    iter = iter->next;
-                }
-
-                info.waiting_tasks_ids = array<awake_item>(count);
-                iter = mutd->values.begin;
-                while (iter) {
-                    auto& it = *iter;
-                    info.waiting_tasks_ids[coll++] = {
-                        .id = it.task ? reg.task_instances.at(it.task.get_id()).virtual_id : FT_DEBUG_OPTIONAL,
-                        .awake_check = it.awake_check,
-                        .native_awake = false
-                    };
-                    iter = iter->next;
-                }
+                info.allow_threshold = mutd->values.state.load(std::memory_order_relaxed) & ~native_thread_data;
+                info.max_threshold = mutd->values.max_threshold.load(std::memory_order_relaxed);
+                info.waiting_tasks_ids = collect_futex_waiters(&mutd->values.state, reg);
                 info.created_by_id = created_by_id;
                 info.created_by_is_native = created_by_is_native;
                 if (trace)
@@ -414,27 +391,11 @@ namespace fast_task::debug {
                 auto& [id, trace, created_by_id, created_by_is_native] = ddata;
                 raw_limiter_info& info = dump.limiters[i++];
                 info.limiter_id = id;
-                info.allow_threshold = mutd->values.allow_threshold;
-                info.max_threshold = mutd->values.max_threshold;
-                info.locked = mutd->values.locked;
-                size_t count = 0, coll = 0;
-                auto iter = mutd->values.begin;
-                while (iter) {
-                    ++count;
-                    iter = iter->next;
-                }
-
-                info.waiting_tasks_ids = array<awake_item>(count);
-                iter = mutd->values.begin;
-                while (iter) {
-                    auto& it = *iter;
-                    info.waiting_tasks_ids[coll++] = {
-                        .id = it.task ? reg.task_instances.at(it.task.get_id()).virtual_id : FT_DEBUG_OPTIONAL,
-                        .awake_check = it.awake_check,
-                        .native_awake = false
-                    };
-                    iter = iter->next;
-                }
+                size_t available = mutd->values.state.load(std::memory_order_relaxed) & ~native_thread_data;
+                info.allow_threshold = available;
+                info.max_threshold = mutd->values.max_threshold.load(std::memory_order_relaxed);
+                info.locked = (available == 0);
+                info.waiting_tasks_ids = collect_futex_waiters(&mutd->values.state, reg);
                 info.created_by_id = created_by_id;
                 info.created_by_is_native = created_by_is_native;
                 if (trace)
@@ -446,17 +407,14 @@ namespace fast_task::debug {
             size_t i = 0;
             dump.queries = array<raw_queue_info>(reg.queue_instances.size());
             for (auto&& [mutd, ddata] : reg.queue_instances) {
+                (void)mutd;
                 auto& [id, trace, created_by_id, created_by_is_native] = ddata;
                 raw_queue_info& info = dump.queries[i++];
                 info.queue_id = id;
-                info.internal_condition_id = reg.cv_instances.at(&mutd->handle->end_of_queue).virtual_id;
-                info.current_in_run = mutd->handle->now_at_execution;
-                info.max_on_execution = mutd->handle->at_execution_max;
-                info.enabled = mutd->handle->is_running;
-                size_t coll = 0;
-                info.waiting_tasks_ids = array<uintptr_t>(mutd->handle->tasks.size());
-                for (auto& it : mutd->handle->tasks)
-                    info.waiting_tasks_ids[coll++] = reg.task_instances.at(it.get_id()).virtual_id;
+                info.internal_condition_id = FT_DEBUG_OPTIONAL;
+                info.current_in_run = 0;
+                info.max_on_execution = 0;
+                info.enabled = false;
                 info.created_by_id = created_by_id;
                 info.created_by_is_native = created_by_is_native;
                 if (trace)
@@ -471,30 +429,9 @@ namespace fast_task::debug {
                 auto& [id, trace, created_by_id, created_by_is_native] = ddata;
                 raw_deadline_timer_info& info = dump.deadlines[i++];
                 info.timer_id = id;
-                info.shutdown = mutd->hh->shutdown;
-                info.internal_mutex_id = reg.mutex_instances.at(&mutd->hh->no_race).virtual_id;
-                // hh->time_point is a monotonic fast_task::time_point, while the
-                // dump prints this field as an absolute date. Convert it to the
-                // wall clock here so the report stays readable.
-                if (mutd->hh->time_point == fast_task::time_point::max())
-                    info.timestamp = std::chrono::system_clock::time_point::max().time_since_epoch().count();
-                else
-                    info.timestamp =
-                        (std::chrono::system_clock::now() +
-                         std::chrono::duration_cast<std::chrono::system_clock::duration>(
-                             mutd->hh->time_point - fast_task::clock::now()
-                         ))
-                            .time_since_epoch()
-                            .count();
-                size_t coll = 0;
-                info.canceled_tasks = array<uintptr_t>(mutd->hh->canceled_tasks.size());
-                for (auto& it : mutd->hh->canceled_tasks)
-                    info.canceled_tasks[coll++] = reg.task_instances.at(it).virtual_id;
-
-                info.scheduled_tasks = array<uintptr_t>(mutd->hh->scheduled_tasks.size());
-                for (auto& it : mutd->hh->scheduled_tasks)
-                    info.scheduled_tasks[coll++] = reg.task_instances.at(it).virtual_id;
-
+                info.shutdown = (mutd->hh == nullptr);
+                info.internal_mutex_id = FT_DEBUG_OPTIONAL;
+                info.timestamp = std::chrono::system_clock::time_point::max().time_since_epoch().count();
                 info.created_by_id = created_by_id;
                 info.created_by_is_native = created_by_is_native;
                 if (trace)
@@ -553,18 +490,29 @@ namespace fast_task::debug {
     }
 
     raw_stack_trace::entry::lazy_resolve& resolve(raw_stack_trace::entry& en) {
-        if (en.dat)
-            return *en.dat;
+        {
+            std::lock_guard<std::mutex> lock(stack_entry_resolve_mutex());
+            if (en.dat)
+                return *en.dat;
+        }
         cpptrace::raw_trace trace;
         trace.frames = {(cpptrace::frame_ptr)en.entry_ptr};
-        auto frame = trace.resolve().frames.front();
-        en.dat = new raw_stack_trace::entry::lazy_resolve{
-            .symbol = frame.symbol,
-            .file = frame.filename,
-            .line = frame.line.value() == UINT32_MAX ? int64_t(-1) : frame.line.value(),
-            .column = frame.column.value() == UINT32_MAX ? int64_t(-1) : frame.column.value(),
-            .is_inline = frame.is_inline
-        };
+        auto resolved = trace.resolve();
+        auto* created = new raw_stack_trace::entry::lazy_resolve{};
+        if (!resolved.frames.empty()) {
+            const auto& frame = resolved.frames.front();
+            created->symbol = frame.symbol;
+            created->file = frame.filename;
+            created->line = (!frame.line.has_value() || frame.line.value() == UINT32_MAX) ? int64_t(-1) : static_cast<int64_t>(frame.line.value());
+            created->column = (!frame.column.has_value() || frame.column.value() == UINT32_MAX) ? int64_t(-1) : static_cast<int64_t>(frame.column.value());
+            created->is_inline = frame.is_inline;
+        }
+        std::lock_guard<std::mutex> lock(stack_entry_resolve_mutex());
+        if (en.dat) {
+            delete created;
+            return *en.dat;
+        }
+        en.dat = created;
         return *en.dat;
     }
 
@@ -744,73 +692,576 @@ namespace fast_task::debug {
 } // namespace fast_task::debug
 #endif // FT_DEBUG_API_ENABLED
 namespace fast_task::debug {
-    raw_stack_trace::entry::~entry() {
-        if (dat)
+    namespace {
+        raw_stack_trace* clone_stack_trace(const raw_stack_trace* src) {
+            return src ? new raw_stack_trace(*src) : nullptr;
+        }
+    }
+
+    raw_stack_trace::entry::entry(const entry& other) : entry_ptr(other.entry_ptr), dat(nullptr) {
+        std::lock_guard<std::mutex> lock(stack_entry_resolve_mutex());
+        if (other.dat)
+            dat = new lazy_resolve(*other.dat);
+    }
+
+    raw_stack_trace::entry::entry(entry&& other) noexcept : entry_ptr(other.entry_ptr), dat(other.dat) {
+        other.entry_ptr = nullptr;
+        other.dat = nullptr;
+    }
+
+    raw_stack_trace::entry& raw_stack_trace::entry::operator=(const entry& other) {
+        if (this != &other) {
+            entry tmp(other);
+            *this = std::move(tmp);
+        }
+        return *this;
+    }
+
+    raw_stack_trace::entry& raw_stack_trace::entry::operator=(entry&& other) noexcept {
+        if (this != &other) {
             delete dat;
+            entry_ptr = other.entry_ptr;
+            dat = other.dat;
+            other.entry_ptr = nullptr;
+            other.dat = nullptr;
+        }
+        return *this;
+    }
+
+    raw_stack_trace::entry::~entry() {
+        delete dat;
         dat = nullptr;
     }
 
-    raw_task_info::raw_task_info() {}
+    raw_task_info::raw_task_info() = default;
+
+    raw_task_info::raw_task_info(const raw_task_info& other)
+        : task_id(other.task_id),
+          status(other.status),
+          is_restartable(other.is_restartable),
+          is_on_scheduler(other.is_on_scheduler),
+          time_end(other.time_end),
+          awaked(other.awaked),
+          pool_assigned(other.pool_assigned),
+          is_sbo(other.is_sbo),
+          spin_lock_locked(other.spin_lock_locked),
+          cancellation_requested(other.cancellation_requested),
+          invalid_switch_caught(other.invalid_switch_caught),
+          completed(other.completed),
+          stored_exception(other.stored_exception),
+          counter(other.counter),
+          waiting_tasks_ids(other.waiting_tasks_ids),
+          tls_info(other.tls_info),
+          timeout_timestamp(other.timeout_timestamp),
+          call_stack(other.call_stack),
+          counter_interrupt(other.counter_interrupt),
+          counter_context_switch(other.counter_context_switch),
+          priority(other.priority),
+          awake_check(other.awake_check),
+          pool_slot(other.pool_slot),
+          created_by_id(other.created_by_id),
+          created_by_is_native(other.created_by_is_native),
+          current_available_quantum_ns(other.current_available_quantum_ns),
+          interrupt_data(other.interrupt_data),
+          on_start_override(other.on_start_override),
+          vtable(other.vtable),
+          init_call_stack(clone_stack_trace(other.init_call_stack)) {}
+
+    raw_task_info::raw_task_info(raw_task_info&& other) noexcept
+        : task_id(other.task_id),
+          status(other.status),
+          is_restartable(other.is_restartable),
+          is_on_scheduler(other.is_on_scheduler),
+          time_end(other.time_end),
+          awaked(other.awaked),
+          pool_assigned(other.pool_assigned),
+          is_sbo(other.is_sbo),
+          spin_lock_locked(other.spin_lock_locked),
+          cancellation_requested(other.cancellation_requested),
+          invalid_switch_caught(other.invalid_switch_caught),
+          completed(other.completed),
+          stored_exception(other.stored_exception),
+          counter(other.counter),
+          waiting_tasks_ids(std::move(other.waiting_tasks_ids)),
+          tls_info(other.tls_info),
+          timeout_timestamp(other.timeout_timestamp),
+          call_stack(std::move(other.call_stack)),
+          counter_interrupt(other.counter_interrupt),
+          counter_context_switch(other.counter_context_switch),
+          priority(other.priority),
+          awake_check(other.awake_check),
+          pool_slot(other.pool_slot),
+          created_by_id(other.created_by_id),
+          created_by_is_native(other.created_by_is_native),
+          current_available_quantum_ns(other.current_available_quantum_ns),
+          interrupt_data(other.interrupt_data),
+          on_start_override(other.on_start_override),
+          vtable(other.vtable),
+          init_call_stack(other.init_call_stack) {
+        other.init_call_stack = nullptr;
+    }
+
+    raw_task_info& raw_task_info::operator=(const raw_task_info& other) {
+        if (this != &other) {
+            raw_task_info tmp(other);
+            *this = std::move(tmp);
+        }
+        return *this;
+    }
+
+    raw_task_info& raw_task_info::operator=(raw_task_info&& other) noexcept {
+        if (this != &other) {
+            delete init_call_stack;
+            task_id = other.task_id;
+            status = other.status;
+            is_restartable = other.is_restartable;
+            is_on_scheduler = other.is_on_scheduler;
+            time_end = other.time_end;
+            awaked = other.awaked;
+            pool_assigned = other.pool_assigned;
+            is_sbo = other.is_sbo;
+            spin_lock_locked = other.spin_lock_locked;
+            cancellation_requested = other.cancellation_requested;
+            invalid_switch_caught = other.invalid_switch_caught;
+            completed = other.completed;
+            stored_exception = other.stored_exception;
+            counter = other.counter;
+            waiting_tasks_ids = std::move(other.waiting_tasks_ids);
+            tls_info = other.tls_info;
+            timeout_timestamp = other.timeout_timestamp;
+            call_stack = std::move(other.call_stack);
+            counter_interrupt = other.counter_interrupt;
+            counter_context_switch = other.counter_context_switch;
+            priority = other.priority;
+            awake_check = other.awake_check;
+            pool_slot = other.pool_slot;
+            created_by_id = other.created_by_id;
+            created_by_is_native = other.created_by_is_native;
+            current_available_quantum_ns = other.current_available_quantum_ns;
+            interrupt_data = other.interrupt_data;
+            on_start_override = other.on_start_override;
+            vtable = other.vtable;
+            init_call_stack = other.init_call_stack;
+            other.init_call_stack = nullptr;
+        }
+        return *this;
+    }
 
     raw_task_info::~raw_task_info() {
-        if (init_call_stack)
-            delete init_call_stack;
+        delete init_call_stack;
+        init_call_stack = nullptr;
     }
 
-    raw_mutex_info::raw_mutex_info() {}
+    raw_mutex_info::raw_mutex_info() = default;
+
+    raw_mutex_info::raw_mutex_info(const raw_mutex_info& other)
+        : mutex_id(other.mutex_id),
+          owner_id(other.owner_id),
+          owner_is_native(other.owner_is_native),
+          waiting_tasks_ids(other.waiting_tasks_ids),
+          init_call_stack(clone_stack_trace(other.init_call_stack)),
+          created_by_id(other.created_by_id),
+          created_by_is_native(other.created_by_is_native) {}
+
+    raw_mutex_info::raw_mutex_info(raw_mutex_info&& other) noexcept
+        : mutex_id(other.mutex_id),
+          owner_id(other.owner_id),
+          owner_is_native(other.owner_is_native),
+          waiting_tasks_ids(std::move(other.waiting_tasks_ids)),
+          init_call_stack(other.init_call_stack),
+          created_by_id(other.created_by_id),
+          created_by_is_native(other.created_by_is_native) {
+        other.init_call_stack = nullptr;
+    }
+
+    raw_mutex_info& raw_mutex_info::operator=(const raw_mutex_info& other) {
+        if (this != &other) {
+            raw_mutex_info tmp(other);
+            *this = std::move(tmp);
+        }
+        return *this;
+    }
+
+    raw_mutex_info& raw_mutex_info::operator=(raw_mutex_info&& other) noexcept {
+        if (this != &other) {
+            delete init_call_stack;
+            mutex_id = other.mutex_id;
+            owner_id = other.owner_id;
+            owner_is_native = other.owner_is_native;
+            waiting_tasks_ids = std::move(other.waiting_tasks_ids);
+            init_call_stack = other.init_call_stack;
+            created_by_id = other.created_by_id;
+            created_by_is_native = other.created_by_is_native;
+            other.init_call_stack = nullptr;
+        }
+        return *this;
+    }
 
     raw_mutex_info::~raw_mutex_info() {
-        if (init_call_stack)
-            delete init_call_stack;
+        delete init_call_stack;
+        init_call_stack = nullptr;
     }
 
-    raw_recursive_mutex_info::raw_recursive_mutex_info() {}
+    raw_recursive_mutex_info::raw_recursive_mutex_info() = default;
+
+    raw_recursive_mutex_info::raw_recursive_mutex_info(const raw_recursive_mutex_info& other)
+        : mutex_id(other.mutex_id),
+          internal_mutex_id(other.internal_mutex_id),
+          recursion_count(other.recursion_count),
+          init_call_stack(clone_stack_trace(other.init_call_stack)),
+          created_by_id(other.created_by_id),
+          created_by_is_native(other.created_by_is_native) {}
+
+    raw_recursive_mutex_info::raw_recursive_mutex_info(raw_recursive_mutex_info&& other) noexcept
+        : mutex_id(other.mutex_id),
+          internal_mutex_id(other.internal_mutex_id),
+          recursion_count(other.recursion_count),
+          init_call_stack(other.init_call_stack),
+          created_by_id(other.created_by_id),
+          created_by_is_native(other.created_by_is_native) {
+        other.init_call_stack = nullptr;
+    }
+
+    raw_recursive_mutex_info& raw_recursive_mutex_info::operator=(const raw_recursive_mutex_info& other) {
+        if (this != &other) {
+            raw_recursive_mutex_info tmp(other);
+            *this = std::move(tmp);
+        }
+        return *this;
+    }
+
+    raw_recursive_mutex_info& raw_recursive_mutex_info::operator=(raw_recursive_mutex_info&& other) noexcept {
+        if (this != &other) {
+            delete init_call_stack;
+            mutex_id = other.mutex_id;
+            internal_mutex_id = other.internal_mutex_id;
+            recursion_count = other.recursion_count;
+            init_call_stack = other.init_call_stack;
+            created_by_id = other.created_by_id;
+            created_by_is_native = other.created_by_is_native;
+            other.init_call_stack = nullptr;
+        }
+        return *this;
+    }
 
     raw_recursive_mutex_info::~raw_recursive_mutex_info() {
-        if (init_call_stack)
-            delete init_call_stack;
+        delete init_call_stack;
+        init_call_stack = nullptr;
     }
 
-    raw_rw_mutex_info::raw_rw_mutex_info() {}
+    raw_rw_mutex_info::raw_rw_mutex_info() = default;
+
+    raw_rw_mutex_info::raw_rw_mutex_info(const raw_rw_mutex_info& other)
+        : mutex_id(other.mutex_id),
+          writer_id(other.writer_id),
+          writer_is_native(other.writer_is_native),
+          reader_tasks_ids(other.reader_tasks_ids),
+          wait_tasks_ids(other.wait_tasks_ids),
+          wait_tasks_keys(other.wait_tasks_keys),
+          init_call_stack(clone_stack_trace(other.init_call_stack)),
+          created_by_id(other.created_by_id),
+          created_by_is_native(other.created_by_is_native) {}
+
+    raw_rw_mutex_info::raw_rw_mutex_info(raw_rw_mutex_info&& other) noexcept
+        : mutex_id(other.mutex_id),
+          writer_id(other.writer_id),
+          writer_is_native(other.writer_is_native),
+          reader_tasks_ids(std::move(other.reader_tasks_ids)),
+          wait_tasks_ids(std::move(other.wait_tasks_ids)),
+          wait_tasks_keys(std::move(other.wait_tasks_keys)),
+          init_call_stack(other.init_call_stack),
+          created_by_id(other.created_by_id),
+          created_by_is_native(other.created_by_is_native) {
+        other.init_call_stack = nullptr;
+    }
+
+    raw_rw_mutex_info& raw_rw_mutex_info::operator=(const raw_rw_mutex_info& other) {
+        if (this != &other) {
+            raw_rw_mutex_info tmp(other);
+            *this = std::move(tmp);
+        }
+        return *this;
+    }
+
+    raw_rw_mutex_info& raw_rw_mutex_info::operator=(raw_rw_mutex_info&& other) noexcept {
+        if (this != &other) {
+            delete init_call_stack;
+            mutex_id = other.mutex_id;
+            writer_id = other.writer_id;
+            writer_is_native = other.writer_is_native;
+            reader_tasks_ids = std::move(other.reader_tasks_ids);
+            wait_tasks_ids = std::move(other.wait_tasks_ids);
+            wait_tasks_keys = std::move(other.wait_tasks_keys);
+            init_call_stack = other.init_call_stack;
+            created_by_id = other.created_by_id;
+            created_by_is_native = other.created_by_is_native;
+            other.init_call_stack = nullptr;
+        }
+        return *this;
+    }
 
     raw_rw_mutex_info::~raw_rw_mutex_info() {
-        if (init_call_stack)
-            delete init_call_stack;
+        delete init_call_stack;
+        init_call_stack = nullptr;
     }
 
-    raw_condition_info::raw_condition_info() {}
+    raw_condition_info::raw_condition_info() = default;
+
+    raw_condition_info::raw_condition_info(const raw_condition_info& other)
+        : condition_id(other.condition_id),
+          waiting_tasks_ids(other.waiting_tasks_ids),
+          init_call_stack(clone_stack_trace(other.init_call_stack)),
+          created_by_id(other.created_by_id),
+          created_by_is_native(other.created_by_is_native) {}
+
+    raw_condition_info::raw_condition_info(raw_condition_info&& other) noexcept
+        : condition_id(other.condition_id),
+          waiting_tasks_ids(std::move(other.waiting_tasks_ids)),
+          init_call_stack(other.init_call_stack),
+          created_by_id(other.created_by_id),
+          created_by_is_native(other.created_by_is_native) {
+        other.init_call_stack = nullptr;
+    }
+
+    raw_condition_info& raw_condition_info::operator=(const raw_condition_info& other) {
+        if (this != &other) {
+            raw_condition_info tmp(other);
+            *this = std::move(tmp);
+        }
+        return *this;
+    }
+
+    raw_condition_info& raw_condition_info::operator=(raw_condition_info&& other) noexcept {
+        if (this != &other) {
+            delete init_call_stack;
+            condition_id = other.condition_id;
+            waiting_tasks_ids = std::move(other.waiting_tasks_ids);
+            init_call_stack = other.init_call_stack;
+            created_by_id = other.created_by_id;
+            created_by_is_native = other.created_by_is_native;
+            other.init_call_stack = nullptr;
+        }
+        return *this;
+    }
 
     raw_condition_info::~raw_condition_info() {
-        if (init_call_stack)
-            delete init_call_stack;
+        delete init_call_stack;
+        init_call_stack = nullptr;
     }
 
-    raw_semaphore_info::raw_semaphore_info() {}
+    raw_semaphore_info::raw_semaphore_info() = default;
+
+    raw_semaphore_info::raw_semaphore_info(const raw_semaphore_info& other)
+        : semaphore_id(other.semaphore_id),
+          waiting_tasks_ids(other.waiting_tasks_ids),
+          allow_threshold(other.allow_threshold),
+          max_threshold(other.max_threshold),
+          init_call_stack(clone_stack_trace(other.init_call_stack)),
+          created_by_id(other.created_by_id),
+          created_by_is_native(other.created_by_is_native) {}
+
+    raw_semaphore_info::raw_semaphore_info(raw_semaphore_info&& other) noexcept
+        : semaphore_id(other.semaphore_id),
+          waiting_tasks_ids(std::move(other.waiting_tasks_ids)),
+          allow_threshold(other.allow_threshold),
+          max_threshold(other.max_threshold),
+          init_call_stack(other.init_call_stack),
+          created_by_id(other.created_by_id),
+          created_by_is_native(other.created_by_is_native) {
+        other.init_call_stack = nullptr;
+    }
+
+    raw_semaphore_info& raw_semaphore_info::operator=(const raw_semaphore_info& other) {
+        if (this != &other) {
+            raw_semaphore_info tmp(other);
+            *this = std::move(tmp);
+        }
+        return *this;
+    }
+
+    raw_semaphore_info& raw_semaphore_info::operator=(raw_semaphore_info&& other) noexcept {
+        if (this != &other) {
+            delete init_call_stack;
+            semaphore_id = other.semaphore_id;
+            waiting_tasks_ids = std::move(other.waiting_tasks_ids);
+            allow_threshold = other.allow_threshold;
+            max_threshold = other.max_threshold;
+            init_call_stack = other.init_call_stack;
+            created_by_id = other.created_by_id;
+            created_by_is_native = other.created_by_is_native;
+            other.init_call_stack = nullptr;
+        }
+        return *this;
+    }
 
     raw_semaphore_info::~raw_semaphore_info() {
-        if (init_call_stack)
-            delete init_call_stack;
+        delete init_call_stack;
+        init_call_stack = nullptr;
     }
 
-    raw_limiter_info::raw_limiter_info() {}
+    raw_limiter_info::raw_limiter_info() = default;
+
+    raw_limiter_info::raw_limiter_info(const raw_limiter_info& other)
+        : limiter_id(other.limiter_id),
+          waiting_tasks_ids(other.waiting_tasks_ids),
+          allow_threshold(other.allow_threshold),
+          max_threshold(other.max_threshold),
+          locked(other.locked),
+          init_call_stack(clone_stack_trace(other.init_call_stack)),
+          created_by_id(other.created_by_id),
+          created_by_is_native(other.created_by_is_native) {}
+
+    raw_limiter_info::raw_limiter_info(raw_limiter_info&& other) noexcept
+        : limiter_id(other.limiter_id),
+          waiting_tasks_ids(std::move(other.waiting_tasks_ids)),
+          allow_threshold(other.allow_threshold),
+          max_threshold(other.max_threshold),
+          locked(other.locked),
+          init_call_stack(other.init_call_stack),
+          created_by_id(other.created_by_id),
+          created_by_is_native(other.created_by_is_native) {
+        other.init_call_stack = nullptr;
+    }
+
+    raw_limiter_info& raw_limiter_info::operator=(const raw_limiter_info& other) {
+        if (this != &other) {
+            raw_limiter_info tmp(other);
+            *this = std::move(tmp);
+        }
+        return *this;
+    }
+
+    raw_limiter_info& raw_limiter_info::operator=(raw_limiter_info&& other) noexcept {
+        if (this != &other) {
+            delete init_call_stack;
+            limiter_id = other.limiter_id;
+            waiting_tasks_ids = std::move(other.waiting_tasks_ids);
+            allow_threshold = other.allow_threshold;
+            max_threshold = other.max_threshold;
+            locked = other.locked;
+            init_call_stack = other.init_call_stack;
+            created_by_id = other.created_by_id;
+            created_by_is_native = other.created_by_is_native;
+            other.init_call_stack = nullptr;
+        }
+        return *this;
+    }
 
     raw_limiter_info::~raw_limiter_info() {
-        if (init_call_stack)
-            delete init_call_stack;
+        delete init_call_stack;
+        init_call_stack = nullptr;
     }
 
-    raw_queue_info::raw_queue_info() {}
+    raw_queue_info::raw_queue_info() = default;
+
+    raw_queue_info::raw_queue_info(const raw_queue_info& other)
+        : queue_id(other.queue_id),
+          internal_condition_id(other.internal_condition_id),
+          waiting_tasks_ids(other.waiting_tasks_ids),
+          current_in_run(other.current_in_run),
+          max_on_execution(other.max_on_execution),
+          enabled(other.enabled),
+          init_call_stack(clone_stack_trace(other.init_call_stack)),
+          created_by_id(other.created_by_id),
+          created_by_is_native(other.created_by_is_native) {}
+
+    raw_queue_info::raw_queue_info(raw_queue_info&& other) noexcept
+        : queue_id(other.queue_id),
+          internal_condition_id(other.internal_condition_id),
+          waiting_tasks_ids(std::move(other.waiting_tasks_ids)),
+          current_in_run(other.current_in_run),
+          max_on_execution(other.max_on_execution),
+          enabled(other.enabled),
+          init_call_stack(other.init_call_stack),
+          created_by_id(other.created_by_id),
+          created_by_is_native(other.created_by_is_native) {
+        other.init_call_stack = nullptr;
+    }
+
+    raw_queue_info& raw_queue_info::operator=(const raw_queue_info& other) {
+        if (this != &other) {
+            raw_queue_info tmp(other);
+            *this = std::move(tmp);
+        }
+        return *this;
+    }
+
+    raw_queue_info& raw_queue_info::operator=(raw_queue_info&& other) noexcept {
+        if (this != &other) {
+            delete init_call_stack;
+            queue_id = other.queue_id;
+            internal_condition_id = other.internal_condition_id;
+            waiting_tasks_ids = std::move(other.waiting_tasks_ids);
+            current_in_run = other.current_in_run;
+            max_on_execution = other.max_on_execution;
+            enabled = other.enabled;
+            init_call_stack = other.init_call_stack;
+            created_by_id = other.created_by_id;
+            created_by_is_native = other.created_by_is_native;
+            other.init_call_stack = nullptr;
+        }
+        return *this;
+    }
 
     raw_queue_info::~raw_queue_info() {
-        if (init_call_stack)
-            delete init_call_stack;
+        delete init_call_stack;
+        init_call_stack = nullptr;
     }
 
-    raw_deadline_timer_info::raw_deadline_timer_info() {}
+    raw_deadline_timer_info::raw_deadline_timer_info() = default;
+
+    raw_deadline_timer_info::raw_deadline_timer_info(const raw_deadline_timer_info& other)
+        : timer_id(other.timer_id),
+          internal_mutex_id(other.internal_mutex_id),
+          timestamp(other.timestamp),
+          canceled_tasks(other.canceled_tasks),
+          scheduled_tasks(other.scheduled_tasks),
+          shutdown(other.shutdown),
+          init_call_stack(clone_stack_trace(other.init_call_stack)),
+          created_by_id(other.created_by_id),
+          created_by_is_native(other.created_by_is_native) {}
+
+    raw_deadline_timer_info::raw_deadline_timer_info(raw_deadline_timer_info&& other) noexcept
+        : timer_id(other.timer_id),
+          internal_mutex_id(other.internal_mutex_id),
+          timestamp(other.timestamp),
+          canceled_tasks(std::move(other.canceled_tasks)),
+          scheduled_tasks(std::move(other.scheduled_tasks)),
+          shutdown(other.shutdown),
+          init_call_stack(other.init_call_stack),
+          created_by_id(other.created_by_id),
+          created_by_is_native(other.created_by_is_native) {
+        other.init_call_stack = nullptr;
+    }
+
+    raw_deadline_timer_info& raw_deadline_timer_info::operator=(const raw_deadline_timer_info& other) {
+        if (this != &other) {
+            raw_deadline_timer_info tmp(other);
+            *this = std::move(tmp);
+        }
+        return *this;
+    }
+
+    raw_deadline_timer_info& raw_deadline_timer_info::operator=(raw_deadline_timer_info&& other) noexcept {
+        if (this != &other) {
+            delete init_call_stack;
+            timer_id = other.timer_id;
+            internal_mutex_id = other.internal_mutex_id;
+            timestamp = other.timestamp;
+            canceled_tasks = std::move(other.canceled_tasks);
+            scheduled_tasks = std::move(other.scheduled_tasks);
+            shutdown = other.shutdown;
+            init_call_stack = other.init_call_stack;
+            created_by_id = other.created_by_id;
+            created_by_is_native = other.created_by_is_native;
+            other.init_call_stack = nullptr;
+        }
+        return *this;
+    }
 
     raw_deadline_timer_info::~raw_deadline_timer_info() {
-        if (init_call_stack)
-            delete init_call_stack;
+        delete init_call_stack;
+        init_call_stack = nullptr;
     }
 
     void FT_API dump_stack_(file::async_iofstream& ii, raw_stack_trace& trace, size_t t_count) {
@@ -1025,7 +1476,6 @@ namespace fast_task::debug {
             ii << "\t\tPool slot: " << static_cast<unsigned>(it.pool_slot) << std::endl;
             ii << "\t\tPreempt available quantum ns: " << it.current_available_quantum_ns << std::endl;
             ii << "\t\tInterrupt data: " << it.interrupt_data << std::endl;
-            ii << "\t\tInterrupt data: " << it.interrupt_data << std::endl;
             ii << "\t\tStart overriden: " << (it.on_start_override ? "true" : "false") << std::endl;
             //TODO SHOW VTABLE
 
@@ -1063,7 +1513,7 @@ namespace fast_task::debug {
 #if PLATFORM_LINUX
 __attribute__((used, retain))
 #endif
-std::vector<fast_task::task_object*> collect_task_objects() {
+std::vector<fast_task::task_object*> FT_API collect_task_objects() {
     std::vector<fast_task::task_object*> collect;
     fast_task::glob.allocators.gba.iterate_all(
         [](fast_task::task_object* obj, void* d) {

@@ -1,6 +1,8 @@
 #ifndef FAST_TASK_INCLUDE_POLYFILL_EXPECTED
 #define FAST_TASK_INCLUDE_POLYFILL_EXPECTED
+#include <concepts>
 #include <stdexcept>
+#include <type_traits>
 #include <utility>
 #include <variant>
 
@@ -35,7 +37,9 @@ namespace fast_task::polyfill {
             : m_var(std::in_place_type<T>) {}
 
         template <class U>
-            requires std::is_constructible_v<T, U&&>
+            requires (!std::same_as<std::remove_cvref_t<U>, expected> &&
+                      !std::same_as<std::remove_cvref_t<U>, unexpected<E>> &&
+                      std::is_constructible_v<T, U&&>)
         constexpr expected(U&& v)
             : m_var(std::in_place_type<T>, std::forward<U>(v)) {}
 

@@ -5,7 +5,7 @@
 // http://www.boost.org/LICENSE_1_0.txt)
 
 
-#ifndef _WIN64
+#ifndef _WIN32
     #include <dirent.h>
     #include <errno.h>
     #include <ext/stdio_filebuf.h>
@@ -30,6 +30,10 @@
 
 namespace fast_task::file {
     class File_;
+    class file_manager;
+
+    static void file_manager_begin_op(file_manager* fm) noexcept;
+    static void file_manager_end_op(file_manager* fm) noexcept;
 
     struct completion_struct {
         File_* handle = nullptr;
@@ -59,32 +63,37 @@ namespace fast_task::file {
     class File_ : public util::native_worker_handle {
         condition_variable awaiters;
         mutex mut;
+        file_manager* fm = nullptr;
         int handle;
         char* buffer = nullptr;
         bool fullifed = false;
+        bool in_flight = false;
+        bool destroy_on_complete = false;
 
         File_(util::native_worker_manager* manager, int handle, const char* buffer, uint32_t buffer_size, uint64_t offset)
-            : util::native_worker_handle(manager), handle(handle), buffer_size(buffer_size), offset(offset), is_read(false), required_full(true), buffer_alloc(false) {
+            : util::native_worker_handle(manager), fm(reinterpret_cast<file_manager*>(manager)), handle(handle), buffer_size(buffer_size), offset(offset), is_read(false), required_full(true), buffer_alloc(true) {
             this->buffer = new char[buffer_size];
-            memcpy(this->buffer, buffer, buffer_size);
+            if (buffer_size > 0)
+                memcpy(this->buffer, buffer, buffer_size);
         }
 
         File_(util::native_worker_manager* manager, int handle, uint32_t buffer_size, uint64_t offset, bool required_full = true)
-            : util::native_worker_handle(manager), handle(handle), buffer_size(buffer_size), offset(offset), is_read(true), required_full(required_full), buffer_alloc(false) {
+            : util::native_worker_handle(manager), fm(reinterpret_cast<file_manager*>(manager)), handle(handle), buffer_size(buffer_size), offset(offset), is_read(true), required_full(required_full), buffer_alloc(true) {
             this->buffer = new char[buffer_size];
         }
 
         File_(bool buffer_alloc, util::native_worker_manager* manager, int handle, char* buffer, uint32_t buffer_size, uint64_t offset)
-            : util::native_worker_handle(manager), handle(handle), buffer_size(buffer_size), offset(offset), is_read(false), required_full(true), buffer_alloc(buffer_alloc) {
+            : util::native_worker_handle(manager), fm(reinterpret_cast<file_manager*>(manager)), handle(handle), buffer_size(buffer_size), offset(offset), is_read(false), required_full(true), buffer_alloc(buffer_alloc) {
             if (buffer_alloc) {
                 this->buffer = new char[buffer_size];
-                memcpy(this->buffer, buffer, buffer_size);
+                if (buffer_size > 0)
+                    memcpy(this->buffer, buffer, buffer_size);
             } else
                 this->buffer = buffer;
         }
 
         File_(util::native_worker_manager* manager, int handle, char* buffer, uint32_t buffer_size, uint64_t offset, bool required_full)
-            : util::native_worker_handle(manager), handle(handle), buffer_size(buffer_size), offset(offset), is_read(true), required_full(required_full), buffer_alloc(false) {
+            : util::native_worker_handle(manager), fm(reinterpret_cast<file_manager*>(manager)), handle(handle), buffer_size(buffer_size), offset(offset), is_read(true), required_full(required_full), buffer_alloc(false) {
             this->buffer = buffer;
         }
 
@@ -118,11 +127,32 @@ namespace fast_task::file {
                 delete[] buffer;
         }
 
+        void detach_and_release() {
+            bool need_delete = false;
+            {
+                fast_task::lock_guard lock(mut);
+                awaiter = nullptr;
+                if (in_flight)
+                    destroy_on_complete = true;
+                else
+                    need_delete = true;
+            }
+            if (need_delete)
+                delete this;
+        }
+
         void cancel() {
             task old_awaiter;
-            if (buffer && awaiter ? !get_data(awaiter).is_ended() : true) {
+            bool should_cancel = false;
+            {
+                fast_task::lock_guard lock(mut);
+                should_cancel = !fullifed && (!awaiter || !get_data(awaiter).is_ended());
+            }
+            if (should_cancel) {
                 if (util::native_workers_singleton::await_cancel_fd_all(handle)) {
                     fast_task::unique_lock lock(mut);
+                    if (fullifed)
+                        return;
                     fullifed = true;
                     if (awaiter) {
                         if (is_read && !required_full)
@@ -143,9 +173,14 @@ namespace fast_task::file {
         }
 
         void now_fullifed() {
+            bool was_in_flight = false;
+            bool should_delete = false;
+            file_manager* mgr = fm;
             task old_awaiter;
             {
                 fast_task::unique_lock lock(mut);
+                was_in_flight = in_flight;
+                in_flight = false;
                 fullifed = true;
                 if (awaiter) {
                     if (is_read)
@@ -154,14 +189,25 @@ namespace fast_task::file {
                         awaiter.end_dummy([&](auto data) { auto tt = (completion_struct*)data; tt->completed_bytes = fullifed_bytes; });
                 }
                 awaiters.notify_all();
+                should_delete = destroy_on_complete;
                 old_awaiter = std::move(awaiter);
             }
+            old_awaiter = nullptr;
+            if (should_delete)
+                delete this;
+            if (was_in_flight && mgr)
+                file_manager_end_op(mgr);
         }
 
         void exception(io_errors e) {
+            bool was_in_flight = false;
+            bool should_delete = false;
+            file_manager* mgr = fm;
             task old_awaiter;
             {
                 fast_task::unique_lock lock(mut);
+                was_in_flight = in_flight;
+                in_flight = false;
                 fullifed = true;
                 if (awaiter) {
                     if (fullifed_bytes) {
@@ -173,17 +219,34 @@ namespace fast_task::file {
                         awaiter.end_dummy([&](auto data) { auto tt = (completion_struct*)data; tt->error = e; });
                 }
                 awaiters.notify_all();
+                should_delete = destroy_on_complete;
                 old_awaiter = std::move(awaiter);
+            }
+            old_awaiter = nullptr;
+            if (should_delete)
+                delete this;
+            if (was_in_flight && mgr)
+                file_manager_end_op(mgr);
+        }
+
+        void resubmit() {
+            uint64_t new_offset = (offset == static_cast<uint64_t>(-1)) ? static_cast<uint64_t>(-1) : (offset + fullifed_bytes);
+            try {
+                if (is_read)
+                    util::native_workers_singleton::post_read(this, handle, buffer + fullifed_bytes, buffer_size - fullifed_bytes, new_offset);
+                else
+                    util::native_workers_singleton::post_write(this, handle, buffer + fullifed_bytes, buffer_size - fullifed_bytes, new_offset);
+            } catch (...) {
+                exception(io_errors::unknown_error);
             }
         }
 
         void readed(uint32_t len) {
             if (is_read) {
                 fullifed_bytes += len;
-                if (buffer_size > fullifed_bytes) {
-                    uint64_t new_offset = offset + fullifed_bytes;
-                    util::native_workers_singleton::post_read(this, handle, buffer + fullifed_bytes, buffer_size - fullifed_bytes, new_offset);
-                } else
+                if (buffer_size > fullifed_bytes)
+                    resubmit();
+                else
                     now_fullifed();
             }
         }
@@ -191,10 +254,10 @@ namespace fast_task::file {
         void written(uint32_t len) {
             if (!is_read) {
                 fullifed_bytes += len;
-                if (buffer_size > fullifed_bytes) {
-                    uint64_t new_offset = offset + fullifed_bytes;
-                    util::native_workers_singleton::post_write(this, handle, buffer + fullifed_bytes, buffer_size - fullifed_bytes, new_offset);
-                }
+                if (buffer_size > fullifed_bytes)
+                    resubmit();
+                else
+                    now_fullifed();
             } else
                 now_fullifed();
         }
@@ -212,11 +275,31 @@ namespace fast_task::file {
         }
 
         void ststd() {
+            if (buffer_size == 0) {
+                now_fullifed();
+                return;
+            }
             get_data(awaiter).set_status(task_object::status_e::scheduled);
-            if (is_read)
-                util::native_workers_singleton::post_read(this, handle, buffer, buffer_size, offset);
-            else
-                util::native_workers_singleton::post_write(this, handle, buffer, buffer_size, offset);
+            {
+                fast_task::lock_guard lock(mut);
+                in_flight = true;
+            }
+            if (fm)
+                file_manager_begin_op(fm);
+            try {
+                if (is_read)
+                    util::native_workers_singleton::post_read(this, handle, buffer, buffer_size, offset);
+                else
+                    util::native_workers_singleton::post_write(this, handle, buffer, buffer_size, offset);
+            } catch (...) {
+                {
+                    fast_task::lock_guard lock(mut);
+                    in_flight = false;
+                }
+                if (fm)
+                    file_manager_end_op(fm);
+                throw;
+            }
         }
 
         bool error_filter(int error) {
@@ -243,7 +326,7 @@ namespace fast_task::file {
                 exception(io_errors::operation_canceled);
                 return true;
             case EINTR:
-                ststd();
+                resubmit();
                 return false;
             case ESPIPE:
                 exception(io_errors::eof);
@@ -264,10 +347,11 @@ namespace fast_task::file {
     }
 
     void file_overlapped_on_destruct(void* it) {
-        if (((completion_struct*)it)->handle->awaiter)
-            ((completion_struct*)it)->handle->cancel();
-        delete ((completion_struct*)it)->handle;
-        delete ((completion_struct*)it);
+        auto* cs = static_cast<completion_struct*>(it);
+        File_* f = cs->handle;
+        delete cs;
+        if (f)
+            f->detach_and_release();
     }
 
     std::pair<completion_struct*, task> create_dummy_handle(File_* file) {
@@ -287,6 +371,10 @@ namespace fast_task::file {
         uint64_t write_pointer = 0;
         uint64_t read_pointer = 0;
         pointer_mode _pointer_mode;
+        std::atomic<size_t> pending_ops{0};
+        mutex pending_mut;
+        condition_variable pending_cv;
+        std::filesystem::path delete_path;
         friend class File_;
 
 
@@ -303,6 +391,17 @@ namespace fast_task::file {
     public:
         std::optional<mutex> mimic_non_async;
 
+        void begin_op() noexcept {
+            pending_ops.fetch_add(1, std::memory_order_acq_rel);
+        }
+
+        void end_op() noexcept {
+            if (pending_ops.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+                fast_task::lock_guard lock(pending_mut);
+                pending_cv.notify_all();
+            }
+        }
+
         static std::variant<file_manager*, std::string> open(const std::filesystem::path& path, open_mode open, on_open_action action, [[maybe_unused]] share_mode share, file_flags flags, pointer_mode _pointer_mode) {
             std::unique_ptr<file_manager> ptr;
             ptr.reset(new file_manager{});
@@ -317,8 +416,10 @@ namespace fast_task::file {
             //    wshare_mode |= FILE_SHARE_DELETE;
 
             //int wflags = 0;
-            if (flags.delete_on_close)
+            if (flags.delete_on_close) {
                 ptr->uflags |= user_flags::FILE_FLAG_DELETE_ON_CLOSE;
+                ptr->delete_path = path;
+            }
             if (flags.no_buffering)
                 mode |= O_DIRECT;
             //if(flags.posix_semantics)
@@ -400,8 +501,18 @@ namespace fast_task::file {
         }
 
         ~file_manager() {
-            if (_handle != -1)
+            if (_handle != -1) {
+                if (pending_ops.load(std::memory_order_acquire) > 0) {
+                    util::native_workers_singleton::await_cancel_fd_all(_handle);
+                    fast_task::unique_lock lock(pending_mut);
+                    while (pending_ops.load(std::memory_order_acquire) > 0)
+                        pending_cv.wait(lock);
+                }
                 close(_handle);
+                _handle = -1;
+                if ((uflags & user_flags::FILE_FLAG_DELETE_ON_CLOSE) && !delete_path.empty())
+                    ::unlink(delete_path.c_str());
+            }
         }
 
         future_ptr<std::vector<uint8_t>> fut_read(uint32_t size, bool require_all) {
@@ -490,14 +601,6 @@ namespace fast_task::file {
 
         uint32_t read(uint8_t* data_, uint32_t size, bool require_all) {
             File_* file = File_::command_read_inline(this, _handle, (char*)data_, size, read_pointer, require_all);
-            switch (_pointer_mode) {
-            case pointer_mode::separated:
-                read_pointer += size;
-                break;
-            case pointer_mode::combined:
-                write_pointer = read_pointer = read_pointer + size;
-                break;
-            }
             auto [data, task_] = create_dummy_handle(file);
             try {
                 file->awaiter = task_;
@@ -507,12 +610,19 @@ namespace fast_task::file {
                 throw;
             }
             task::await_task(task_);
-            file->awaiter = nullptr;
             if (data->error != io_errors::no_error && data->error != io_errors::eof) {
                 io_error_to_exception(data->error);
                 throw std::runtime_error("Unreachable");
-            } else
-                return data->completed_bytes;
+            }
+            switch (_pointer_mode) {
+            case pointer_mode::separated:
+                read_pointer += data->completed_bytes;
+                break;
+            case pointer_mode::combined:
+                write_pointer = read_pointer = read_pointer + data->completed_bytes;
+                break;
+            }
+            return data->completed_bytes;
         }
 
         uint32_t read_at(uint64_t offset, uint8_t* data_, uint32_t size, bool require_all) {
@@ -847,15 +957,23 @@ namespace fast_task::file {
         }
     };
 
+    static void file_manager_begin_op(file_manager* fm) noexcept {
+        fm->begin_op();
+    }
+
+    static void file_manager_end_op(file_manager* fm) noexcept {
+        fm->end_op();
+    }
+
     int file_handle::internal_get_handle() const noexcept {
-        return handle->get_handle();
+        return handle ? handle->get_handle() : -1;
     }
 }
 
 namespace fast_task::file {
     template <>
     bool io_operation<std::vector<uint8_t>>::is_done() const noexcept {
-        return slot_ && slot_.is_ended();
+        return !slot_ || slot_.is_ended();
     }
 
     template <>
@@ -919,7 +1037,9 @@ namespace fast_task::file {
 
     template <>
     bool io_operation<std::vector<uint8_t>>::enter_cancel(const task& t, enter_state& state) {
-        return slot_.enter_cancel(t, state);
+        if (slot_)
+            return slot_.enter_cancel(t, state);
+        return true;
     }
 
     template <>
@@ -961,26 +1081,28 @@ namespace fast_task::file {
 
     template <>
     bool io_operation<void>::enter_wait(const task& t, enter_state& state) {
-        return slot_.enter_wait(t, state);
+        if (slot_)
+            return slot_.enter_wait(t, state);
+        return true;
     }
 
     template <>
     bool io_operation<void>::enter_wait_until(const task& t, enter_state& state, fast_task::time_point tp) {
-        return slot_.enter_wait_until(t, state, tp);
+        if (slot_)
+            return slot_.enter_wait_until(t, state, tp);
+        return true;
     }
 
     template <>
     bool io_operation<void>::enter_cancel(const task& t, enter_state& state) {
-        return slot_.enter_cancel(t, state);
+        if (slot_)
+            return slot_.enter_cancel(t, state);
+        return true;
     }
 
     file_handle file_handle::open(const std::filesystem::path& path, open_mode open, on_open_action action, file_flags flags, share_mode share, pointer_mode pointer_mode) {
         file_handle res;
         res.handle = nullptr;
-        if (flags.use_lock) {
-            flags.no_buffering = true;
-            flags.write_through = true;
-        }
         std::visit(
             [&res, &flags]<class T>(T&& value) {
                 if constexpr (std::is_same_v<file_manager*, T>) {
@@ -997,10 +1119,6 @@ namespace fast_task::file {
     file_handle file_handle::open_throws(const std::filesystem::path& path, open_mode open, on_open_action action, file_flags flags, share_mode share, pointer_mode pointer_mode) {
         file_handle res;
         res.handle = nullptr;
-        if (flags.use_lock) {
-            flags.no_buffering = true;
-            flags.write_through = true;
-        }
         std::visit(
             [&res, &flags]<class T>(T&& value) {
                 if constexpr (std::is_same_v<file_manager*, T>) {

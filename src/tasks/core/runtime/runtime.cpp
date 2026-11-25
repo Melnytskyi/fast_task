@@ -40,43 +40,21 @@ namespace fast_task {
     bool alloc_globals_alive = true;
 
     namespace {
-        fast_task::native::spin_lock alloc_registry_lock;
-        allocators_local_t* alloc_registry_head = nullptr;
-
-        void alloc_registry_push(allocators_local_t* node) noexcept {
-            std::lock_guard<fast_task::native::spin_lock> guard(alloc_registry_lock);
-            node->registry_next = alloc_registry_head;
-            alloc_registry_head = node;
-        }
-
-        void alloc_registry_remove(allocators_local_t* node) noexcept {
-            std::lock_guard<fast_task::native::spin_lock> guard(alloc_registry_lock);
-            allocators_local_t** link = &alloc_registry_head;
-            while (*link) {
-                if (*link == node) {
-                    *link = node->registry_next;
-                    node->registry_next = nullptr;
-                    return;
-                }
-                link = &(*link)->registry_next;
-            }
-        }
+        std::atomic<bool> alloc_globals_alive_atomic{true};
     }
 
-    allocators_local_t::allocators_local_t() {
-        alloc_registry_push(this);
-    }
+    allocators_local_t::allocators_local_t() = default;
 
     void allocators_local_t::drain_all() {
-        std::lock_guard<fast_task::native::spin_lock> guard(alloc_registry_lock);
-        for (auto* node = alloc_registry_head; node; node = node->registry_next) {
-            node->task_cache.release();
-            node->timing_cache.release();
-        }
+        if (!alloc_globals_alive_atomic.load(std::memory_order_acquire))
+            return;
+        auto& local = get_alloc_loc();
+        local.task_cache.release();
+        local.timing_cache.release();
     }
 
     void allocators_local_t::reset() {
-        if (!alloc_globals_alive) {
+        if (!alloc_globals_alive_atomic.load(std::memory_order_acquire)) {
             task_cache.free_list = nullptr;
             task_cache.free_count = 0;
             timing_cache.free_list = nullptr;
@@ -89,7 +67,6 @@ namespace fast_task {
 
     allocators_local_t::~allocators_local_t() {
         reset();
-        alloc_registry_remove(this);
     }
 
     pool_manager::pool_manager() noexcept {
@@ -110,6 +87,7 @@ namespace fast_task {
 
     scheduler_runtime::~scheduler_runtime() {
         allocators_local_t::drain_all();
+        alloc_globals_alive_atomic.store(false, std::memory_order_release);
         alloc_globals_alive = false;
 
         if (auto* storage = pools.slots[global_pool_index].exchange(nullptr, std::memory_order_acq_rel))
@@ -128,14 +106,12 @@ namespace fast_task {
     }
 
     std::string ws2s(const std::wstring& wstr) {
-        const CHAR def[] = " ";
-        BOOL used = true;
-        int len = WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), -1, NULL, 0, def, &used);
+        int len = WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), -1, NULL, 0, nullptr, nullptr);
         if (len == 0)
             return "";
 
         std::vector<char> str(len);
-        WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), -1, str.data(), len, def, &used);
+        WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), -1, str.data(), len, nullptr, nullptr);
         return std::string(str.begin(), str.end() - 1);
     }
 
