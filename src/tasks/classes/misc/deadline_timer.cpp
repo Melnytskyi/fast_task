@@ -28,8 +28,7 @@ namespace fast_task {
         }
 
         void release() {
-            if (usage_count.fetch_sub(1, std::memory_order_release) == 1) {
-                std::atomic_thread_fence(std::memory_order_acquire);
+            if (usage_count.fetch_sub(1, std::memory_order_acq_rel) == 1) {
                 delete this;
             }
         }

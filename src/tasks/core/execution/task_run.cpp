@@ -116,9 +116,21 @@ namespace fast_task {
     }
 
     void in_stackfull_run(executors_local& loc, task_object* data) {
-        auto& stack_current_context = get_execution_data(data).context;
+        auto& ex = get_execution_data(data);
+        auto& stack_current_context = ex.context;
         if (stack_current_context) {
+#ifdef FT_TSAN_ENABLED
+            void* caller_fiber = __tsan_get_current_fiber();
+            __tsan_switch_to_fiber(ex.tsan_fiber, 0);
+#endif
             stack_current_context = std::move(stack_current_context).resume();
+#ifdef FT_TSAN_ENABLED
+            __tsan_switch_to_fiber(caller_fiber, 0);
+            if (!stack_current_context && ex.tsan_fiber) {
+                __tsan_destroy_fiber(ex.tsan_fiber);
+                ex.tsan_fiber = nullptr;
+            }
+#endif
             data->get_relock().relock_start();
             arm_pending_timer(loc);
         } else {
@@ -129,10 +141,22 @@ namespace fast_task {
             light_stack stack_alloc(1048576 /*1 mb*/);
             auto ss = stack_alloc.allocate();
     #if PLATFORM_LINUX
-            get_execution_data(data).stack_ptr = ((char*)ss.sp) - ss.size;
-            get_execution_data(data).stack_size = ss.size;
+            ex.stack_ptr = ((char*)ss.sp) - ss.size;
+            ex.stack_size = ss.size;
+    #endif
+    #ifdef FT_TSAN_ENABLED
+            void* caller_fiber = __tsan_get_current_fiber();
+            ex.tsan_fiber = __tsan_create_fiber(0);
+            __tsan_switch_to_fiber(ex.tsan_fiber, 0);
     #endif
             stack_current_context = boost::context::callcc(std::allocator_arg, boost::context::preallocated(ss.sp, ss.size, ss), stack_alloc, context_exec);
+    #ifdef FT_TSAN_ENABLED
+            __tsan_switch_to_fiber(caller_fiber, 0);
+            if (!stack_current_context && ex.tsan_fiber) {
+                __tsan_destroy_fiber(ex.tsan_fiber);
+                ex.tsan_fiber = nullptr;
+            }
+    #endif
 #endif
             data->get_relock().relock_start();
             arm_pending_timer(loc);
@@ -145,10 +169,22 @@ namespace fast_task {
             light_stack stack_alloc(1048576 /*1 mb*/);
             auto ss = stack_alloc.allocate();
     #if PLATFORM_LINUX
-            get_execution_data(data).stack_ptr = ((char*)ss.sp) - ss.size;
-            get_execution_data(data).stack_size = ss.size;
+            ex.stack_ptr = ((char*)ss.sp) - ss.size;
+            ex.stack_size = ss.size;
+    #endif
+    #ifdef FT_TSAN_ENABLED
+            void* caller_fiber = __tsan_get_current_fiber();
+            ex.tsan_fiber = __tsan_create_fiber(0);
+            __tsan_switch_to_fiber(ex.tsan_fiber, 0);
     #endif
             stack_current_context = boost::context::callcc(std::allocator_arg, boost::context::preallocated(ss.sp, ss.size, ss), stack_alloc, context_ex_handle);
+    #ifdef FT_TSAN_ENABLED
+            __tsan_switch_to_fiber(caller_fiber, 0);
+            if (!stack_current_context && ex.tsan_fiber) {
+                __tsan_destroy_fiber(ex.tsan_fiber);
+                ex.tsan_fiber = nullptr;
+            }
+    #endif
 #endif
             data->get_relock().relock_start();
             arm_pending_timer(loc);

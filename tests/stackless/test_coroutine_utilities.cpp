@@ -80,12 +80,12 @@ TEST_F(CoroutineUtilitiesTest, TaskGeneratorYieldsValuesAndCompletes) {
     };
 
     std::vector<int> received;
-    auto consumer = [&]() -> fast_task::task_coro<void> {
-        auto gen = gen_fn();
+    auto consumer = [](auto fn, std::vector<int>& out) -> fast_task::task_coro<void> {
+        auto gen = fn();
         while (auto val = co_await gen.next())
-            received.push_back(*val);
+            out.push_back(*val);
         co_return;
-    }();
+    }(gen_fn, received);
     fast_task::scheduler::start(consumer.get_task());
     consumer->await_task();
 

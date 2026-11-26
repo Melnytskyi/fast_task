@@ -369,7 +369,8 @@ namespace fast_task {
     template <class T>
     [[nodiscard]] std::pair<oneshot_sender<T>, oneshot_receiver<T>> make_oneshot() {
         auto st = std::make_shared<oneshot<T>>();
-        return {oneshot_sender<T>(st), oneshot_receiver<T>(std::move(st))};
+        auto st_rx = st;
+        return {oneshot_sender<T>(std::move(st)), oneshot_receiver<T>(std::move(st_rx))};
     }
 }
 

@@ -533,7 +533,7 @@ namespace fast_task::file {
                 file->awaiter = nullptr;
                 throw;
             }
-            return future<std::vector<uint8_t>>::start([file, data, task_]() -> std::vector<uint8_t> {
+            return future<std::vector<uint8_t>>::start([data, task_]() -> std::vector<uint8_t> {
                 task::await_task(task_);
                 if (data->error != io_errors::no_error && data->error != io_errors::eof) {
                     io_error_to_exception(data->error);
@@ -553,7 +553,7 @@ namespace fast_task::file {
                 file->awaiter = nullptr;
                 throw;
             }
-            return future<std::vector<uint8_t>>::start([file, data, task_]() -> std::vector<uint8_t> {
+            return future<std::vector<uint8_t>>::start([data, task_]() -> std::vector<uint8_t> {
                 task::await_task(task_);
                 if (data->error != io_errors::no_error && data->error != io_errors::eof) {
                     io_error_to_exception(data->error);

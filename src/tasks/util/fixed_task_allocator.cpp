@@ -76,7 +76,7 @@ namespace fast_task {
             reinterpret_cast<fast_task::task_object*>(node)
                 ->status.store(fast_task::task_object::status_e::released, std::memory_order_relaxed);
 #endif
-            node->next = head;
+            node->next.store(head, std::memory_order_relaxed);
             head = node;
             if (!tail)
                 tail = node;
@@ -84,7 +84,7 @@ namespace fast_task {
 
         tagged_node old = global_stack_.load(std::memory_order_acquire);
         while (true) {
-            tail->next = old.ptr;
+            tail->next.store(old.ptr, std::memory_order_relaxed);
             tagged_node desired{head, old.counter + 1};
             if (global_stack_.compare_exchange_weak(old, desired, std::memory_order_release, std::memory_order_acquire)) {
                 break;
@@ -99,7 +99,7 @@ namespace fast_task {
         auto* prev = static_cast<free_node*>(nullptr);
         for (size_t i = 0; i < count && cur; ++i) {
             prev = cur;
-            cur = cur->next;
+            cur = cur->next.load(std::memory_order_relaxed);
         }
         if (out_batch_tail)
             *out_batch_tail = prev;
@@ -153,18 +153,18 @@ namespace fast_task {
                         need_expand = true;
                     break;
                 }
-                tagged_node desired{old.ptr->next, old.counter + 1};
+                tagged_node desired{old.ptr->next.load(std::memory_order_relaxed), old.counter + 1};
                 if (global_stack_.compare_exchange_weak(
                         old,
                         desired,
                         std::memory_order_release,
                         std::memory_order_acquire
                     )) {
-                    old.ptr->next = nullptr;
+                    old.ptr->next.store(nullptr, std::memory_order_relaxed);
                     if (!head)
                         head = tail = old.ptr;
                     else {
-                        tail->next = old.ptr;
+                        tail->next.store(old.ptr, std::memory_order_relaxed);
                         tail = old.ptr;
                     }
                     ++popped;
@@ -187,7 +187,7 @@ namespace fast_task {
     void global_task_allocator::push_batch(free_node* head, free_node* tail, size_t count) {
         tagged_node old = global_stack_.load(std::memory_order_acquire);
         while (true) {
-            tail->next = old.ptr;
+            tail->next.store(old.ptr, std::memory_order_relaxed);
             tagged_node desired{head, old.counter + 1};
             if (global_stack_.compare_exchange_weak(old, desired, std::memory_order_release, std::memory_order_acquire)) {
                 break;
@@ -216,7 +216,7 @@ namespace fast_task {
         auto* cur = batch;
         while (cur) {
             ++actual;
-            cur = cur->next;
+            cur = cur->next.load(std::memory_order_relaxed);
         }
 
         free_list = batch;
@@ -228,7 +228,7 @@ namespace fast_task {
             allocate_batch();
 
         auto* node = free_list;
-        free_list = node->next;
+        free_list = node->next.load(std::memory_order_relaxed);
         --free_count;
         return reinterpret_cast<task_object*>(node);
     }
@@ -238,7 +238,7 @@ namespace fast_task {
 #ifndef NDEBUG
         p->status.store(fast_task::task_object::status_e::released, std::memory_order_relaxed);
 #endif
-        node->next = free_list;
+        node->next.store(free_list, std::memory_order_relaxed);
         free_list = node;
         ++free_count;
 
@@ -247,9 +247,9 @@ namespace fast_task {
             auto* cur = head;
             size_t count = global_task_allocator::init_batch;
             for (size_t i = 1; i < count; ++i)
-                cur = cur->next;
-            free_list = cur->next;
-            cur->next = nullptr;
+                cur = cur->next.load(std::memory_order_relaxed);
+            free_list = cur->next.load(std::memory_order_relaxed);
+            cur->next.store(nullptr, std::memory_order_relaxed);
             free_count -= count;
 
             glob.allocators.gba.push_batch(head, cur, count);
@@ -260,8 +260,8 @@ namespace fast_task {
         if (free_list) {
             auto* head = free_list;
             auto* cur = head;
-            while (cur->next)
-                cur = cur->next;
+            while (auto* nxt = cur->next.load(std::memory_order_relaxed))
+                cur = nxt;
 
             glob.allocators.gba.push_batch(head, cur, free_count);
             free_list = nullptr;
@@ -319,7 +319,7 @@ namespace fast_task {
             return;
 
         size_t drained_count = 0;
-        for (auto cur = old.ptr; cur; cur = cur->next) {
+        for (auto cur = old.ptr; cur; cur = cur->next.load(std::memory_order_relaxed)) {
             get_arena(cur)->cleanup_current_free++;
             ++drained_count;
         }
@@ -339,20 +339,20 @@ namespace fast_task {
         free_node* push_tail = nullptr;
         size_t kept = 0;
         for (auto cur = old.ptr; cur;) {
-            auto next = cur->next;
+            auto next = cur->next.load(std::memory_order_relaxed);
             arena* a = get_arena(cur);
             if (!a->to_release) {
                 if (!push_head)
                     push_head = cur;
                 else
-                    push_tail->next = cur;
+                    push_tail->next.store(cur, std::memory_order_relaxed);
                 push_tail = cur;
                 kept++;
             }
             cur = next;
         }
         if (push_tail)
-            push_tail->next = nullptr;
+            push_tail->next.store(nullptr, std::memory_order_relaxed);
         arena* to_free = nullptr;
         {
             std::lock_guard arena_guard(arena_lock);

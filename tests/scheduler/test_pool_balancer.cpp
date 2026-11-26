@@ -68,7 +68,10 @@ TEST(PoolBalancer, HillClimbKeepsTargetInLimits) {
         }
     });
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(700));
+    EXPECT_TRUE(eventually(
+        [&] { return ran.load(std::memory_order_relaxed) >= 100u && pool.stats().balance_samples >= 1u; },
+        std::chrono::seconds(3)
+    ));
     stop.store(true, std::memory_order_relaxed);
     load.join();
 

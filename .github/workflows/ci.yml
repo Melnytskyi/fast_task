@@ -102,7 +102,7 @@ jobs:
         run: cmake --build build --parallel
 
       - name: Test
-        run: ctest --test-dir build --timeout 60 --output-on-failure
+        run: ctest --test-dir build --parallel 4 --timeout 60 --output-on-failure
 
   windows:
     name: Windows (${{ matrix.arch }} / ${{ matrix.config }})

@@ -105,8 +105,8 @@ TEST_F(FutureBasicTest, WhenReadySurvivesDroppingFuturePtr) {
                 fast_task::lock_guard<fast_task::native::mutex> lk(nm);
                 observed = val;
                 callback_ran = true;
+                ncv.notify_all();
             }
-            ncv.notify_all();
         });
         fut.reset();
     }

@@ -19,6 +19,17 @@
 #include <fast_task/task.hpp>
 #include <tasks/core/execution/preemption.hpp>
 
+#if defined(__SANITIZE_THREAD__)
+    #define FT_TSAN_ENABLED 1
+#elif defined(__has_feature)
+    #if __has_feature(thread_sanitizer)
+        #define FT_TSAN_ENABLED 1
+    #endif
+#endif
+#ifdef FT_TSAN_ENABLED
+    #include <sanitizer/tsan_interface.h>
+#endif
+
 namespace fast_task {
     struct FT_API_LOCAL task_object::execution_data {
         fast_task::time_point::rep timeout = fast_task::time_point::min().time_since_epoch().count();
@@ -37,6 +48,22 @@ namespace fast_task {
 #endif
 #if defined(FT_EXCEPTION_POLICY_PRESERVE)
         std::exception_ptr switch_preserve;
+#endif
+#ifdef FT_TSAN_ENABLED
+        void* tsan_fiber = nullptr;
+
+        ~execution_data() {
+            if (tsan_fiber) {
+                if (context) {
+                    void* caller_fiber = __tsan_get_current_fiber();
+                    __tsan_switch_to_fiber(tsan_fiber, 0);
+                    context = boost::context::continuation{};
+                    __tsan_switch_to_fiber(caller_fiber, 0);
+                }
+                __tsan_destroy_fiber(tsan_fiber);
+                tsan_fiber = nullptr;
+            }
+        }
 #endif
     };
 

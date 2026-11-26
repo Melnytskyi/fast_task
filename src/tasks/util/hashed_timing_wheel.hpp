@@ -92,7 +92,7 @@ namespace fast_task {
         static constexpr size_t max_arena_blocks = 131072;
 
         struct alignas(32) free_node {
-            free_node* next;
+            std::atomic<free_node*> next;
         };
 
         struct alignas(16) tagged_node {
