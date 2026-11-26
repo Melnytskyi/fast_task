@@ -76,7 +76,23 @@ namespace fast_task {
     }
 
     void __TaskQueue_add_task_leave(queue_handle* tqh) {
-        fast_task::lock_guard lock(tqh->no_race);
+        auto* loc = get_loc();
+        const bool cannot_park = loc && loc->is_task_thread && loc->curr_task &&
+            get_data(loc->curr_task).get_execution_mode() != task_object::execution_mode::stackfull &&
+            get_data(loc->curr_task).get_execution_mode() != task_object::execution_mode::_stackfull_reserved;
+        if (cannot_park) {
+            while (!tqh->no_race.try_lock())
+                cpu_relax();
+        } else {
+            tqh->no_race.lock();
+        }
+        struct unlock_guard {
+            fast_task::mutex& m;
+
+            ~unlock_guard() {
+                m.unlock();
+            }
+        } lock{tqh->no_race};
         tqh->now_at_execution--;
 
         if (!tqh->destructed && tqh->is_running && !tqh->tasks.empty()) {

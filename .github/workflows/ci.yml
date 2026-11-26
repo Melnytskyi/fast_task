@@ -145,7 +145,7 @@ jobs:
           - os: windows-latest
             arch: x64
             config: ClangCL-UBSan
-            build_type: Debug
+            build_type: RelWithDebInfo
             cmake_args: '-T ClangCL -DCMAKE_CXX_FLAGS="/DWIN32 /D_WINDOWS /EHsc -fsanitize=undefined"'
             timeout: 30
           - os: windows-11-arm

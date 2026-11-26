@@ -43,7 +43,6 @@ TEST_F(TaskExceptionTest, NoExHandlerTaskStillCompletes) {
 }
 
 TEST_F(TaskExceptionTest, ContextSwitchCounterIncreases) {
-    size_t switches = 0;
     run_task([&] {
         fast_task::this_task::yield();
         fast_task::this_task::yield();
