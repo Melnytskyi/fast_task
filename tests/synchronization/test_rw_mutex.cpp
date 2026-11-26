@@ -112,7 +112,7 @@ TEST_F(TaskRwMutexTest, AsyncReadLock) {
 
     run_task([&] {
         auto coro_fn = [&]() -> fast_task::task_coro<void> {
-            m.read_lock();
+            co_await m.async_read_lock();
             completed = true;
             m.read_unlock();
             co_return;
@@ -261,7 +261,7 @@ TEST_F(TaskRwMutexTest, AsyncWriteLock) {
 
     run_task([&] {
         auto coro_fn = [&]() -> fast_task::task_coro<void> {
-            m.write_lock();
+            co_await m.async_write_lock();
             completed = true;
             m.write_unlock();
             co_return;

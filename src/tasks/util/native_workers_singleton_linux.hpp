@@ -51,6 +51,8 @@ namespace fast_task::util {
         readv,
         writev,
         poll_add,
+        async_cancel,
+        sendv_file_postfix,
     };
 
     class FT_API_LOCAL native_worker_handle {
@@ -126,13 +128,25 @@ namespace fast_task::util {
                 send_file_v_args send_file_v;
                 struct statx* pStatxbuf;
                 uint64_t user_data;
+                void* cancel_target;
             };
 
             int32_t flags = 0;
             int32_t linked_error = 0;
+            uint32_t splice_total = 0;
+            uint32_t splice_last_chunk = 0;
         } request_data;
 
+        std::atomic<bool> io_in_flight{false};
+
     public:
+        bool is_in_flight() const noexcept {
+            return io_in_flight.load(std::memory_order_acquire);
+        }
+
+        void mark_completed() noexcept {
+            io_in_flight.store(false, std::memory_order_release);
+        }
         native_worker_handle(native_worker_manager* manager)
             : manager(manager) {
             request_data.b.buf = nullptr;
@@ -180,10 +194,11 @@ namespace fast_task::util {
                 unsigned n = 2u;
                 if (h->request_data.send_file_v.prefix_len > 0)
                     ++n;
-                if (h->request_data.send_file_v.postfix_len > 0)
-                    ++n;
                 return n;
             }
+            case operations::sendv_file_postfix:
+            case operations::async_cancel:
+                return 1u;
             default:
                 return 1u;
             }
@@ -361,6 +376,7 @@ namespace fast_task::util {
                 break;
             case operations::sendfile: {
                 const uint32_t splice_len = std::min<uint32_t>(h->request_data.splice_fds.len, MAX_SPLICE_CHUNK);
+                h->request_data.splice_last_chunk = splice_len;
                 io_uring_prep_splice(sqes[0], h->request_data.splice_fds.file_fd, static_cast<int64_t>(h->request_data.offset), h->request_data.splice_fds.pipe_wfd, -1, splice_len, SPLICE_F_MOVE);
                 io_uring_sqe_set_data(sqes[0], linked_prereq_data(h));
                 sqes[0]->flags |= IOSQE_IO_LINK;
@@ -370,6 +386,7 @@ namespace fast_task::util {
             }
             case operations::sendv_file: {
                 const uint32_t splice_len = std::min<uint32_t>(h->request_data.splice_fds.len, MAX_SPLICE_CHUNK);
+                h->request_data.splice_last_chunk = splice_len;
                 unsigned idx = 0;
                 if (h->request_data.send_file_v.prefix_len > 0) {
                     io_uring_prep_send(sqes[idx], h->request_data.fd, h->request_data.send_file_v.prefix, h->request_data.send_file_v.prefix_len, 0);
@@ -382,15 +399,17 @@ namespace fast_task::util {
                 sqes[idx]->flags |= IOSQE_IO_LINK;
                 ++idx;
                 io_uring_prep_splice(sqes[idx], h->request_data.splice_fds.pipe_rfd, -1, h->request_data.fd, -1, splice_len, SPLICE_F_MOVE);
-                if (h->request_data.send_file_v.postfix_len > 0) {
-                    io_uring_sqe_set_data(sqes[idx], linked_prereq_data(h));
-                    sqes[idx]->flags |= IOSQE_IO_LINK;
-                    ++idx;
-                    io_uring_prep_send(sqes[idx], h->request_data.fd, h->request_data.send_file_v.postfix, h->request_data.send_file_v.postfix_len, 0);
-                }
                 io_uring_sqe_set_data(sqes[idx], h);
                 break;
             }
+            case operations::sendv_file_postfix:
+                io_uring_prep_send(sqes[0], h->request_data.fd, h->request_data.send_file_v.postfix, h->request_data.send_file_v.postfix_len, 0);
+                io_uring_sqe_set_data(sqes[0], h);
+                break;
+            case operations::async_cancel:
+                io_uring_prep_cancel(sqes[0], h->request_data.cancel_target, 0);
+                io_uring_sqe_set_data(sqes[0], h);
+                break;
             case operations::read:
                 io_uring_prep_read(sqes[0], h->request_data.fd, const_cast<void*>(h->request_data.b.buf), h->request_data.b.len, h->request_data.offset);
                 io_uring_sqe_set_data(sqes[0], h);
@@ -450,11 +469,60 @@ namespace fast_task::util {
                 }
 
                 auto handle = reinterpret_cast<native_worker_handle*>(user_data);
-                if (!handle || !handle->manager)
+                if (!handle)
                     continue;
+
+                if (handle->request_data.opcode == operations::async_cancel) {
+                    handle->mark_completed();
+                    continue;
+                }
+
+                if (!handle->manager) {
+                    handle->mark_completed();
+                    continue;
+                }
 
                 if (res == -ECANCELED && handle->request_data.linked_error < 0)
                     res = handle->request_data.linked_error;
+
+                if (handle->request_data.opcode == operations::sendfile ||
+                    handle->request_data.opcode == operations::sendv_file) {
+                    if (res >= 0) {
+                        if (handle->request_data.opcode == operations::sendv_file &&
+                            handle->request_data.send_file_v.prefix_len > 0) {
+                            handle->request_data.splice_total += handle->request_data.send_file_v.prefix_len;
+                            handle->request_data.send_file_v.prefix_len = 0;
+                        }
+                        if (res > 0) {
+                            const uint32_t sent = static_cast<uint32_t>(res);
+                            handle->request_data.splice_total += sent;
+                            handle->request_data.offset += sent;
+                            if (handle->request_data.splice_fds.len != UINT32_MAX) {
+                                handle->request_data.splice_fds.len =
+                                    (handle->request_data.splice_fds.len > sent)
+                                        ? (handle->request_data.splice_fds.len - sent)
+                                        : 0;
+                            }
+                            if (sent == handle->request_data.splice_last_chunk &&
+                                handle->request_data.splice_fds.len > 0) {
+                                handle->request_data.linked_error = 0;
+                                sumbmit(handle, handle->request_data.fd);
+                                continue;
+                            }
+                        }
+                        if (handle->request_data.opcode == operations::sendv_file &&
+                            handle->request_data.send_file_v.postfix_len > 0) {
+                            handle->request_data.opcode = operations::sendv_file_postfix;
+                            handle->request_data.linked_error = 0;
+                            sumbmit(handle, handle->request_data.fd);
+                            continue;
+                        }
+                        res = static_cast<int32_t>(handle->request_data.splice_total);
+                    }
+                } else if (handle->request_data.opcode == operations::sendv_file_postfix) {
+                    if (res >= 0)
+                        res += static_cast<int32_t>(handle->request_data.splice_total);
+                }
 
                 handle->manager->handle(handle, res, flags);
             }
@@ -501,11 +569,13 @@ namespace fast_task::util {
                     std::generic_category(),
                     "io_uring is not initialized"
                 );
+            handle->io_in_flight.store(true, std::memory_order_release);
             self.pending_submissions.fetch_add(1, std::memory_order_release);
             try {
                 self.queue.enqueue(handle);
             } catch (...) {
                 self.pending_submissions.fetch_sub(1, std::memory_order_release);
+                handle->io_in_flight.store(false, std::memory_order_release);
                 throw;
             }
             driver_notify_io_submission();
@@ -650,6 +720,9 @@ namespace fast_task::util {
             handle->request_data.splice_fds.pipe_rfd = pipe_rfd;
             handle->request_data.splice_fds.pipe_wfd = pipe_wfd;
             handle->request_data.splice_fds.len = data_len;
+            handle->request_data.splice_total = 0;
+            handle->request_data.splice_last_chunk = 0;
+            handle->request_data.linked_error = 0;
             sumbmit(handle, hSocket);
         }
 
@@ -665,6 +738,9 @@ namespace fast_task::util {
             handle->request_data.send_file_v.prefix_len = prefix_len;
             handle->request_data.send_file_v.postfix = postfix;
             handle->request_data.send_file_v.postfix_len = postfix_len;
+            handle->request_data.splice_total = 0;
+            handle->request_data.splice_last_chunk = 0;
+            handle->request_data.linked_error = 0;
             sumbmit(handle, hSocket);
         }
 
@@ -711,6 +787,12 @@ namespace fast_task::util {
             handle->request_data.fd = fd;
             handle->request_data.mask = events;
             sumbmit(handle, fd);
+        }
+
+        static void post_cancel_handle(native_worker_handle* cancel_req, native_worker_handle* target) {
+            cancel_req->request_data.opcode = operations::async_cancel;
+            cancel_req->request_data.cancel_target = target;
+            sumbmit(cancel_req, -1);
         }
 
         static bool await_cancel_fd(int /*hIn*/) {

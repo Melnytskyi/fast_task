@@ -57,6 +57,11 @@ namespace fast_task::interrupt {
         timer_t timerid{};
         bool timer_created = false;
         std::atomic<bool> in_trampoline{false};
+        #if defined(__linux__) && defined(__x86_64__)
+        std::unique_ptr<char[]> alt_stack_mem;
+        stack_t old_alt_stack{};
+        bool alt_stack_installed = false;
+        #endif
         #if defined(__linux__) && defined(__aarch64__)
         ucontext_t* restore_ucontext = nullptr;
         #endif
@@ -73,6 +78,13 @@ namespace fast_task::interrupt {
                 timer_delete(timerid);
                 timer_created = false;
             }
+        #if defined(__linux__) && defined(__x86_64__)
+            if (alt_stack_installed) {
+                sigaltstack(&old_alt_stack, nullptr);
+                alt_stack_installed = false;
+                alt_stack_mem.reset();
+            }
+        #endif
     #endif
         }
     };
@@ -440,6 +452,8 @@ namespace fast_task::interrupt {
         const uintptr_t stack_low = reinterpret_cast<uintptr_t>(ex->stack_ptr);
         const uintptr_t stack_high = stack_low + ex->stack_size;
         #if defined(__x86_64__)
+        if (!t.alt_stack_installed)
+            return;
         const uintptr_t orig_rsp = static_cast<uintptr_t>(uc->uc_mcontext.gregs[REG_RSP]);
         const uintptr_t orig_rip = static_cast<uintptr_t>(uc->uc_mcontext.gregs[REG_RIP]);
 
@@ -485,7 +499,11 @@ namespace fast_task::interrupt {
         struct sigaction sa;
         std::memset(&sa, 0, sizeof(sa));
         sa.sa_sigaction = posix_signal_handler;
+    #if defined(__linux__) && defined(__x86_64__)
+        sa.sa_flags = SA_SIGINFO | SA_RESTART | SA_ONSTACK;
+    #else
         sa.sa_flags = SA_SIGINFO | SA_RESTART;
+    #endif
         sigemptyset(&sa.sa_mask);
         sigaction(PREEMPTION_SIGNAL, &sa, NULL);
 
@@ -520,6 +538,21 @@ namespace fast_task::interrupt {
             return true;
         }
         timer.timer_value = *new_value;
+    #if defined(__linux__) && defined(__x86_64__)
+        if (!timer.alt_stack_installed) {
+            constexpr size_t alt_stack_size = 64 * 1024;
+            timer.alt_stack_mem = std::make_unique<char[]>(alt_stack_size);
+            stack_t ss{};
+            ss.ss_sp = timer.alt_stack_mem.get();
+            ss.ss_size = alt_stack_size;
+            ss.ss_flags = 0;
+            if (sigaltstack(&ss, &timer.old_alt_stack) == 0) {
+                timer.alt_stack_installed = true;
+            } else {
+                timer.alt_stack_mem.reset();
+            }
+        }
+    #endif
         if (!timer.timer_created) {
             struct sigevent sev;
             std::memset(&sev, 0, sizeof(sev));

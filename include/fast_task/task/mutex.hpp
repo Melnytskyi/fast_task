@@ -357,10 +357,15 @@ namespace fast_task {
         rw_mutex& mutex;
 
     public:
-        read_lock(rw_mutex& mutex)
+        explicit read_lock(rw_mutex& mutex)
             : mutex(mutex) {
             mutex.read_lock();
         }
+
+        read_lock(const read_lock&) = delete;
+        read_lock& operator=(const read_lock&) = delete;
+        read_lock(read_lock&&) = delete;
+        read_lock& operator=(read_lock&&) = delete;
 
         ~read_lock() {
             mutex.read_unlock();
@@ -371,10 +376,15 @@ namespace fast_task {
         rw_mutex& mutex;
 
     public:
-        write_lock(rw_mutex& mutex)
+        explicit write_lock(rw_mutex& mutex)
             : mutex(mutex) {
             mutex.write_lock();
         }
+
+        write_lock(const write_lock&) = delete;
+        write_lock& operator=(const write_lock&) = delete;
+        write_lock(write_lock&&) = delete;
+        write_lock& operator=(write_lock&&) = delete;
 
         ~write_lock() {
             mutex.write_unlock();

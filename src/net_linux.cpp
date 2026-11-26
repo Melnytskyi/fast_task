@@ -209,9 +209,30 @@ namespace fast_task::net {
         int32_t* out_processed_bytes = nullptr;
         int error = 0;
         void (*on_complete)(void*) = nullptr;
+        std::atomic<bool> cancelled_by_dtor{false};
 
         native_state(util::native_worker_manager* mgr)
             : util::native_worker_handle(mgr) {
+        }
+
+        ~native_state() {
+            if (is_in_flight()) {
+                cancelled_by_dtor.store(true, std::memory_order_release);
+                util::native_worker_handle cancel_req(nullptr);
+                try {
+                    util::native_workers_singleton::post_cancel_handle(&cancel_req, this);
+                } catch (...) {
+                    return;
+                }
+                while (is_in_flight() || cancel_req.is_in_flight()) {
+                    if (glob.driver.driver_lock.try_lock()) {
+                        util::native_workers_singleton::poll_all(1);
+                        glob.driver.driver_lock.unlock();
+                    } else {
+                        std::this_thread::yield();
+                    }
+                }
+            }
         }
     };
 
@@ -270,17 +291,26 @@ namespace fast_task::net {
 
         void handle(util::native_worker_handle* overlap, int32_t res, uint32_t) override {
             auto state = static_cast<native_state*>(overlap);
+            if (state->cancelled_by_dtor.load(std::memory_order_acquire)) {
+                if (state->on_complete)
+                    state->on_complete(static_cast<void*>(state));
+                state->awaiting_task = nullptr;
+                state->mark_completed();
+                return;
+            }
             state->error = res < 0 ? -res : 0;
 
             if (state->on_complete)
                 state->on_complete(static_cast<void*>(state));
-            if (state->awaiting_task) {
-                if (state->out_processed_bytes)
-                    *state->out_processed_bytes = res > -1 ? res : -1;
+            task to_wake = std::move(state->awaiting_task);
+            if (to_wake && state->out_processed_bytes)
+                *state->out_processed_bytes = res > -1 ? res : -1;
+            state->mark_completed();
+            if (to_wake) {
                 {
-                    fast_task::lock_guard guard(get_data(state->awaiting_task));
+                    fast_task::lock_guard guard(get_data(to_wake));
                 }
-                transfer_task(std::move(state->awaiting_task));
+                transfer_task(std::move(to_wake));
             }
         }
 
@@ -1254,16 +1284,25 @@ namespace fast_task::net {
 
         void handle(util::native_worker_handle* overlap, int32_t res, uint32_t) override {
             auto state = static_cast<native_state*>(overlap);
+            if (state->cancelled_by_dtor.load(std::memory_order_acquire)) {
+                if (state->on_complete)
+                    state->on_complete(static_cast<void*>(state));
+                state->awaiting_task = nullptr;
+                state->mark_completed();
+                return;
+            }
             state->error = res < 0 ? -res : 0;
             if (state->out_processed_bytes)
                 *state->out_processed_bytes = res > -1 ? res : -1;
             if (state->on_complete)
                 state->on_complete(static_cast<void*>(state));
-            if (state->awaiting_task) {
+            task to_wake = std::move(state->awaiting_task);
+            state->mark_completed();
+            if (to_wake) {
                 {
-                    fast_task::lock_guard guard(get_data(state->awaiting_task));
+                    fast_task::lock_guard guard(get_data(to_wake));
                 }
-                transfer_task(std::move(state->awaiting_task));
+                transfer_task(std::move(to_wake));
             }
         }
 
@@ -1479,16 +1518,25 @@ namespace fast_task::net {
 
         void handle(util::native_worker_handle* overlap, int32_t res, uint32_t) override {
             auto state = static_cast<native_state*>(overlap);
+            if (state->cancelled_by_dtor.load(std::memory_order_acquire)) {
+                if (state->on_complete)
+                    state->on_complete(static_cast<void*>(state));
+                state->awaiting_task = nullptr;
+                state->mark_completed();
+                return;
+            }
             state->error = res < 0 ? -res : 0;
             if (state->out_processed_bytes)
                 *state->out_processed_bytes = res > -1 ? (int32_t)res : -1;
             if (state->on_complete)
                 state->on_complete(static_cast<void*>(state));
-            if (state->awaiting_task) {
+            task to_wake = std::move(state->awaiting_task);
+            state->mark_completed();
+            if (to_wake) {
                 {
-                    fast_task::lock_guard guard(get_data(state->awaiting_task));
+                    fast_task::lock_guard guard(get_data(to_wake));
                 }
-                transfer_task(std::move(state->awaiting_task));
+                transfer_task(std::move(to_wake));
             }
         }
 

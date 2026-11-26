@@ -30,23 +30,31 @@ TEST(Thread, JoinableAndJoin) {
 }
 
 TEST(Thread, Detach) {
-    std::atomic<bool> ran{false};
-    fast_task::native::mutex m;
-    fast_task::native::condition_variable cv;
+    struct detach_state {
+        fast_task::native::mutex m;
+        fast_task::native::condition_variable cv;
+        bool ran = false;
+    };
+    auto st = std::make_shared<detach_state>();
 
-    fast_task::native::thread t([&] {
-        ran = true;
-        cv.notify_one();
+    fast_task::native::thread t([st] {
+        st->m.lock();
+        st->ran = true;
+        st->cv.notify_one();
+        st->m.unlock();
     });
     t.detach();
     EXPECT_FALSE(t.joinable());
 
     // wait for detached thread to finish
-    m.lock();
-    if (!ran.load())
-        cv.wait_for(m, std::chrono::milliseconds(500));
-    m.unlock();
-    EXPECT_TRUE(ran.load());
+    st->m.lock();
+    while (!st->ran) {
+        if (st->cv.wait_for(st->m, std::chrono::milliseconds(500)) == fast_task::cv_status::timeout)
+            break;
+    }
+    bool did_run = st->ran;
+    st->m.unlock();
+    EXPECT_TRUE(did_run);
 }
 
 TEST(Thread, GetId) {

@@ -50,8 +50,8 @@ target_link_libraries(fast_task_module
   PUBLIC
     fast_task
   PRIVATE
-    fast_task_flags
-    fast_task_dependencies
+    $<BUILD_INTERFACE:fast_task_flags>
+    $<BUILD_INTERFACE:fast_task_dependencies>
 )
 
 target_include_directories(fast_task_module

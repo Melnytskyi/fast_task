@@ -55,13 +55,14 @@ TEST_F(TaskMutexTest, TryLockFailsWhenHeld) {
 
 TEST_F(TaskMutexTest, Contention) {
     fast_task::mutex m;
-    std::atomic<int> counter{0};
+    int counter = 0;
     const int per_task = 500;
 
     auto worker = [&] {
         for (int i = 0; i < per_task; ++i) {
             m.lock();
-            ++counter;
+            int v = counter;
+            counter = v + 1;
             m.unlock();
         }
     };
@@ -75,7 +76,7 @@ TEST_F(TaskMutexTest, Contention) {
         fast_task::task::await_multiple(tasks2, true);
     });
 
-    EXPECT_EQ(counter.load(), per_task * 2);
+    EXPECT_EQ(counter, per_task * 2);
 }
 
 TEST_F(TaskMutexTest, TryLockForTimeout) {

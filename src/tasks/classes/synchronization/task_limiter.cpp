@@ -14,26 +14,6 @@ namespace fast_task {
     constexpr size_t LIM_HAS_WAITER = native_thread_data;
 
     namespace {
-        struct lim_enter_lock_ctx {
-            bool active = false;
-            bool called = false;
-            bool acquired = false;
-        };
-
-        thread_local lim_enter_lock_ctx g_lim_enter_lock_ctx;
-
-        struct lim_enter_lock_scope {
-            lim_enter_lock_ctx& ctx;
-
-            lim_enter_lock_scope(lim_enter_lock_ctx& c) noexcept : ctx(c) {
-                ctx = {true, false, false};
-            }
-
-            ~lim_enter_lock_scope() noexcept {
-                ctx.active = false;
-            }
-        };
-
         void limiter_release_waiter_bit(void* address, size_t, bool has_remaining) {
             auto& state = *reinterpret_cast<std::atomic_size_t*>(address);
             if (has_remaining)
@@ -240,117 +220,63 @@ namespace fast_task {
 
     bool limiter::enter_wait(const task& task, enter_state& state) {
         interrupt_unsafe_region region;
-        auto lock_cb = [](void* addr, const fast_task::task& t, futex::node_data) {
+        auto lock_cb = [](void* addr, const fast_task::task& t, futex::node_data) -> bool {
             auto& st = *reinterpret_cast<std::atomic_size_t*>(addr);
             size_t cur = st.load(std::memory_order_relaxed);
-            bool try_only = g_lim_enter_lock_ctx.active;
-            if (try_only)
-                g_lim_enter_lock_ctx.called = true;
-            while (true) {
-                if ((cur & LIM_COUNT_MASK) > 0) {
-                    if (st.compare_exchange_weak(cur, cur - 1, std::memory_order_acquire, std::memory_order_relaxed)) {
-                        limiter::from_state_addr(addr)->check_deadlock(t.get_id());
-                        if (try_only)
-                            g_lim_enter_lock_ctx.acquired = true;
-                        return;
-                    }
-                    continue;
-                }
-                if (try_only) {
-                    g_lim_enter_lock_ctx.acquired = false;
-                    return;
-                }
-                std::this_thread::yield();
-                cur = st.load(std::memory_order_relaxed);
-            }
-        };
-
-        while (true) {
-            size_t expected = values.state.load(std::memory_order_relaxed);
-            while ((expected & LIM_COUNT_MASK) > 0) {
-                if (values.state.compare_exchange_weak(expected, expected - 1, std::memory_order_acquire, std::memory_order_relaxed)) {
-                    check_deadlock(task.get_id());
+            while ((cur & LIM_COUNT_MASK) > 0) {
+                if (st.compare_exchange_weak(cur, cur - 1, std::memory_order_acquire, std::memory_order_relaxed)) {
+                    limiter::from_state_addr(addr)->check_deadlock(t.get_id());
                     return true;
                 }
             }
-            bool immediate = false;
-            bool called = false;
-            bool acquired = false;
-            {
-                lim_enter_lock_scope scope(g_lim_enter_lock_ctx);
-                immediate = futex::enter_wait_on_address_lock(
-                    task,
-                    &values.state,
-                    &lim_enter_check_callback,
-                    lock_cb,
-                    state
-                );
-                called = g_lim_enter_lock_ctx.called;
-                acquired = g_lim_enter_lock_ctx.acquired;
-            }
-            if (!immediate)
-                return false;
-            if (!called || acquired)
+            return false;
+        };
+
+        size_t expected = values.state.load(std::memory_order_relaxed);
+        while ((expected & LIM_COUNT_MASK) > 0) {
+            if (values.state.compare_exchange_weak(expected, expected - 1, std::memory_order_acquire, std::memory_order_relaxed)) {
+                check_deadlock(task.get_id());
                 return true;
+            }
         }
+        return futex::enter_wait_on_address_lock(
+            task,
+            &values.state,
+            &lim_enter_check_callback,
+            lock_cb,
+            state
+        );
     }
 
     bool limiter::enter_wait_until(const task& task, enter_state& state, fast_task::time_point time_point) {
         interrupt_unsafe_region region;
         get_data(task).set_time_end(false);
-        auto lock_cb = [](void* addr, const fast_task::task& t, futex::node_data) {
+        auto lock_cb = [](void* addr, const fast_task::task& t, futex::node_data) -> bool {
             auto& st = *reinterpret_cast<std::atomic_size_t*>(addr);
             size_t cur = st.load(std::memory_order_relaxed);
-            bool try_only = g_lim_enter_lock_ctx.active;
-            if (try_only)
-                g_lim_enter_lock_ctx.called = true;
-            while (true) {
-                if ((cur & LIM_COUNT_MASK) > 0) {
-                    if (st.compare_exchange_weak(cur, cur - 1, std::memory_order_acquire, std::memory_order_relaxed)) {
-                        limiter::from_state_addr(addr)->check_deadlock(t.get_id());
-                        if (try_only)
-                            g_lim_enter_lock_ctx.acquired = true;
-                        return;
-                    }
-                    continue;
-                }
-                if (try_only) {
-                    g_lim_enter_lock_ctx.acquired = false;
-                    return;
-                }
-                std::this_thread::yield();
-                cur = st.load(std::memory_order_relaxed);
-            }
-        };
-
-        while (true) {
-            size_t expected = values.state.load(std::memory_order_relaxed);
-            while ((expected & LIM_COUNT_MASK) > 0) {
-                if (values.state.compare_exchange_weak(expected, expected - 1, std::memory_order_acquire, std::memory_order_relaxed)) {
-                    check_deadlock(task.get_id());
+            while ((cur & LIM_COUNT_MASK) > 0) {
+                if (st.compare_exchange_weak(cur, cur - 1, std::memory_order_acquire, std::memory_order_relaxed)) {
+                    limiter::from_state_addr(addr)->check_deadlock(t.get_id());
                     return true;
                 }
             }
-            bool immediate = false;
-            bool called = false;
-            bool acquired = false;
-            {
-                lim_enter_lock_scope scope(g_lim_enter_lock_ctx);
-                immediate = futex::enter_wait_on_address_lock_until(
-                    task,
-                    &values.state,
-                    &lim_enter_check_callback,
-                    lock_cb,
-                    state,
-                    time_point
-                );
-                called = g_lim_enter_lock_ctx.called;
-                acquired = g_lim_enter_lock_ctx.acquired;
-            }
-            if (!immediate)
-                return false;
-            if (!called || acquired)
+            return false;
+        };
+
+        size_t expected = values.state.load(std::memory_order_relaxed);
+        while ((expected & LIM_COUNT_MASK) > 0) {
+            if (values.state.compare_exchange_weak(expected, expected - 1, std::memory_order_acquire, std::memory_order_relaxed)) {
+                check_deadlock(task.get_id());
                 return true;
+            }
         }
+        return futex::enter_wait_on_address_lock_until(
+            task,
+            &values.state,
+            &lim_enter_check_callback,
+            lock_cb,
+            state,
+            time_point
+        );
     }
 }

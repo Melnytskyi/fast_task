@@ -22,10 +22,19 @@ namespace fast_task::coroutine {
         }
         std::vector<fast_task::task_coro<void>> coros;
         for (auto& item : container) {
-            auto cor = [](auto item, auto fn) -> fast_task::task_coro<void> {
-                fn(item);
-                co_return;
-            }(std::move(item), fn);
+            auto cor = [&]() {
+                if constexpr (std::is_lvalue_reference_v<T>) {
+                    return [](auto item, auto fn) -> fast_task::task_coro<void> {
+                        fn(item);
+                        co_return;
+                    }(item, fn);
+                } else {
+                    return [](auto item, auto fn) -> fast_task::task_coro<void> {
+                        fn(item);
+                        co_return;
+                    }(std::move(item), fn);
+                }
+            }();
             queue.add(cor.get_task());
             coros.emplace_back(std::move(cor));
         }
@@ -65,10 +74,19 @@ namespace fast_task::coroutine {
         }
         std::vector<fast_task::task_coro<void>> coros;
         for (auto& item : container) {
-            auto cor = [](auto item, auto fn) -> fast_task::task_coro<void> {
-                fn(item);
-                co_return;
-            }(std::move(item), fn);
+            auto cor = [&]() {
+                if constexpr (std::is_lvalue_reference_v<T>) {
+                    return [](auto item, auto fn) -> fast_task::task_coro<void> {
+                        fn(item);
+                        co_return;
+                    }(item, fn);
+                } else {
+                    return [](auto item, auto fn) -> fast_task::task_coro<void> {
+                        fn(item);
+                        co_return;
+                    }(std::move(item), fn);
+                }
+            }();
 
             fast_task::scheduler::start(cor.get_task());
             coros.emplace_back(std::move(cor));

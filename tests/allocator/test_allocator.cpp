@@ -146,13 +146,18 @@ TEST(BlockAllocator, WatermarkBulkReturn) {
     for (auto* p : blocks)
         task_alloc::deallocate(p);
 
+    std::vector<task_object*> reused;
+    reused.reserve(129);
     for (int i = 0; i < 129; ++i) {
         task_object* p = task_alloc::allocate();
         ASSERT_NE(p, nullptr);
+        reused.push_back(p);
     }
     task_object* p = task_alloc::allocate();
     ASSERT_NE(p, nullptr);
     task_alloc::deallocate(p);
+    for (auto* ptr : reused)
+        task_alloc::deallocate(ptr);
 }
 
 TEST(BlockAllocator, GeometricGrowth) {

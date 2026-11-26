@@ -48,6 +48,21 @@ jobs:
             config: Clang-Release
             build_type: Release
             cmake_args: "-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++"
+          - os: ubuntu-latest
+            arch: x64
+            config: Clang-ASan-UBSan
+            build_type: Debug
+            cmake_args: "-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_CXX_FLAGS=-fsanitize=address,undefined\\ -fno-omit-frame-pointer -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address,undefined"
+          - os: ubuntu-latest
+            arch: x64
+            config: Clang-TSan
+            build_type: Debug
+            cmake_args: "-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_CXX_FLAGS=-fsanitize=thread\\ -fno-omit-frame-pointer -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=thread"
+          - os: ubuntu-latest
+            arch: x64
+            config: Module
+            build_type: Release
+            cmake_args: "-DFAST_TASK_BUILD_MODULE=ON"
           - os: ubuntu-24.04-arm
             arch: arm64
             config: Debug
@@ -87,7 +102,7 @@ jobs:
         run: cmake --build build --parallel
 
       - name: Test
-        run: ctest --test-dir build --timeout 14 --output-on-failure
+        run: ctest --test-dir build --timeout 60 --output-on-failure
 
   windows:
     name: Windows (${{ matrix.arch }} / ${{ matrix.config }})

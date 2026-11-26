@@ -13,13 +13,16 @@ if(FAST_TASK_STATIC)
 else()
   add_library(fast_task SHARED ${SRCFILES})
 endif()
+add_library(fast_task::fast_task ALIAS fast_task)
+target_compile_features(fast_task PUBLIC cxx_std_20)
 set_target_properties(fast_task
   PROPERTIES
   CXX_STANDARD 20
   CXX_EXTENSIONS OFF
 )
 if(NOT (MSVC AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang"))
-  set_property(TARGET fast_task PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
+  set_property(TARGET fast_task PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
+  set_property(TARGET fast_task PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO TRUE)
 endif()
 
 generate_export_header(

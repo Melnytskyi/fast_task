@@ -40,11 +40,15 @@ namespace fast_task {
             uint16_t awake_check = 0;
             std::atomic_uint32_t native_wake;
             task waiter;
-            void* next_wait_addr;
+
+            union {
+                void* next_wait_addr;
+                bool (*check_callback)(void*);
+            };
 
             union {
                 bool (*next_wait_addr_check_callback)(void*, bool mark_request);
-                void (*lock_callback)(void*, const task& task_obj, futex::node_data);
+                bool (*lock_callback)(void*, const task& task_obj, futex::node_data);
             };
         };
 

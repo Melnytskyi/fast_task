@@ -21,7 +21,7 @@ TEST_F(CancelableFutureTest, CancelStopsTask) {
     auto f = fast_task::future<int>::start([&] -> int {
         started = true;
         try {
-            fast_task::this_task::sleep_for(std::chrono::microseconds(200));
+            fast_task::this_task::sleep_for(std::chrono::seconds(5));
         } catch (const fast_task::task_cancellation&) {
             throw;
         }
@@ -62,7 +62,7 @@ TEST_F(CancelableFutureTest, VoidCancelStopsTask) {
     auto f = fast_task::future<void>::start([&] {
         started = true;
         try {
-            fast_task::this_task::sleep_for(std::chrono::microseconds(200));
+            fast_task::this_task::sleep_for(std::chrono::seconds(5));
         } catch (const fast_task::task_cancellation&) {
             throw;
         }

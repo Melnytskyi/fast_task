@@ -390,27 +390,53 @@ namespace fast_task::futex {
 
     void wake_item_and_lock(wait_node_t* item) {
         if (item->waiter) {
-            task waiter = std::move(item->waiter);
-            auto& wd = get_data(waiter);
-            bool should_transfer = false;
-            {
-                fast_task::lock_guard guard(wd);
-                if (item->needs_awake_check) {
-                    if (wd.awake_check == item->awake_check && !wd.get_time_end()) {
-                        item->lock_callback(item->wait_address, waiter, {item->node_data});
-                        wd.set_awaked(true);
-                        should_transfer = true;
+            while (true) {
+                task waiter = std::move(item->waiter);
+                auto& wd = get_data(waiter);
+                bool should_transfer = false;
+                bool expired = false;
+                {
+                    fast_task::lock_guard guard(wd);
+                    if (item->needs_awake_check) {
+                        if (wd.awake_check == item->awake_check && !wd.get_time_end()) {
+                            if (item->lock_callback(item->wait_address, waiter, {item->node_data})) {
+                                wd.set_awaked(true);
+                                should_transfer = true;
+                            }
+                        } else {
+                            expired = true;
+                        }
+                    } else {
+                        if (item->lock_callback(item->wait_address, waiter, {item->node_data})) {
+                            should_transfer = true;
+                        }
                     }
-                } else {
-                    item->lock_callback(item->wait_address, waiter, {item->node_data});
-                    should_transfer = true;
+                }
+                if (should_transfer || expired) {
+                    item->native_wake.store(1, std::memory_order_release);
+                    if (should_transfer)
+                        transfer_task(std::move(waiter), reinterpret_cast<enter_state*>(item));
+                    return;
+                }
+                item->waiter = std::move(waiter);
+                bucket_t& bucket = glob.futex_global.get_bucket(item->wait_address);
+                std::unique_lock guard(bucket.lock);
+                if (!item->check_callback || !item->check_callback(item->wait_address)) {
+                    make_wait(bucket, item);
+                    item->native_wake.store(2, std::memory_order_release);
+                    return;
                 }
             }
-            item->native_wake.store(1, std::memory_order_release);
-            if (should_transfer)
-                transfer_task(std::move(waiter), reinterpret_cast<enter_state*>(item));
         } else {
-            item->lock_callback(item->wait_address, item->waiter, {item->node_data});
+            while (!item->lock_callback(item->wait_address, item->waiter, {item->node_data})) {
+                bucket_t& bucket = glob.futex_global.get_bucket(item->wait_address);
+                std::unique_lock guard(bucket.lock);
+                if (!item->check_callback || !item->check_callback(item->wait_address)) {
+                    make_wait(bucket, item);
+                    item->native_wake.store(2, std::memory_order_release);
+                    return;
+                }
+            }
             auto* wake_addr = &item->native_wake;
             wake_addr->store(1, std::memory_order_release);
             native_futex_wake(wake_addr, 1);
@@ -942,20 +968,21 @@ namespace fast_task::futex {
         const task& task_obj,
         void* address,
         bool (*check_callback)(void*),
-        void (*lock_callback)(void*, const task& task_obj, node_data),
+        bool (*lock_callback)(void*, const task& task_obj, node_data),
         enter_state& state,
         node_data data
     ) {
         bucket_t& bucket = glob.futex_global.get_bucket(address);
         std::unique_lock guard(bucket.lock);
 
-        if (check_callback(address)) {
-            lock_callback(address, task_obj, data);
-            return true;
+        while (check_callback(address)) {
+            if (lock_callback(address, task_obj, data))
+                return true;
         }
 
         wait_node_t* me = state.template use<wait_node_t>();
         me->wait_address = address;
+        me->check_callback = check_callback;
         me->lock_callback = lock_callback;
         me->waiter = task_obj;
         me->type = node_type::enter_wait_and_lock;
@@ -969,7 +996,7 @@ namespace fast_task::futex {
         const task& task_obj,
         void* address,
         bool (*check_callback)(void*),
-        void (*lock_callback)(void*, const task& task_obj, node_data),
+        bool (*lock_callback)(void*, const task& task_obj, node_data),
         enter_state& state,
         fast_task::time_point time_point,
         node_data data
@@ -977,9 +1004,9 @@ namespace fast_task::futex {
         bucket_t& bucket = glob.futex_global.get_bucket(address);
         std::unique_lock guard(bucket.lock);
 
-        if (check_callback(address)) {
-            lock_callback(address, task_obj, data);
-            return true;
+        while (check_callback(address)) {
+            if (lock_callback(address, task_obj, data))
+                return true;
         }
 
         if (fast_task::is_no_deadline(time_point) || fast_task::clock::now() >= time_point) {
@@ -989,6 +1016,7 @@ namespace fast_task::futex {
 
         wait_node_t* me = state.template use<self_remove>();
         me->wait_address = address;
+        me->check_callback = check_callback;
         me->lock_callback = lock_callback;
         me->waiter = task_obj;
         me->needs_awake_check = true;

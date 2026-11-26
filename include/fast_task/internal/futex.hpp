@@ -126,7 +126,7 @@ namespace fast_task::futex {
         const task& task_obj,
         void* address,
         bool (*check_callback)(void* address),
-        void (*lock_callback)(void* address, const task& task_obj, node_data),
+        bool (*lock_callback)(void* address, const task& task_obj, node_data),
         enter_state& state,
         node_data key = {0}
     );
@@ -134,7 +134,7 @@ namespace fast_task::futex {
         const task& task_obj,
         void* address,
         bool (*check_callback)(void* address),
-        void (*lock_callback)(void* address, const task& task_obj, node_data),
+        bool (*lock_callback)(void* address, const task& task_obj, node_data),
         enter_state& state,
         fast_task::time_point time_point,
         node_data key = {0}

@@ -23,6 +23,10 @@ namespace fast_task {
     public:
         queue(size_t at_execution_max = 1);
         ~queue();
+        queue(const queue&) = delete;
+        queue& operator=(const queue&) = delete;
+        queue(queue&&) = delete;
+        queue& operator=(queue&&) = delete;
         void add(task&);
         void add(task&&);
         void enable();
