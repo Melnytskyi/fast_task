@@ -24,8 +24,20 @@
     #else
         #include <signal.h>
         #include <sys/syscall.h>
+        #include <tasks/util/cpu.hpp>
         #include <time.h>
+        #include <ucontext.h>
         #include <unistd.h>
+    #endif
+
+    #if defined(__GNUC__) && !defined(__clang__)
+        #define FT_TLS_NOINLINE __attribute__((noinline, noipa))
+    #elif defined(__clang__)
+        #define FT_TLS_NOINLINE __attribute__((noinline))
+    #elif defined(_MSC_VER)
+        #define FT_TLS_NOINLINE __declspec(noinline)
+    #else
+        #define FT_TLS_NOINLINE
     #endif
 
 namespace fast_task::interrupt {
@@ -44,6 +56,7 @@ namespace fast_task::interrupt {
     #else
         timer_t timerid{};
         bool timer_created = false;
+        std::atomic<bool> in_trampoline{false};
     #endif
 
         timer_handle();
@@ -62,6 +75,14 @@ namespace fast_task::interrupt {
     };
 
     thread_local timer_handle timer;
+
+    FT_TLS_NOINLINE timer_handle& get_timer() noexcept {
+        timer_handle* ptr = &timer;
+    #if defined(__GNUC__) || defined(__clang__)
+        asm volatile("" : "+r"(ptr));
+    #endif
+        return *ptr;
+    }
 }
 
 namespace fast_task {
@@ -73,16 +94,16 @@ namespace fast_task {
         unlock();
     }
 
-    size_t interrupt_unsafe_region::lock_swap(size_t other) {
-        return interrupt::timer.guard_zones.exchange(other);
+    FT_TLS_NOINLINE size_t interrupt_unsafe_region::lock_swap(size_t other) {
+        return interrupt::get_timer().guard_zones.exchange(other, std::memory_order_acq_rel);
     }
 
-    void interrupt_unsafe_region::lock() {
-        interrupt::timer.guard_zones++;
+    FT_TLS_NOINLINE void interrupt_unsafe_region::lock() {
+        interrupt::get_timer().guard_zones.fetch_add(1, std::memory_order_acq_rel);
     }
 
-    void interrupt_unsafe_region::unlock() {
-        interrupt::timer.guard_zones--;
+    FT_TLS_NOINLINE void interrupt_unsafe_region::unlock() {
+        interrupt::get_timer().guard_zones.fetch_sub(1, std::memory_order_acq_rel);
     }
 }
 
@@ -98,7 +119,7 @@ namespace fast_task::interrupt {
         bool processor_started = false;
         std::atomic<bool> shutdown{false};
 
-        ~handle() {
+        void stop_processor() noexcept {
             AcquireSRWLockExclusive(&timer_signal_mutex);
             shutdown.store(true, std::memory_order_release);
             WakeAllConditionVariable(&timer_signal);
@@ -110,13 +131,31 @@ namespace fast_task::interrupt {
                 CloseHandle(th);
             }
         }
+
+        ~handle() {
+            AcquireSRWLockExclusive(&timer_signal_mutex);
+            shutdown.store(true, std::memory_order_release);
+            WakeAllConditionVariable(&timer_signal);
+            HANDLE th = processor_thread;
+            processor_thread = nullptr;
+            ReleaseSRWLockExclusive(&timer_signal_mutex);
+            if (th != nullptr) {
+                CloseHandle(th);
+            }
+        }
     };
 
-    std::shared_ptr<handle> global = std::make_shared<handle>();
+    struct global_handle_holder {
+        std::shared_ptr<handle> ptr = std::make_shared<handle>();
 
-    // Lazily attach to global in setitimer() so threads that only enter
-    // interrupt_unsafe_region (including processor_thread) do not create a
-    // shared_ptr<handle> reference cycle.
+        ~global_handle_holder() {
+            if (ptr)
+                ptr->stop_processor();
+        }
+    };
+
+    global_handle_holder global_holder;
+
     timer_handle::timer_handle() = default;
 
     unsigned __stdcall interrupt_processor_main(void* raw) {
@@ -206,7 +245,7 @@ namespace fast_task::interrupt {
             return false;
 
         if (!timer.handle)
-            timer.handle = global;
+            timer.handle = global_holder.ptr;
         if (!timer.handle || timer.handle->shutdown.load(std::memory_order_acquire))
             return false;
 
@@ -261,6 +300,25 @@ namespace fast_task::interrupt {
 }
 
     #else
+    #if defined(__linux__) && defined(__x86_64__)
+extern "C" {
+    void ft_linux_preempt_trampoline_sse();
+    void ft_linux_preempt_trampoline_avx();
+    void ft_linux_preempt_trampoline_avx512();
+
+    __attribute__((used, noinline)) void ft_linux_preempt_entry() {
+        auto& t = fast_task::interrupt::get_timer();
+        t.in_trampoline.store(false, std::memory_order_relaxed);
+        auto cb = t.interrupt;
+        if (cb != nullptr &&
+            t.enabled_timers.load(std::memory_order_acquire) != 0 &&
+            t.guard_zones.load(std::memory_order_acquire) == 0) {
+            cb();
+        }
+    }
+}
+    #endif
+
 namespace fast_task::interrupt {
     void uninstall_timer_handle_local() {
         fast_task::interrupt::stop_timer();
@@ -270,16 +328,67 @@ namespace fast_task::interrupt {
 
     timer_handle::timer_handle() = default;
 
-    void posix_signal_handler([[maybe_unused]] int signum) {
-        if (timer.interrupt != nullptr && timer.guard_zones.load(std::memory_order_relaxed) == 0)
-            timer.interrupt();
+    #if defined(__linux__) && defined(__x86_64__)
+    static void (*select_linux_preempt_trampoline())() {
+        if (psnip_cpu_feature_check(PSNIP_CPU_FEATURE_X86_AVX512F))
+            return ft_linux_preempt_trampoline_avx512;
+        if (psnip_cpu_feature_check(PSNIP_CPU_FEATURE_X86_AVX))
+            return ft_linux_preempt_trampoline_avx;
+        return ft_linux_preempt_trampoline_sse;
+    }
+
+    static void (*linux_preempt_trampoline_ptr)() = select_linux_preempt_trampoline();
+    #endif
+
+    void posix_signal_handler([[maybe_unused]] int signum, [[maybe_unused]] siginfo_t* info, void* uctx_raw) {
+        auto& t = get_timer();
+        if (t.interrupt == nullptr || t.enabled_timers.load(std::memory_order_relaxed) == 0)
+            return;
+        if (t.in_trampoline.load(std::memory_order_relaxed))
+            return;
+        if (t.guard_zones.load(std::memory_order_relaxed) != 0)
+            return;
+
+    #if defined(__linux__) && defined(__x86_64__)
+        auto* loc = fast_task::get_loc();
+        if (!loc || !loc->is_task_thread || loc->context_in_swap || !loc->curr_task)
+            return;
+        auto& task_obj = fast_task::get_data(loc->curr_task);
+        if (task_obj.get_is_on_scheduler())
+            return;
+        auto* ex = task_obj.exdata.load(std::memory_order_relaxed);
+        if (!ex || !ex->stack_ptr || ex->stack_size == 0)
+            return;
+
+        auto* uc = static_cast<ucontext_t*>(uctx_raw);
+        if (!uc)
+            return;
+
+        const uintptr_t orig_rsp = static_cast<uintptr_t>(uc->uc_mcontext.gregs[REG_RSP]);
+        const uintptr_t orig_rip = static_cast<uintptr_t>(uc->uc_mcontext.gregs[REG_RIP]);
+        const uintptr_t stack_low = reinterpret_cast<uintptr_t>(ex->stack_ptr);
+        const uintptr_t stack_high = stack_low + ex->stack_size;
+
+        constexpr uintptr_t min_headroom = 8192;
+        if (orig_rsp <= stack_low + min_headroom || orig_rsp > stack_high)
+            return;
+
+        const uintptr_t new_rsp = orig_rsp - 128 - sizeof(uintptr_t);
+        *reinterpret_cast<uintptr_t*>(new_rsp) = orig_rip;
+
+        t.in_trampoline.store(true, std::memory_order_relaxed);
+        uc->uc_mcontext.gregs[REG_RSP] = static_cast<greg_t>(new_rsp);
+        uc->uc_mcontext.gregs[REG_RIP] = reinterpret_cast<greg_t>(linux_preempt_trampoline_ptr);
+    #else
+        (void)uctx_raw;
+    #endif
     }
 
     void setup_signal_handler() {
         struct sigaction sa;
         std::memset(&sa, 0, sizeof(sa));
-        sa.sa_handler = posix_signal_handler;
-        sa.sa_flags = SA_RESTART | SA_NODEFER;
+        sa.sa_sigaction = posix_signal_handler;
+        sa.sa_flags = SA_SIGINFO | SA_RESTART;
         sigemptyset(&sa.sa_mask);
         sigaction(PREEMPTION_SIGNAL, &sa, NULL);
     }
@@ -310,8 +419,7 @@ namespace fast_task::interrupt {
             sev.sigev_notify = SIGEV_THREAD_ID;
             sev.sigev_signo = PREEMPTION_SIGNAL;
             sev._sigev_un._tid = syscall(SYS_gettid);
-            // CLOCK_MONOTONIC: the preemption quantum must not change length
-            // when the wall clock is stepped.
+
             if (timer_create(CLOCK_MONOTONIC, &sev, &timer.timerid) == -1)
                 return false;
             timer.timer_created = true;
@@ -322,15 +430,28 @@ namespace fast_task::interrupt {
         its.it_value.tv_nsec = new_value->it_value.tv_usec * 1000;
         its.it_interval.tv_sec = new_value->it_interval.tv_sec;
         its.it_interval.tv_nsec = new_value->it_interval.tv_usec * 1000;
-        return timer_settime(timer.timerid, 0, &its, NULL) != -1;
+
+        if (its.it_interval.tv_sec == 0 && its.it_interval.tv_nsec == 0 &&
+            (its.it_value.tv_sec != 0 || its.it_value.tv_nsec != 0)) {
+            its.it_interval.tv_nsec = 1'000'000;
+        }
+        auto& t = get_timer();
+        t.enabled_timers.store(1, std::memory_order_release);
+        if (timer_settime(t.timerid, 0, &its, NULL) == -1) {
+            t.enabled_timers.store(0, std::memory_order_release);
+            return false;
+        }
+        return true;
     }
 
     void stop_timer() {
         interrupt_unsafe_region guard;
-        if (timer.timer_created) {
+        auto& t = get_timer();
+        t.enabled_timers.store(0, std::memory_order_release);
+        if (t.timer_created) {
             struct itimerspec its;
             std::memset(&its, 0, sizeof(its));
-            timer_settime(timer.timerid, 0, &its, NULL);
+            timer_settime(t.timerid, 0, &its, NULL);
         }
     }
 }

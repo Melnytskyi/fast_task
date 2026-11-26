@@ -184,6 +184,30 @@
             "cacheVariables": {
                 "FAST_TASK_BUILD_TESTS": "ON"
             }
+        },
+        {
+            "name": "Win-Test-Preempt",
+            "displayName": "Win-Test-Preempt",
+            "inherits": [
+                "Win-Basic",
+                "RelWithDebInfo"
+            ],
+            "cacheVariables": {
+                "FAST_TASK_BUILD_TESTS": "ON",
+                "FAST_TASK_ENABLE_PREEMPTIVE_SCHEDULER": "ON"
+            }
+        },
+        {
+            "name": "Linux-Test-Preempt",
+            "displayName": "Linux-Test-Preempt",
+            "inherits": [
+                "Linux-Basic",
+                "Release"
+            ],
+            "cacheVariables": {
+                "FAST_TASK_BUILD_TESTS": "ON",
+                "FAST_TASK_ENABLE_PREEMPTIVE_SCHEDULER": "ON"
+            }
         }
     ],
     "testPresets": [

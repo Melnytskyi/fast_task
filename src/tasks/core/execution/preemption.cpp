@@ -17,10 +17,13 @@ namespace fast_task {
         assert(loc && "timer_reinit requires a worker context");
         if (loc->policy == scheduler::preemption_policy::cooperative_only)
             return;
-        auto& exec = get_execution_data(loc->curr_task);
-        if (exec.priority == task_priority::semi_realtime)
+        auto& task_obj = get_data(loc->curr_task);
+        const task_priority prio = task_obj.get_priority();
+        if (prio == task_priority::semi_realtime)
             return;
-        std::chrono::nanoseconds interval = next_quantum(exec.priority, exec.current_available_quantum);
+        auto& exec = get_execution_data(&task_obj);
+        exec.priority = prio;
+        std::chrono::nanoseconds interval = next_quantum(prio, exec.current_available_quantum);
         if (interval <= std::chrono::nanoseconds::zero())
             return;
         interrupt::itimerval timer;
@@ -28,6 +31,8 @@ namespace fast_task {
         timer.it_interval.tv_usec = 0;
         timer.it_value.tv_sec = static_cast<decltype(timer.it_value.tv_sec)>(interval.count() / 1000000000);
         timer.it_value.tv_usec = static_cast<decltype(timer.it_value.tv_usec)>((interval.count() % 1000000000) / 1000);
+        if (timer.it_value.tv_sec == 0 && timer.it_value.tv_usec == 0)
+            timer.it_value.tv_usec = 1;
         interrupt::setitimer(&timer, nullptr);
     }
 

@@ -85,6 +85,7 @@ namespace fast_task::scheduler {
 
         target.threads.attach(is_spawned, count_live);
         set_loc(&local);
+        set_interruptTask();
     }
 
     void worker_context_impl::leave(bool count_live, bool count_active) noexcept {
