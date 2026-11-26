@@ -456,11 +456,17 @@ namespace fast_task::interrupt {
         #elif defined(__aarch64__)
         const uintptr_t orig_sp = static_cast<uintptr_t>(uc->uc_mcontext.sp);
 
-        constexpr uintptr_t min_headroom = 16384;
-        if (orig_sp <= stack_low + min_headroom || orig_sp > stack_high)
+        volatile uintptr_t handler_sp_anchor = 0;
+        const uintptr_t handler_sp = reinterpret_cast<uintptr_t>(&handler_sp_anchor);
+        const uintptr_t safe_top = (handler_sp < orig_sp) ? handler_sp : orig_sp;
+        const uintptr_t new_sp = (safe_top - 1024 - sizeof(ucontext_t)) & ~uintptr_t(15);
+
+        constexpr uintptr_t min_headroom = 8192;
+        if (orig_sp <= stack_low || orig_sp > stack_high ||
+            safe_top <= stack_low + 1024 + sizeof(ucontext_t) + min_headroom ||
+            new_sp <= stack_low + min_headroom || new_sp >= safe_top)
             return;
 
-        const uintptr_t new_sp = (orig_sp - sizeof(ucontext_t) - 64) & ~uintptr_t(15);
         auto* saved_uc = reinterpret_cast<ucontext_t*>(new_sp);
         std::memcpy(saved_uc, uc, sizeof(ucontext_t));
 

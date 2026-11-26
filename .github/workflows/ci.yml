@@ -65,7 +65,7 @@ jobs:
             cmake_args: "-DFAST_TASK_ENABLE_PREEMPTIVE_SCHEDULER=ON"
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install dependencies
         run: |
@@ -138,7 +138,7 @@ jobs:
             cmake_args: "-DFAST_TASK_ENABLE_PREEMPTIVE_SCHEDULER=ON"
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Configure CMake
         run: >
