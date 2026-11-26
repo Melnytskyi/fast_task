@@ -9,10 +9,10 @@ endif()
 if(FAST_TASK_INCLUDE_THREAD_INTERRUPT_CODE OR FAST_TASK_ENABLE_PREEMPTIVE_SCHEDULER)
     target_compile_definitions(fast_task_flags INTERFACE FT_INCLUDE_THREAD_INTERRUPT_CODE)
     if(WIN32)
-        if(NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$")
+        if(NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64|ARM64|arm64|aarch64)$")
             message(FATAL_ERROR 
                 "fast_task: Thread interrupt and preemptive scheduling are currently only implemented "
-                "in assembly for x86_64 in windows. Your target processor is: ${CMAKE_SYSTEM_PROCESSOR}. "
+                "for x86_64 and ARM64 on Windows. Your target processor is: ${CMAKE_SYSTEM_PROCESSOR}. "
                 "Please disable these features to compile on this architecture."
             )
         endif()

@@ -7,11 +7,13 @@
 #include <fast_task/native/thread.hpp>
 #include <tasks/util/interrupt.hpp>
 #include <cerrno>
+#include <exception>
 
 #if _WIN32
     #include <tasks/util/cpu.hpp>
 
     #ifdef FT_INCLUDE_THREAD_INTERRUPT_CODE
+        #if defined(_M_X64) || defined(__x86_64__)
 extern "C" void thread_interrupter_asm_zmm();
 extern "C" void thread_interrupter_asm_ymm();
 extern "C" void thread_interrupter_asm_xmm();
@@ -26,6 +28,7 @@ void (*thread_interrupter_asm_ptr)() = []() {
         return thread_interrupter_asm_xmm;
     return thread_interrupter_asm;
 }();
+        #endif
     #endif
 
     #ifndef NOMINMAX
@@ -188,8 +191,43 @@ namespace fast_task::native {
         return true;
     }
 
+    #if defined(FT_INCLUDE_THREAD_INTERRUPT_CODE) && (defined(_M_ARM64) || defined(__aarch64__))
+    namespace {
+        using nt_continue_fn = LONG(NTAPI*)(PCONTEXT, BOOLEAN);
+
+        nt_continue_fn resolve_nt_continue() noexcept {
+            static const nt_continue_fn fn = []() -> nt_continue_fn {
+                HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+                if (!ntdll)
+                    return nullptr;
+                return reinterpret_cast<nt_continue_fn>(GetProcAddress(ntdll, "NtContinue"));
+            }();
+            return fn;
+        }
+
+        struct alignas(16) win_arm64_preempt_frame {
+            CONTEXT saved_ctx;
+            void (*inserted_context)(void*);
+            void* arg;
+        };
+
+        [[noreturn]] void ft_win_arm64_preempt_trampoline(win_arm64_preempt_frame* frame) {
+            if (frame->inserted_context)
+                frame->inserted_context(frame->arg);
+            // A context switch inside inserted_context may migrate this task to
+            // a different OS thread; refresh X18 to the current thread's TEB
+            // before NtContinue restores the interrupted register state.
+            frame->saved_ctx.X18 = reinterpret_cast<DWORD64>(NtCurrentTeb());
+            auto nt_continue = resolve_nt_continue();
+            if (nt_continue)
+                nt_continue(&frame->saved_ctx, FALSE);
+            std::terminate();
+        }
+    }
+    #endif
+
     bool thread::insert_context(id id, void (*inserted_context)(void*), void* arg) {
-    #ifdef FT_INCLUDE_THREAD_INTERRUPT_CODE
+    #if defined(FT_INCLUDE_THREAD_INTERRUPT_CODE) && (defined(_M_X64) || defined(__x86_64__))
         interrupt_unsafe_region region;
         HANDLE_CLOSER thread_handle(OpenThread(THREAD_SUSPEND_RESUME | THREAD_QUERY_INFORMATION | THREAD_GET_CONTEXT | THREAD_SET_CONTEXT, false, id._id));
         if (SuspendThread(thread_handle.handle) == DWORD(-1))
@@ -214,6 +252,41 @@ namespace fast_task::native {
             //set rip to trampoline
             context.Rip = (DWORD64)thread_interrupter_asm_ptr;
             res = SetThreadContext(thread_handle.handle, &context);
+        } catch (...) {
+        }
+        ResumeThread(thread_handle.handle);
+        return res;
+    #elif defined(FT_INCLUDE_THREAD_INTERRUPT_CODE) && (defined(_M_ARM64) || defined(__aarch64__))
+        interrupt_unsafe_region region;
+        if (!resolve_nt_continue())
+            return false;
+        HANDLE_CLOSER thread_handle(OpenThread(THREAD_SUSPEND_RESUME | THREAD_QUERY_INFORMATION | THREAD_GET_CONTEXT | THREAD_SET_CONTEXT, false, id._id));
+        if (!thread_handle.handle || SuspendThread(thread_handle.handle) == DWORD(-1))
+            return false;
+
+        CONTEXT context{};
+        context.ContextFlags = CONTEXT_FULL;
+        if (GetThreadContext(thread_handle.handle, &context) == 0) {
+            ResumeThread(thread_handle.handle);
+            return false;
+        }
+        bool res = false;
+        try {
+            // Skip the 16-byte Windows ARM64 red zone and copy the captured
+            // CONTEXT onto the target thread's own stack (not the interrupter's).
+            const DWORD64 new_sp = (context.Sp - 16 - sizeof(win_arm64_preempt_frame)) & ~DWORD64(15);
+            auto* frame = reinterpret_cast<win_arm64_preempt_frame*>(new_sp);
+            frame->saved_ctx = context;
+            frame->inserted_context = inserted_context;
+            frame->arg = arg;
+
+            CONTEXT tramp_ctx = context;
+            tramp_ctx.ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER;
+            tramp_ctx.Sp = new_sp;
+            tramp_ctx.Pc = reinterpret_cast<DWORD64>(&ft_win_arm64_preempt_trampoline);
+            tramp_ctx.X0 = new_sp;
+            tramp_ctx.Lr = 0;
+            res = SetThreadContext(thread_handle.handle, &tramp_ctx) != 0;
         } catch (...) {
         }
         ResumeThread(thread_handle.handle);

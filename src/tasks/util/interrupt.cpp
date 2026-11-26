@@ -57,6 +57,9 @@ namespace fast_task::interrupt {
         timer_t timerid{};
         bool timer_created = false;
         std::atomic<bool> in_trampoline{false};
+        #if defined(__linux__) && defined(__aarch64__)
+        ucontext_t* restore_ucontext = nullptr;
+        #endif
     #endif
 
         timer_handle();
@@ -325,6 +328,9 @@ namespace fast_task::interrupt {
     }
 
         #define PREEMPTION_SIGNAL (SIGRTMIN + 5)
+        #if defined(__linux__) && defined(__aarch64__)
+            #define PREEMPTION_RESTORE_SIGNAL (SIGRTMIN + 6)
+        #endif
 
     timer_handle::timer_handle() = default;
 
@@ -338,6 +344,73 @@ namespace fast_task::interrupt {
     }
 
     static void (*linux_preempt_trampoline_ptr)() = select_linux_preempt_trampoline();
+    #elif defined(__linux__) && defined(__aarch64__)
+    namespace {
+        struct aarch64_ctx_header {
+            uint32_t magic;
+            uint32_t size;
+        };
+
+        constexpr uint32_t aarch64_fpsimd_magic = 0x46508001u;
+
+        const aarch64_ctx_header* find_aarch64_fpsimd(const mcontext_t& mc) noexcept {
+            const auto* base = reinterpret_cast<const uint8_t*>(mc.__reserved);
+            size_t offset = 0;
+            while (offset + sizeof(aarch64_ctx_header) <= sizeof(mc.__reserved)) {
+                const auto* hdr = reinterpret_cast<const aarch64_ctx_header*>(base + offset);
+                if (hdr->magic == 0 || hdr->size == 0)
+                    break;
+                if (offset + hdr->size > sizeof(mc.__reserved))
+                    break;
+                if (hdr->magic == aarch64_fpsimd_magic)
+                    return hdr;
+                offset += hdr->size;
+            }
+            return nullptr;
+        }
+
+        aarch64_ctx_header* find_aarch64_fpsimd_mut(mcontext_t& mc) noexcept {
+            return const_cast<aarch64_ctx_header*>(find_aarch64_fpsimd(mc));
+        }
+
+        void copy_aarch64_mcontext(mcontext_t& dst, const mcontext_t& src) noexcept {
+            std::memcpy(dst.regs, src.regs, sizeof(dst.regs));
+            dst.sp = src.sp;
+            dst.pc = src.pc;
+            dst.pstate = src.pstate;
+            const auto* src_fp = find_aarch64_fpsimd(src);
+            auto* dst_fp = find_aarch64_fpsimd_mut(dst);
+            if (src_fp && dst_fp && src_fp->size == dst_fp->size)
+                std::memcpy(dst_fp, src_fp, src_fp->size);
+        }
+
+        void posix_restore_signal_handler([[maybe_unused]] int signum, [[maybe_unused]] siginfo_t* info, void* uctx_raw) {
+            auto& t = get_timer();
+            ucontext_t* saved = t.restore_ucontext;
+            t.restore_ucontext = nullptr;
+            if (saved && uctx_raw) {
+                auto* dst = static_cast<ucontext_t*>(uctx_raw);
+                copy_aarch64_mcontext(dst->uc_mcontext, saved->uc_mcontext);
+            }
+            t.in_trampoline.store(false, std::memory_order_release);
+        }
+
+        [[noreturn]] void ft_linux_aarch64_preempt_entry(ucontext_t* saved_uc) {
+            auto& t = get_timer();
+            t.in_trampoline.store(false, std::memory_order_relaxed);
+            auto cb = t.interrupt;
+            if (cb != nullptr &&
+                t.enabled_timers.load(std::memory_order_acquire) != 0 &&
+                t.guard_zones.load(std::memory_order_acquire) == 0) {
+                cb();
+            }
+            auto& cur = get_timer();
+            cur.in_trampoline.store(true, std::memory_order_relaxed);
+            cur.restore_ucontext = saved_uc;
+            syscall(SYS_tgkill, getpid(), syscall(SYS_gettid), PREEMPTION_RESTORE_SIGNAL);
+            std::terminate();
+        }
+    }
     #endif
 
     void posix_signal_handler([[maybe_unused]] int signum, [[maybe_unused]] siginfo_t* info, void* uctx_raw) {
@@ -349,7 +422,7 @@ namespace fast_task::interrupt {
         if (t.guard_zones.load(std::memory_order_relaxed) != 0)
             return;
 
-    #if defined(__linux__) && defined(__x86_64__)
+    #if defined(__linux__) && (defined(__x86_64__) || defined(__aarch64__))
         auto* loc = fast_task::get_loc();
         if (!loc || !loc->is_task_thread || loc->context_in_swap || !loc->curr_task)
             return;
@@ -364,10 +437,11 @@ namespace fast_task::interrupt {
         if (!uc)
             return;
 
-        const uintptr_t orig_rsp = static_cast<uintptr_t>(uc->uc_mcontext.gregs[REG_RSP]);
-        const uintptr_t orig_rip = static_cast<uintptr_t>(uc->uc_mcontext.gregs[REG_RIP]);
         const uintptr_t stack_low = reinterpret_cast<uintptr_t>(ex->stack_ptr);
         const uintptr_t stack_high = stack_low + ex->stack_size;
+        #if defined(__x86_64__)
+        const uintptr_t orig_rsp = static_cast<uintptr_t>(uc->uc_mcontext.gregs[REG_RSP]);
+        const uintptr_t orig_rip = static_cast<uintptr_t>(uc->uc_mcontext.gregs[REG_RIP]);
 
         constexpr uintptr_t min_headroom = 8192;
         if (orig_rsp <= stack_low + min_headroom || orig_rsp > stack_high)
@@ -379,6 +453,23 @@ namespace fast_task::interrupt {
         t.in_trampoline.store(true, std::memory_order_relaxed);
         uc->uc_mcontext.gregs[REG_RSP] = static_cast<greg_t>(new_rsp);
         uc->uc_mcontext.gregs[REG_RIP] = reinterpret_cast<greg_t>(linux_preempt_trampoline_ptr);
+        #elif defined(__aarch64__)
+        const uintptr_t orig_sp = static_cast<uintptr_t>(uc->uc_mcontext.sp);
+
+        constexpr uintptr_t min_headroom = 16384;
+        if (orig_sp <= stack_low + min_headroom || orig_sp > stack_high)
+            return;
+
+        const uintptr_t new_sp = (orig_sp - sizeof(ucontext_t) - 64) & ~uintptr_t(15);
+        auto* saved_uc = reinterpret_cast<ucontext_t*>(new_sp);
+        std::memcpy(saved_uc, uc, sizeof(ucontext_t));
+
+        t.in_trampoline.store(true, std::memory_order_relaxed);
+        uc->uc_mcontext.sp = static_cast<uint64_t>(new_sp);
+        uc->uc_mcontext.regs[0] = static_cast<uint64_t>(new_sp);
+        uc->uc_mcontext.regs[30] = 0;
+        uc->uc_mcontext.pc = reinterpret_cast<uint64_t>(&ft_linux_aarch64_preempt_entry);
+        #endif
     #else
         (void)uctx_raw;
     #endif
@@ -391,6 +482,16 @@ namespace fast_task::interrupt {
         sa.sa_flags = SA_SIGINFO | SA_RESTART;
         sigemptyset(&sa.sa_mask);
         sigaction(PREEMPTION_SIGNAL, &sa, NULL);
+
+    #if defined(__linux__) && defined(__aarch64__)
+        struct sigaction sa_restore;
+        std::memset(&sa_restore, 0, sizeof(sa_restore));
+        sa_restore.sa_sigaction = posix_restore_signal_handler;
+        sa_restore.sa_flags = SA_SIGINFO | SA_RESTART;
+        sigemptyset(&sa_restore.sa_mask);
+        sigaddset(&sa_restore.sa_mask, PREEMPTION_SIGNAL);
+        sigaction(PREEMPTION_RESTORE_SIGNAL, &sa_restore, NULL);
+    #endif
     }
 
     auto signal_handler_setup_once = std::once_flag{};

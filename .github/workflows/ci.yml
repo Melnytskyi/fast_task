@@ -58,6 +58,11 @@ jobs:
             config: Release
             build_type: Release
             cmake_args: ""
+          - os: ubuntu-24.04-arm
+            arch: arm64
+            config: Preempt
+            build_type: Release
+            cmake_args: "-DFAST_TASK_ENABLE_PREEMPTIVE_SCHEDULER=ON"
 
     steps:
       - uses: actions/checkout@v4
@@ -126,6 +131,11 @@ jobs:
             config: Release
             build_type: Release
             cmake_args: ""
+          - os: windows-11-arm
+            arch: arm64
+            config: Preempt
+            build_type: Release
+            cmake_args: "-DFAST_TASK_ENABLE_PREEMPTIVE_SCHEDULER=ON"
 
     steps:
       - uses: actions/checkout@v4
