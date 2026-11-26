@@ -865,7 +865,7 @@ namespace fast_task::net {
         if (!mgr->set_configuration(config))
             return true;
 
-        sockaddr_in6 bind_addr{0};
+        sockaddr_in6 bind_addr{};
         bind_addr.sin6_family = AF_INET6;
         bind_addr.sin6_addr = IN6ADDR_ANY_INIT;
         bind_addr.sin6_port = 0;
@@ -910,7 +910,7 @@ namespace fast_task::net {
         if (!mgr->set_configuration(config))
             return true;
 
-        sockaddr_in6 bind_addr{0};
+        sockaddr_in6 bind_addr{};
         bind_addr.sin6_family = AF_INET6;
         bind_addr.sin6_addr = IN6ADDR_ANY_INIT;
         bind_addr.sin6_port = 0;

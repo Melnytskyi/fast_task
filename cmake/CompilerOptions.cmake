@@ -100,24 +100,26 @@ else()
     target_compile_options(fast_task_flags INTERFACE $<$<COMPILE_LANGUAGE:CXX>:-Wno-cast-function-type>)
 endif()
 
-add_library(fast_task_sanitizers INTERFACE)
 if(FAST_TASK_SANITIZERS)
     string(REPLACE "," ";" _ft_san_list "${FAST_TASK_SANITIZERS}")
     string(REPLACE ";" "," _ft_san_csv "${_ft_san_list}")
     if(MSVC AND NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
         if("address" IN_LIST _ft_san_list)
-            target_compile_options(fast_task_sanitizers INTERFACE $<$<COMPILE_LANGUAGE:CXX>:/fsanitize=address>)
+            add_compile_options($<$<COMPILE_LANGUAGE:CXX>:/fsanitize=address>)
+            add_link_options(/INCREMENTAL:NO)
         else()
             message(FATAL_ERROR "fast_task: MSVC only supports FAST_TASK_SANITIZERS=address (got '${FAST_TASK_SANITIZERS}').")
         endif()
+    elseif(MSVC)
+        add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-fsanitize=${_ft_san_csv}>)
+        # Silence LNK4217 from LLVM's static clang_rt.ubsan_standalone runtime importing _errno from libucrt.
+        add_link_options(/IGNORE:4217)
     else()
-        target_compile_options(fast_task_sanitizers INTERFACE
+        add_compile_options(
             $<$<COMPILE_LANGUAGE:CXX>:-fsanitize=${_ft_san_csv}>
             $<$<COMPILE_LANGUAGE:CXX>:-fno-omit-frame-pointer>
         )
-        if(NOT MSVC)
-            target_link_options(fast_task_sanitizers INTERFACE -fsanitize=${_ft_san_csv})
-        endif()
+        add_link_options(-fsanitize=${_ft_san_csv})
     endif()
     unset(_ft_san_list)
     unset(_ft_san_csv)
