@@ -7,6 +7,7 @@
 #include <atomic>
 #include <thread>
 
+#include <fast_task/interrupt.hpp>
 #include <helpers.hpp>
 
 namespace {
@@ -89,6 +90,7 @@ TEST(PoolDormant, BorrowedWorkerRunsTheNestedBurst) {
     std::atomic<bool> nested_ran{false};
     borrower.post(fast_task::task::create([&borrower, &nested_ran] {
         borrower.post(fast_task::task::create([&nested_ran] { nested_ran.store(true); }));
+        fast_task::interrupt_unsafe_region no_preempt;
         for (int i = 0; i < 3000 && !nested_ran.load(); ++i)
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }));
@@ -125,6 +127,7 @@ TEST(PoolDormant, SingleThreadLenderIsNeverLent) {
     std::atomic<bool> ran_while_blocked{false};
     borrower.post(fast_task::task::create([&borrower, &nested_ran, &ran_while_blocked] {
         borrower.post(fast_task::task::create([&nested_ran] { nested_ran.store(true); }));
+        fast_task::interrupt_unsafe_region no_preempt;
         std::this_thread::sleep_for(std::chrono::milliseconds(300));
         ran_while_blocked.store(nested_ran.load());
     }));
@@ -154,6 +157,7 @@ TEST(PoolDormant, AffinityPinnedLenderIsSkipped) {
     std::atomic<bool> ran_while_blocked{false};
     borrower.post(fast_task::task::create([&borrower, &nested_ran, &ran_while_blocked] {
         borrower.post(fast_task::task::create([&nested_ran] { nested_ran.store(true); }));
+        fast_task::interrupt_unsafe_region no_preempt;
         std::this_thread::sleep_for(std::chrono::milliseconds(300));
         ran_while_blocked.store(nested_ran.load());
     }));
@@ -179,6 +183,7 @@ TEST(PoolDormant, SharingIsOffByDefault) {
     std::atomic<bool> ran_while_blocked{false};
     borrower.post(fast_task::task::create([&borrower, &nested_ran, &ran_while_blocked] {
         borrower.post(fast_task::task::create([&nested_ran] { nested_ran.store(true); }));
+        fast_task::interrupt_unsafe_region no_preempt;
         std::this_thread::sleep_for(std::chrono::milliseconds(300));
         ran_while_blocked.store(nested_ran.load());
     }));
