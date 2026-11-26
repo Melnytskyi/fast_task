@@ -2,7 +2,11 @@ enable_testing()
 
 find_package(GTest CONFIG)
 if(NOT GTest_FOUND)
-    set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+    if(DEFINED CMAKE_MSVC_RUNTIME_LIBRARY AND CMAKE_MSVC_RUNTIME_LIBRARY STREQUAL "MultiThreaded")
+        set(gtest_force_shared_crt OFF CACHE BOOL "" FORCE)
+    else()
+        set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+    endif()
     FetchContent_Declare(
         GTest
         GIT_REPOSITORY https://github.com/google/googletest.git
@@ -25,7 +29,7 @@ function(add_ft_test TARGET_NAME SOURCE_FILE)
         ${PROJECT_SOURCE_DIR}/include # library public headers
         ${ARGN}
     )
-    if(NOT (MSVC AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang"))
+    if(NOT FAST_TASK_SANITIZERS AND NOT (MSVC AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang"))
         set_property(TARGET ${TARGET_NAME} PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
         set_property(TARGET ${TARGET_NAME} PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO TRUE)
     endif()

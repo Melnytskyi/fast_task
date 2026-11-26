@@ -17,6 +17,16 @@ option(FAST_TASK_INCLUDE_THREAD_INTERRUPT_CODE "Allows the code to stop the thre
 unset(_ft_default_thread_interrupt)
 option(FAST_TASK_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
 
+set(FAST_TASK_SANITIZERS "" CACHE STRING
+  "Comma- or semicolon-separated sanitizers to enable for fast_task and its tests (e.g. address, undefined, thread, address,undefined).")
+if(FAST_TASK_SANITIZERS AND MSVC AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+  string(REPLACE "," ";" _ft_san_check "${FAST_TASK_SANITIZERS}")
+  if("undefined" IN_LIST _ft_san_check AND NOT DEFINED CMAKE_MSVC_RUNTIME_LIBRARY)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded")
+  endif()
+  unset(_ft_san_check)
+endif()
+
 set(FAST_TASK_GUARD_PAGE_COUNT 1 CACHE STRING
   "Number of PROT_NONE (Linux) / PAGE_GUARD (Windows) pages placed at the bottom of each task stack. Set to 0 to disable guard pages entirely.")
 if(NOT FAST_TASK_GUARD_PAGE_COUNT MATCHES "^[0-9]+$")

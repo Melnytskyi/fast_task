@@ -83,7 +83,7 @@ namespace fast_task {
                 const uint16_t dormant = candidate->threads.dormant();
                 if (dormant <= candidate->threads.borrowed_out())
                     continue;
-                if (static_cast<uint32_t>(candidate->threads.live()) + dormant <= 1)
+                if (static_cast<uint32_t>(candidate->threads.active()) + dormant <= 1)
                     continue;
                 if (!glob.pools.dormant_broker.try_push(candidate.get(), &borrower))
                     return false;

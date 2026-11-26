@@ -52,12 +52,12 @@ jobs:
             arch: x64
             config: Clang-ASan-UBSan
             build_type: Debug
-            cmake_args: "-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_CXX_FLAGS=-fsanitize=address,undefined\\ -fno-omit-frame-pointer -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address,undefined"
+            cmake_args: "-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DFAST_TASK_SANITIZERS=address,undefined"
           - os: ubuntu-latest
             arch: x64
             config: Clang-TSan
             build_type: Debug
-            cmake_args: "-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_CXX_FLAGS=-fsanitize=thread\\ -fno-omit-frame-pointer -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=thread"
+            cmake_args: "-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DFAST_TASK_SANITIZERS=thread"
           - os: ubuntu-latest
             arch: x64
             config: Module
@@ -140,13 +140,13 @@ jobs:
             arch: x64
             config: ASan
             build_type: RelWithDebInfo
-            cmake_args: '-DCMAKE_CXX_FLAGS="/DWIN32 /D_WINDOWS /EHsc /Zi /fsanitize=address"'
+            cmake_args: "-DFAST_TASK_SANITIZERS=address"
             timeout: 30
           - os: windows-latest
             arch: x64
             config: ClangCL-UBSan
             build_type: RelWithDebInfo
-            cmake_args: '-T ClangCL -DCMAKE_CXX_FLAGS="/DWIN32 /D_WINDOWS /EHsc -fsanitize=undefined"'
+            cmake_args: "-T ClangCL -DFAST_TASK_SANITIZERS=undefined"
             timeout: 30
           - os: windows-11-arm
             arch: arm64

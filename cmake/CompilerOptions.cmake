@@ -100,6 +100,29 @@ else()
     target_compile_options(fast_task_flags INTERFACE $<$<COMPILE_LANGUAGE:CXX>:-Wno-cast-function-type>)
 endif()
 
+add_library(fast_task_sanitizers INTERFACE)
+if(FAST_TASK_SANITIZERS)
+    string(REPLACE "," ";" _ft_san_list "${FAST_TASK_SANITIZERS}")
+    string(REPLACE ";" "," _ft_san_csv "${_ft_san_list}")
+    if(MSVC AND NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+        if("address" IN_LIST _ft_san_list)
+            target_compile_options(fast_task_sanitizers INTERFACE $<$<COMPILE_LANGUAGE:CXX>:/fsanitize=address>)
+        else()
+            message(FATAL_ERROR "fast_task: MSVC only supports FAST_TASK_SANITIZERS=address (got '${FAST_TASK_SANITIZERS}').")
+        endif()
+    else()
+        target_compile_options(fast_task_sanitizers INTERFACE
+            $<$<COMPILE_LANGUAGE:CXX>:-fsanitize=${_ft_san_csv}>
+            $<$<COMPILE_LANGUAGE:CXX>:-fno-omit-frame-pointer>
+        )
+        if(NOT MSVC)
+            target_link_options(fast_task_sanitizers INTERFACE -fsanitize=${_ft_san_csv})
+        endif()
+    endif()
+    unset(_ft_san_list)
+    unset(_ft_san_csv)
+endif()
+
 if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
     target_compile_options(fast_task_flags INTERFACE $<$<COMPILE_LANGUAGE:CXX>:-Wno-unused-function>)
 

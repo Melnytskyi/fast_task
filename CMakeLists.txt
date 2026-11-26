@@ -14,6 +14,7 @@ include(cmake/CompilerOptions.cmake)
 add_subdirectory(src)
 
 target_link_libraries(fast_task PRIVATE $<BUILD_INTERFACE:fast_task_flags>)
+target_link_libraries(fast_task PUBLIC $<BUILD_INTERFACE:fast_task_sanitizers>)
 target_link_libraries(fast_task PRIVATE $<BUILD_INTERFACE:fast_task_dependencies>)
 target_include_directories(fast_task PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
