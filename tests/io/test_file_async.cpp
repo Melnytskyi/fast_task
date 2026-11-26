@@ -112,7 +112,7 @@ TEST_F(FileAsyncTest, AsyncWriteAndRead) {
         co_await f.async_write(reinterpret_cast<const uint8_t*>(expected.data()), static_cast<uint32_t>(expected.size()));
         f.seek_pos(0, ff::pointer_offset::begin);
 
-        auto data = co_await f.async_read(expected.size());
+        auto data = co_await f.async_read(static_cast<uint32_t>(expected.size()));
         co_return std::string(data.begin(), data.end());
     };
 

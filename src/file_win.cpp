@@ -32,7 +32,7 @@ namespace fast_task::file {
         io_errors error = io_errors::no_error;
     };
 
-    void io_error_to_exception(io_errors error) {
+    [[noreturn]] void io_error_to_exception(io_errors error) {
         switch (error) {
         case io_errors::eof:
             throw std::runtime_error("FileException EOF");
@@ -593,10 +593,9 @@ namespace fast_task::file {
             return future<std::vector<uint8_t>>::start([file, data, task_]() -> std::vector<uint8_t> {
                 task::await_task(task_);
                 file->awaiter = nullptr;
-                if (data->error != io_errors::no_error && data->error != io_errors::eof) {
+                if (data->error != io_errors::no_error && data->error != io_errors::eof)
                     io_error_to_exception(data->error);
-                    std::terminate();
-                } else
+                else
                     return std::vector<uint8_t>((uint8_t*)data->data, (uint8_t*)data->data + data->completed_bytes);
             });
         }
@@ -614,10 +613,9 @@ namespace fast_task::file {
             return future<std::vector<uint8_t>>::start([file, data, task_]() -> std::vector<uint8_t> {
                 task::await_task(task_);
                 file->awaiter = nullptr;
-                if (data->error != io_errors::no_error && data->error != io_errors::eof) {
+                if (data->error != io_errors::no_error && data->error != io_errors::eof)
                     io_error_to_exception(data->error);
-                    std::terminate();
-                } else
+                else
                     return std::vector<uint8_t>((uint8_t*)data->data, (uint8_t*)data->data + data->completed_bytes);
             });
         }

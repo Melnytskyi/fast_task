@@ -18,7 +18,9 @@
 
 #ifdef FT_ENABLE_PREEMPTIVE_SCHEDULER
     #if PLATFORM_WINDOWS
-        #define NOMINMAX
+        #ifndef NOMINMAX
+            #define NOMINMAX
+        #endif
         #include <process.h>
         #include <windows.h>
     #else

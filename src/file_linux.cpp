@@ -396,10 +396,9 @@ namespace fast_task::file {
         }
 
         void end_op() noexcept {
-            if (pending_ops.fetch_sub(1, std::memory_order_acq_rel) == 1) {
-                fast_task::lock_guard lock(pending_mut);
+            fast_task::lock_guard lock(pending_mut);
+            if (pending_ops.fetch_sub(1, std::memory_order_acq_rel) == 1)
                 pending_cv.notify_all();
-            }
         }
 
         static std::variant<file_manager*, std::string> open(const std::filesystem::path& path, open_mode open, on_open_action action, [[maybe_unused]] share_mode share, file_flags flags, pointer_mode _pointer_mode) {
@@ -502,8 +501,9 @@ namespace fast_task::file {
 
         ~file_manager() {
             if (_handle != -1) {
-                if (pending_ops.load(std::memory_order_acquire) > 0) {
+                if (pending_ops.load(std::memory_order_acquire) > 0)
                     util::native_workers_singleton::await_cancel_fd_all(_handle);
+                {
                     fast_task::unique_lock lock(pending_mut);
                     while (pending_ops.load(std::memory_order_acquire) > 0)
                         pending_cv.wait(lock);

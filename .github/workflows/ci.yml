@@ -136,6 +136,18 @@ jobs:
             config: ClangCL-Release
             build_type: Release
             cmake_args: "-T ClangCL"
+          - os: windows-latest
+            arch: x64
+            config: ASan
+            build_type: Release
+            cmake_args: '-DCMAKE_CXX_FLAGS="/fsanitize=address"'
+            timeout: 30
+          - os: windows-latest
+            arch: x64
+            config: ClangCL-UBSan
+            build_type: Debug
+            cmake_args: '-T ClangCL -DCMAKE_CXX_FLAGS="-fsanitize=undefined"'
+            timeout: 30
           - os: windows-11-arm
             arch: arm64
             config: Debug
@@ -166,4 +178,11 @@ jobs:
         run: cmake --build build --config ${{ matrix.build_type }} --parallel
 
       - name: Test
-        run: ctest --test-dir build -C ${{ matrix.build_type }} --timeout 14 --output-on-failure
+        shell: pwsh
+        run: |
+          $vsPath = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          if ($vsPath) {
+            $asanDirs = Get-ChildItem -Path "$vsPath\VC\Tools\MSVC" -Recurse -Filter "clang_rt.asan_dynamic-x86_64.dll" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty DirectoryName -Unique
+            foreach ($d in $asanDirs) { $env:PATH = "$d;$env:PATH" }
+          }
+          ctest --test-dir build -C ${{ matrix.build_type }} --parallel 4 --timeout ${{ matrix.timeout || 14 }} --output-on-failure

@@ -55,21 +55,37 @@ namespace fast_task {
     bool alloc_globals_alive = true;
 
     namespace {
-        std::atomic<bool> alloc_globals_alive_atomic{true};
+        constexpr uint32_t ALLOC_GLOBALS_DEAD_BIT = 1u << 31;
+        std::atomic<uint32_t> alloc_globals_state{0};
+
+        bool try_enter_alloc_release() noexcept {
+            uint32_t cur = alloc_globals_state.load(std::memory_order_acquire);
+            while (true) {
+                if (cur & ALLOC_GLOBALS_DEAD_BIT)
+                    return false;
+                if (alloc_globals_state.compare_exchange_weak(cur, cur + 1, std::memory_order_acq_rel, std::memory_order_acquire))
+                    return true;
+            }
+        }
+
+        void leave_alloc_release() noexcept {
+            alloc_globals_state.fetch_sub(1, std::memory_order_release);
+        }
     }
 
     allocators_local_t::allocators_local_t() = default;
 
     void allocators_local_t::drain_all() {
-        if (!alloc_globals_alive_atomic.load(std::memory_order_acquire))
+        if (!try_enter_alloc_release())
             return;
         auto& local = get_alloc_loc();
         local.task_cache.release();
         local.timing_cache.release();
+        leave_alloc_release();
     }
 
     void allocators_local_t::reset() {
-        if (!alloc_globals_alive_atomic.load(std::memory_order_acquire)) {
+        if (!try_enter_alloc_release()) {
             task_cache.free_list = nullptr;
             task_cache.free_count = 0;
             timing_cache.free_list = nullptr;
@@ -78,6 +94,7 @@ namespace fast_task {
         }
         task_cache.release();
         timing_cache.release();
+        leave_alloc_release();
     }
 
     allocators_local_t::~allocators_local_t() {
@@ -102,7 +119,9 @@ namespace fast_task {
 
     scheduler_runtime::~scheduler_runtime() {
         allocators_local_t::drain_all();
-        alloc_globals_alive_atomic.store(false, std::memory_order_release);
+        alloc_globals_state.fetch_or(ALLOC_GLOBALS_DEAD_BIT, std::memory_order_acq_rel);
+        while ((alloc_globals_state.load(std::memory_order_acquire) & ~ALLOC_GLOBALS_DEAD_BIT) != 0)
+            cpu_relax();
         alloc_globals_alive = false;
 
         if (auto* storage = pools.slots[global_pool_index].exchange(nullptr, std::memory_order_acq_rel))
