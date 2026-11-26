@@ -80,13 +80,8 @@ namespace fast_task {
 
     void shrink_pool_workers(worker_pool_storage& storage, uint16_t count) noexcept {
         const uint16_t min = storage.threads.min_limit();
-        const uint16_t target = storage.threads.target();
-        if (target <= min || count == 0)
-            return;
-        if (count > static_cast<uint16_t>(target - min))
-            count = static_cast<uint16_t>(target - min);
-        storage.threads.release_target(count);
-        wake_control(storage);
+        if (storage.threads.release_target_clamped(count, min) != 0)
+            wake_control(storage);
     }
 
 }

@@ -15,17 +15,16 @@ namespace fast_task::scheduler {
     namespace {
         size_t total_executing_tasks() {
             size_t total = 0;
-            for (auto& slot : glob.pools.slots) {
-                auto* pool = slot.load(std::memory_order_acquire);
-                if (pool)
+            for (uint16_t i = 0; i < pool_table_size; ++i) {
+                if (auto pool = acquire_pool_ref(static_cast<uint8_t>(i)))
                     total += pool->runtime.executing_tasks.load(std::memory_order_acquire);
             }
             return total;
         }
 
         bool any_pool_work() {
-            for (auto& slot : glob.pools.slots) {
-                auto* pool = slot.load(std::memory_order_acquire);
+            for (uint16_t i = 0; i < pool_table_size; ++i) {
+                auto pool = acquire_pool_ref(static_cast<uint8_t>(i));
                 if (!pool)
                     continue;
                 if (pool->ops.queue.pending(*pool) != 0)
@@ -37,16 +36,15 @@ namespace fast_task::scheduler {
         }
 
         void wake_all_pools() {
-            for (auto& slot : glob.pools.slots) {
-                auto* pool = slot.load(std::memory_order_acquire);
-                if (pool)
+            for (uint16_t i = 0; i < pool_table_size; ++i) {
+                if (auto pool = acquire_pool_ref(static_cast<uint8_t>(i)))
                     wake_control(*pool);
             }
         }
 
         void resume_all_pools() {
-            for (auto& slot : glob.pools.slots) {
-                auto* pool = slot.load(std::memory_order_acquire);
+            for (uint16_t i = 0; i < pool_table_size; ++i) {
+                auto pool = acquire_pool_ref(static_cast<uint8_t>(i));
                 if (!pool)
                     continue;
                 if (pool->runtime.paused.load(std::memory_order_acquire)) {
@@ -282,8 +280,8 @@ namespace fast_task::scheduler {
             while (threads_manager::total_active())
                 glob.shutdown.notifier.wait_for(guard, std::chrono::milliseconds(1));
 
-            for (auto& slot : glob.pools.slots) {
-                if (auto* pool = slot.load(std::memory_order_acquire))
+            for (uint16_t i = 0; i < pool_table_size; ++i) {
+                if (auto pool = acquire_pool_ref(static_cast<uint8_t>(i)))
                     pool->threads.set_target(0);
             }
         }

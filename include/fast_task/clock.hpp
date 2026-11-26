@@ -13,12 +13,11 @@
 namespace fast_task {
     // Every deadline, timeout and timer tick in the library uses this clock.
     //
-    // fast_task::clock is std::system_clock on libstdc++ and
-    // libc++, so it follows wall time: an NTP step or a manual clock change can
-    // make a sleep finish instantly or stall for hours, and it can reorder
-    // timer-wheel buckets. std::chrono::steady_clock is monotonic
-    // (CLOCK_MONOTONIC on Linux, QueryPerformanceCounter on Windows) and must be
-    // the only source of scheduling time.
+    // Using std::chrono::system_clock follows wall time: an NTP step or a
+    // manual clock change can make a sleep finish instantly or stall for hours,
+    // and it can reorder timer-wheel buckets. std::chrono::steady_clock is
+    // monotonic (CLOCK_MONOTONIC on Linux, QueryPerformanceCounter on Windows)
+    // and is the only source of scheduling time.
     using clock = std::chrono::steady_clock;
     using time_point = clock::time_point;
     using duration = clock::duration;

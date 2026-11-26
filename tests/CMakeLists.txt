@@ -22,11 +22,12 @@ function(add_ft_test TARGET_NAME SOURCE_FILE)
     target_link_libraries(${TARGET_NAME} PRIVATE GTest::gtest_main fast_task)
     target_include_directories(${TARGET_NAME} PRIVATE
         ${FT_TESTS_ROOT}              # for helpers.hpp
-        ${CMAKE_SOURCE_DIR}/include   # library public headers
+        ${PROJECT_SOURCE_DIR}/include # library public headers
         ${ARGN}
     )
     if(NOT (MSVC AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang"))
-        set_property(TARGET ${TARGET_NAME} PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
+        set_property(TARGET ${TARGET_NAME} PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
+        set_property(TARGET ${TARGET_NAME} PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO TRUE)
     endif()
     set_target_properties(${TARGET_NAME} PROPERTIES
         CXX_STANDARD 23

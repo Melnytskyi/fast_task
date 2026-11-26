@@ -236,8 +236,19 @@ namespace fast_task {
                     &rw_mutex::write_probe,
                     time_point,
                     {private_values::WRITER_KEY}
-                ))
+                )) {
+                uint64_t s = values.state.load(std::memory_order_acquire);
+                if ((s & private_values::OWNERSHIP_MASK) == 0) {
+                    if ((s & private_values::HAS_WRITER_WAITERS) != 0) {
+                        if (wake_writers(values, 1) == 0 &&
+                            (values.state.load(std::memory_order_acquire) & private_values::HAS_READER_WAITERS) != 0)
+                            wake_readers(values);
+                    } else if ((s & private_values::HAS_READER_WAITERS) != 0) {
+                        wake_readers(values);
+                    }
+                }
                 return false;
+            }
         }
     }
 

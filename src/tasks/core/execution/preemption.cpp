@@ -44,8 +44,10 @@ namespace fast_task {
         if (loc->policy == scheduler::preemption_policy::cooperative_only)
             return;
     #ifdef FT_EXCEPTION_POLICY_CHECK
-        if (std::uncaught_exceptions())
+        if (std::uncaught_exceptions()) {
+            timer_reinit();
             return;
+        }
     #endif
         {
             auto& task_data = get_data(loc->curr_task);

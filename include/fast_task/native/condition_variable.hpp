@@ -90,7 +90,7 @@ namespace fast_task::native {
         }
 
         inline cv_status wait_for(::fast_task::unique_lock<mutex>& mtx, std::chrono::milliseconds ms) {
-            return wait_until(*mtx.mutex(), fast_task::clock::now() + ms);
+            return wait_until(*mtx.mutex(), fast_task::deadline_after(ms));
         }
 
         inline cv_status wait_until(::fast_task::unique_lock<mutex>& mtx, fast_task::time_point time) {
@@ -102,11 +102,31 @@ namespace fast_task::native {
         }
 
         inline cv_status wait_for(::fast_task::unique_lock<recursive_mutex>& mtx, std::chrono::milliseconds ms) {
-            return wait_until(*mtx.mutex(), fast_task::clock::now() + ms);
+            return wait_until(*mtx.mutex(), fast_task::deadline_after(ms));
         }
 
         inline cv_status wait_until(::fast_task::unique_lock<recursive_mutex>& mtx, fast_task::time_point time) {
             return wait_until(*mtx.mutex(), time);
+        }
+
+        template <class Lock, class Predicate>
+        void wait(Lock& lock, Predicate stop_waiting) {
+            while (!stop_waiting())
+                wait(lock);
+        }
+
+        template <class Lock, class Predicate>
+        bool wait_until(Lock& lock, fast_task::time_point time, Predicate stop_waiting) {
+            while (!stop_waiting()) {
+                if (wait_until(lock, time) == cv_status::timeout)
+                    return stop_waiting();
+            }
+            return true;
+        }
+
+        template <class Lock, class Rep, class Period, class Predicate>
+        bool wait_for(Lock& lock, const std::chrono::duration<Rep, Period>& dur, Predicate stop_waiting) {
+            return wait_until(lock, fast_task::deadline_after(dur), std::move(stop_waiting));
         }
     };
 

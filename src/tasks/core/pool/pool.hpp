@@ -62,9 +62,9 @@ namespace fast_task {
         uint8_t pool_index = global_pool_index;
         bool is_global : 1 = false;
         bool started : 1 = false;
-        bool closing : 1 = false;
         bool explicitly_configured : 1 = false;
         bool lazily_initialized : 1 = false;
+        std::atomic<bool> closing{false};
         std::atomic<bool> slot_released{false};
         std::atomic<uint32_t> active_refs{0};
 

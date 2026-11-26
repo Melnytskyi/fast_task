@@ -39,7 +39,7 @@ namespace fast_task {
 
         template <class Rep, class Period>
         bool wait_for(const std::chrono::duration<Rep, Period>& duration) {
-            return wait_until(fast_task::clock::now() + duration);
+            return wait_until(fast_task::deadline_after(duration));
         }
 
         bool enter_wait(const task&, enter_state& task);

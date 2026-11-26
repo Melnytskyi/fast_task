@@ -48,7 +48,7 @@ namespace fast_task {
 
         template <class Rep, class Period>
         bool try_lock_for(const std::chrono::duration<Rep, Period>& duration) {
-            return try_lock_until(fast_task::clock::now() + duration);
+            return try_lock_until(fast_task::deadline_after(duration));
         }
 
 #if __cplusplus >= 202002
@@ -93,7 +93,7 @@ namespace fast_task {
 
         template <class Rep, class Period>
         bool try_lock_for(const std::chrono::duration<Rep, Period>& duration) {
-            return try_lock_until(fast_task::clock::now() + duration);
+            return try_lock_until(fast_task::deadline_after(duration));
         }
 
 #if __cplusplus >= 202002

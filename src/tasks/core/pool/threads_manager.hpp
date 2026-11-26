@@ -204,6 +204,22 @@ namespace fast_task {
             target_workers.fetch_sub(count, std::memory_order_acq_rel);
         }
 
+        uint16_t release_target_clamped(uint16_t count, uint16_t min) noexcept {
+            if (count == 0)
+                return 0;
+            uint16_t goal = target_workers.load(std::memory_order_acquire);
+            for (;;) {
+                if (goal <= min)
+                    return 0;
+                const uint16_t avail = static_cast<uint16_t>(goal - min);
+                const uint16_t shrink = count < avail ? count : avail;
+                if (target_workers.compare_exchange_weak(
+                        goal, static_cast<uint16_t>(goal - shrink), std::memory_order_acq_rel, std::memory_order_acquire
+                    ))
+                    return shrink;
+            }
+        }
+
         pool_worker_counts snapshot() const noexcept {
             return pool_worker_counts{target(), active(), foreign(), dormant(), borrowed_in(), borrowed_out(), pending_leases(), live()};
         }

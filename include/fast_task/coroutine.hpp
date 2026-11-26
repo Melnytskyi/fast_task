@@ -7,7 +7,9 @@
 #pragma once
 #ifndef FAST_TASK_COROUTINE
     #define FAST_TASK_COROUTINE
+    #include "coroutine/combinators.hpp"
     #include "coroutine/core.hpp"
+    #include "coroutine/generator.hpp"
     #include "coroutine/helpers.hpp"
     #include "coroutine/promise.hpp"
 #endif

@@ -69,7 +69,6 @@ BENCHMARK(sync_mutex_contention, sync_mutex_scales) {
 BENCHMARK(sync_mutex_contention_with_native, sync_mutex_scales) {
     fast_task::mutex mtx;
     uint64_t counter{0};
-    auto deb_data = collect_task_objects();
 
     auto t1 = fast_task::task::run([&] {
         for (uint64_t i = 0; i < scale; ++i) {

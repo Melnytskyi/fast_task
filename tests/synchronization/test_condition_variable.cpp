@@ -83,6 +83,43 @@ TEST_F(TaskCvTest, WaitForTimeout) {
     EXPECT_TRUE(timed_out);
 }
 
+TEST_F(TaskCvTest, WaitWithPredicate) {
+    fast_task::mutex m;
+    fast_task::condition_variable cv;
+    bool ready = false;
+
+    run_task([&] {
+        auto waiter = fast_task::task::create([&] {
+            fast_task::unique_lock lock(m);
+            cv.wait(lock, [&] { return ready; });
+        });
+        fast_task::scheduler::start(waiter);
+
+        fast_task::this_task::sleep_for(std::chrono::milliseconds(15));
+        {
+            fast_task::lock_guard lg(m);
+            ready = true;
+        }
+        cv.notify_one();
+        waiter.await_task();
+    });
+
+    EXPECT_TRUE(ready);
+}
+
+TEST_F(TaskCvTest, WaitForWithPredicateTimeout) {
+    fast_task::mutex m;
+    fast_task::condition_variable cv;
+    bool result = true;
+
+    run_task([&] {
+        fast_task::unique_lock lock(m);
+        result = cv.wait_for(lock, std::chrono::milliseconds(30), [] { return false; });
+    });
+
+    EXPECT_FALSE(result);
+}
+
 TEST_F(TaskCvTest, HasWaiters) {
     fast_task::mutex m;
     fast_task::condition_variable cv;

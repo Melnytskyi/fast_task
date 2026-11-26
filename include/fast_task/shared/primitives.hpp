@@ -11,9 +11,9 @@ namespace fast_task {
 
     struct defer_unlock_t {};
 
-    constexpr adopt_lock_t adopt_lock{};
-    constexpr defer_lock_t defer_lock{};
-    constexpr defer_unlock_t defer_unlock{};
+    inline constexpr adopt_lock_t adopt_lock{};
+    inline constexpr defer_lock_t defer_lock{};
+    inline constexpr defer_unlock_t defer_unlock{};
 
     template <class Mutex>
     class lock_guard {

@@ -323,11 +323,12 @@ extern "C" {
 
     __attribute__((used, noinline)) void ft_linux_preempt_entry() {
         auto& t = fast_task::interrupt::get_timer();
-        t.in_trampoline.store(false, std::memory_order_relaxed);
         auto cb = t.interrupt;
-        if (cb != nullptr &&
-            t.enabled_timers.load(std::memory_order_acquire) != 0 &&
-            t.guard_zones.load(std::memory_order_acquire) == 0) {
+        const bool should_call = (cb != nullptr &&
+                                  t.enabled_timers.exchange(0, std::memory_order_acq_rel) != 0 &&
+                                  t.guard_zones.load(std::memory_order_acquire) == 0);
+        t.in_trampoline.store(false, std::memory_order_release);
+        if (should_call) {
             cb();
         }
     }
@@ -409,11 +410,12 @@ namespace fast_task::interrupt {
 
         [[noreturn]] void ft_linux_aarch64_preempt_entry(ucontext_t* saved_uc) {
             auto& t = get_timer();
-            t.in_trampoline.store(false, std::memory_order_relaxed);
             auto cb = t.interrupt;
-            if (cb != nullptr &&
-                t.enabled_timers.load(std::memory_order_acquire) != 0 &&
-                t.guard_zones.load(std::memory_order_acquire) == 0) {
+            const bool should_call = (cb != nullptr &&
+                                      t.enabled_timers.exchange(0, std::memory_order_acq_rel) != 0 &&
+                                      t.guard_zones.load(std::memory_order_acquire) == 0);
+            t.in_trampoline.store(false, std::memory_order_release);
+            if (should_call) {
                 cb();
             }
             auto& cur = get_timer();

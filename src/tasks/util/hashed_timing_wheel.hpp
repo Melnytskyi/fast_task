@@ -176,16 +176,24 @@ namespace fast_task {
             uint64_t target = to_ticks(now);
             uint64_t cur = current_tick_.load(std::memory_order_acquire);
             if (target > cur) {
-                while (cur < target) {
-                    uint64_t next_tick = cur + 1;
-                    if ((next_tick & 0xFFFFFFFFULL) == 0)
-                        drain_overflow();
-
-                    cur = advance_one_tick(handler);
+                if (target - cur >= SLOTS && empty()) {
+                    std::lock_guard guard(wheel_lock_);
+                    if (empty()) {
+                        current_tick_.store(target, std::memory_order_release);
+                        cur = target;
+                    }
                 }
+                if (cur < target) {
+                    while (cur < target) {
+                        uint64_t next_tick = cur + 1;
+                        if ((next_tick & 0xFFFFFFFFULL) == 0)
+                            drain_overflow();
 
-                collect_slot(static_cast<size_t>(cur & (SLOTS - 1)), handler);
-                drain_expired_overflow(now, handler);
+                        cur = advance_one_tick(handler);
+                    }
+
+                    drain_expired_overflow(now, handler);
+                }
             }
 
             collect_overdue(handler);

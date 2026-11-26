@@ -838,11 +838,11 @@ namespace fast_task::net {
         auto& n_state = *state.use<connect_state>(mgr.get(), &res, ip_port);
         n_state.awaiting_task = t;
 
-        util::native_workers_singleton::post_connect(&n_state, clientSocket, (sockaddr*)&n_state.dest_addr, sizeof(n_state.dest_addr));
-
         tcp_socket new_sock;
         new_sock.handle = std::move(mgr);
         res = std::move(new_sock);
+
+        util::native_workers_singleton::post_connect(&n_state, clientSocket, (sockaddr*)&n_state.dest_addr, sizeof(n_state.dest_addr));
         return false;
     }
 
@@ -868,11 +868,11 @@ namespace fast_task::net {
         n_state.awaiting_task = t;
         n_state.out_processed_bytes = &size;
 
-        util::native_workers_singleton::post_fast_connect(&n_state, clientSocket, (sockaddr*)&n_state.dest_addr, sizeof(n_state.dest_addr), data, size);
-
         tcp_socket new_sock;
         new_sock.handle = std::move(mgr);
         res = std::move(new_sock);
+
+        util::native_workers_singleton::post_fast_connect(&n_state, clientSocket, (sockaddr*)&n_state.dest_addr, sizeof(n_state.dest_addr), data, size);
         return false;
     }
 

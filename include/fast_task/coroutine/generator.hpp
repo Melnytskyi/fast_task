@@ -188,77 +188,79 @@ namespace fast_task {
         task_generator(const task_generator&) = delete;
         task_generator& operator=(const task_generator&) = delete;
 
-        auto next() {
-            struct next_awaiter {
-                enter_state wait_state;
-                std::shared_ptr<gen_state> state;
+    private:
+        struct next_awaiter {
+            enter_state wait_state;
+            std::shared_ptr<gen_state> state;
 
-                bool await_ready() {
+            bool await_ready() {
+                fast_task::lock_guard guard(state->lock);
+                return !state->values.empty() || state->is_finished;
+            }
+
+            template <class Promise>
+            bool await_suspend(std::coroutine_handle<Promise> h) {
+                fast_task::task signal;
+                {
                     fast_task::lock_guard guard(state->lock);
-                    return !state->values.empty() || state->is_finished;
+                    if (!state->values.empty() || state->is_finished)
+                        return false;
+                    if (!state->consumer_signal)
+                        state->consumer_signal = fast_task::task::callback_dummy(nullptr, nullptr, nullptr, nullptr, nullptr);
+                    signal = state->consumer_signal;
                 }
-
-                template <class Promise>
-                bool await_suspend(std::coroutine_handle<Promise> h) {
-                    fast_task::task signal;
-                    {
-                        fast_task::lock_guard guard(state->lock);
-                        if (!state->values.empty() || state->is_finished)
-                            return false;
-                        if (!state->consumer_signal)
-                            state->consumer_signal = fast_task::task::callback_dummy(nullptr, nullptr, nullptr, nullptr, nullptr);
-                        signal = state->consumer_signal;
-                    }
-                    if constexpr (std::derived_from<Promise, task_promise_base>) {
-                        return !signal.enter_wait(h.promise().task_object, wait_state);
-                    } else {
-                        static task_vtable vt = {
-                            nullptr,
-                            nullptr,
-                            [](void* handle_addr) {
-                                std::coroutine_handle<>::from_address(handle_addr).resume();
-                            },
-                            nullptr,
-                            nullptr,
-                            false
-                        };
-                        auto bridge_task = fast_task::task(
-                            h.address(),
-                            &vt,
-                            false,
-                            true
-                        );
-                        if (signal.is_ended())
-                            return false;
-                        signal.callback(bridge_task);
-                        return true;
-                    }
+                if constexpr (std::derived_from<Promise, task_promise_base>) {
+                    return !signal.enter_wait(h.promise().task_object, wait_state);
+                } else {
+                    static task_vtable vt = {
+                        nullptr,
+                        nullptr,
+                        [](void* handle_addr) {
+                            std::coroutine_handle<>::from_address(handle_addr).resume();
+                        },
+                        nullptr,
+                        nullptr,
+                        false
+                    };
+                    auto bridge_task = fast_task::task(
+                        h.address(),
+                        &vt,
+                        false,
+                        true
+                    );
+                    if (signal.is_ended())
+                        return false;
+                    signal.callback(bridge_task);
+                    return true;
                 }
+            }
 
-                std::optional<T> await_resume() {
-                    fast_task::task producer_sig;
-                    std::optional<T> res;
-                    {
-                        fast_task::lock_guard guard(state->lock);
-                        if (!state->values.empty()) {
-                            res.emplace(std::move(state->values.front()));
-                            state->values.pop();
-                            if (state->producer_signal) {
-                                producer_sig = std::move(state->producer_signal);
-                                state->producer_signal.reset();
-                            }
-                        } else if (state->ex) {
-                            auto ex = std::move(state->ex);
-                            state->ex = nullptr;
-                            std::rethrow_exception(ex);
+            std::optional<T> await_resume() {
+                fast_task::task producer_sig;
+                std::optional<T> res;
+                {
+                    fast_task::lock_guard guard(state->lock);
+                    if (!state->values.empty()) {
+                        res.emplace(std::move(state->values.front()));
+                        state->values.pop();
+                        if (state->producer_signal) {
+                            producer_sig = std::move(state->producer_signal);
+                            state->producer_signal.reset();
                         }
+                    } else if (state->ex) {
+                        auto ex = std::move(state->ex);
+                        state->ex = nullptr;
+                        std::rethrow_exception(ex);
                     }
-                    if (producer_sig)
-                        producer_sig.end_dummy([](void*) {});
-                    return res;
                 }
-            };
+                if (producer_sig)
+                    producer_sig.end_dummy([](void*) {});
+                return res;
+            }
+        };
 
+    public:
+        auto next() {
             return next_awaiter{{}, state};
         }
     };

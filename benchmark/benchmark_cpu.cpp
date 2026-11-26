@@ -32,7 +32,10 @@ BENCHMARK_CPU(cpu_fibonacci_recursive, cpu_fib_scales) {
     std::vector<fast_task::task> tasks;
     tasks.reserve(scale);
     for (uint64_t i = 0; i < scale; ++i)
-        tasks.push_back(fast_task::task::run([fib_worker] { fib_worker(fib_n); }));
+        tasks.push_back(fast_task::task::run([fib_worker] {
+            volatile uint64_t sink = fib_worker(fib_n);
+            (void)sink;
+        }));
 
     for (auto& t : tasks)
         t.await_task();

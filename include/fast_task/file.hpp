@@ -20,6 +20,7 @@
     #include "coroutine/core.hpp"
     #include "coroutine/detail/lock_misc.hpp"
     #include "polyfill/expected.hpp"
+    #include <span>
 #endif
 
 namespace fast_task::file {
@@ -76,14 +77,14 @@ namespace fast_task::file {
     };
 
     struct FT_API file_flags {
-        bool delete_on_close : 1;
-        bool posix_semantics : 1; //used in windows
-        bool random_access : 1;   //hint to cache manager
-        bool sequential_scan : 1; //hint to cache manager
-        bool no_buffering : 1;    //hint to cache manager, ignored with use_lock set to false, affect seek and read write operations, like disc page size aligned operations
-        bool write_through : 1;   //hint to cache manager, ignored with use_lock set to false
-        bool at_end : 1;
-        bool use_lock : 1;
+        bool delete_on_close : 1 = false;
+        bool posix_semantics : 1 = false; //used in windows
+        bool random_access : 1 = false;   //hint to cache manager
+        bool sequential_scan : 1 = false; //hint to cache manager
+        bool no_buffering : 1 = false;    //hint to cache manager, ignored with use_lock set to false, affect seek and read write operations, like disc page size aligned operations
+        bool write_through : 1 = false;   //hint to cache manager, ignored with use_lock set to false
+        bool at_end : 1 = false;
+        bool use_lock : 1 = false;
     };
 
     enum class io_errors : uint8_t {
@@ -704,6 +705,36 @@ namespace fast_task::file {
         void write(const uint8_t* data, uint32_t size);
         void write_at(uint64_t offset, const uint8_t* data, uint32_t size);
         void append(const uint8_t* data, uint32_t size);
+
+#if __cplusplus >= 202002 || (defined(_MSVC_LANG) && _MSVC_LANG >= 202002)
+        uint32_t read(std::span<uint8_t> data) {
+            return read(data.data(), static_cast<uint32_t>(data.size()));
+        }
+
+        uint32_t read_at(uint64_t offset, std::span<uint8_t> data) {
+            return read_at(offset, data.data(), static_cast<uint32_t>(data.size()));
+        }
+
+        uint32_t read_fixed(std::span<uint8_t> data) {
+            return read_fixed(data.data(), static_cast<uint32_t>(data.size()));
+        }
+
+        uint32_t read_fixed_at(uint64_t offset, std::span<uint8_t> data) {
+            return read_fixed_at(offset, data.data(), static_cast<uint32_t>(data.size()));
+        }
+
+        void write(std::span<const uint8_t> data) {
+            write(data.data(), static_cast<uint32_t>(data.size()));
+        }
+
+        void write_at(uint64_t offset, std::span<const uint8_t> data) {
+            write_at(offset, data.data(), static_cast<uint32_t>(data.size()));
+        }
+
+        void append(std::span<const uint8_t> data) {
+            append(data.data(), static_cast<uint32_t>(data.size()));
+        }
+#endif
 
 
         bool seek_pos(int64_t offset, pointer_offset pointer_offset, pointer pointer);

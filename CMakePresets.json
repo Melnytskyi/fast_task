@@ -145,7 +145,6 @@
             "displayName": "Win-Test",
             "inherits": [
                 "Win-Basic",
-                "Release",
                 "Test"
             ],
             "cacheVariables": {
@@ -179,7 +178,7 @@
             "displayName": "Linux-Test-Rel",
             "inherits": [
                 "Linux-Basic",
-                "Release"
+                "RelWithDebInfo"
             ],
             "cacheVariables": {
                 "FAST_TASK_BUILD_TESTS": "ON"

@@ -241,16 +241,19 @@ auto addr = co_await net::address::async_resolve("example.com", "https");
 buffers. The `safe_async_*` variants return `polyfill::expected` results.
 
 [`tcp_configuration`](../include/fast_task/net.hpp:24) tunes socket behavior,
-and [`shutdown_mode`](../include/fast_task/net.hpp:56) selects `receive`,
-`send`, or `both`.
+and [`shutdown_mode`](../include/fast_task/net.hpp:56) selects `read`,
+`write`, or `read_write`.
 
 ```cpp
-net::tcp_listener listener;
-listener.bind(addr);
+auto listener = net::tcp_listener::bind(addr);
+if (!listener)
+    co_return;
 while (true) {
-    net::tcp_socket client = co_await listener.async_accept();
-    co_await client.async_send(payload, payload_size);
-    co_await client.async_close();
+    auto client = co_await listener->async_accept();
+    if (!client)
+        break;
+    co_await client->async_send(std::span<const uint8_t>(payload, payload_size));
+    co_await client->async_close();
 }
 ```
 

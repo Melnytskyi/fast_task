@@ -39,12 +39,52 @@ namespace fast_task {
 
         template <class Rep, class Period>
         bool wait_for(fast_task::unique_lock<mutex>& lock, const std::chrono::duration<Rep, Period>& duration) {
-            return wait_until(lock, fast_task::clock::now() + duration);
+            return wait_until(lock, fast_task::deadline_after(duration));
         }
 
         template <class Rep, class Period>
         bool wait_for(std::unique_lock<mutex>& lock, const std::chrono::duration<Rep, Period>& duration) {
-            return wait_until(lock, fast_task::clock::now() + duration);
+            return wait_until(lock, fast_task::deadline_after(duration));
+        }
+
+        template <class Predicate>
+        void wait(fast_task::unique_lock<mutex>& lock, Predicate stop_waiting) {
+            while (!stop_waiting())
+                wait(lock);
+        }
+
+        template <class Predicate>
+        void wait(std::unique_lock<mutex>& lock, Predicate stop_waiting) {
+            while (!stop_waiting())
+                wait(lock);
+        }
+
+        template <class Predicate>
+        bool wait_until(fast_task::unique_lock<mutex>& lock, fast_task::time_point time_point, Predicate stop_waiting) {
+            while (!stop_waiting()) {
+                if (!wait_until(lock, time_point))
+                    return stop_waiting();
+            }
+            return true;
+        }
+
+        template <class Predicate>
+        bool wait_until(std::unique_lock<mutex>& lock, fast_task::time_point time_point, Predicate stop_waiting) {
+            while (!stop_waiting()) {
+                if (!wait_until(lock, time_point))
+                    return stop_waiting();
+            }
+            return true;
+        }
+
+        template <class Rep, class Period, class Predicate>
+        bool wait_for(fast_task::unique_lock<mutex>& lock, const std::chrono::duration<Rep, Period>& duration, Predicate stop_waiting) {
+            return wait_until(lock, fast_task::deadline_after(duration), std::move(stop_waiting));
+        }
+
+        template <class Rep, class Period, class Predicate>
+        bool wait_for(std::unique_lock<mutex>& lock, const std::chrono::duration<Rep, Period>& duration, Predicate stop_waiting) {
+            return wait_until(lock, fast_task::deadline_after(duration), std::move(stop_waiting));
         }
 
 #if __cplusplus >= 202002

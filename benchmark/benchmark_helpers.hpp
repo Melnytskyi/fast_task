@@ -342,7 +342,7 @@ inline void ensure_workers(size_t n) {
                     run(sp.iterations);                                                                 \
                     times[i] = timer.elapsed_ms(__VA_ARGS__);                                           \
                     size_t rss_kb = current_rss_kb();                                                   \
-                    size_t delta_kb = (baseline_kb > 0) ? (rss_kb - baseline_kb) : 0;                   \
+                    size_t delta_kb = (baseline_kb > 0 && rss_kb > baseline_kb) ? (rss_kb - baseline_kb) : 0;                   \
                     memuse[i] = delta_kb * 1024;                                                        \
                 }                                                                                       \
                 print_bench_row(sp.label, sp.iterations, avg_bench_time(times), avg_bench_mem(memuse)); \

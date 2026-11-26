@@ -908,5 +908,24 @@ namespace fast_task {
         return detail::future_cop_result_awaiter{{}, t};
     }
     #endif
+
+    // Type-deducing future launch helpers.
+    template <class Fn>
+    [[nodiscard]] auto async(Fn&& fn, scheduler::worker_pool* pool = nullptr) {
+        using R = std::invoke_result_t<std::decay_t<Fn>>;
+        return future<R>::start(std::forward<Fn>(fn), pool);
+    }
+
+    template <class Fn>
+    [[nodiscard]] auto async(scheduler::worker_pool& pool, Fn&& fn) {
+        using R = std::invoke_result_t<std::decay_t<Fn>>;
+        return future<R>::start(std::forward<Fn>(fn), &pool);
+    }
+
+    template <class Fn>
+    [[nodiscard]] auto async(fast_task::queue& q, Fn&& fn, scheduler::worker_pool* pool = nullptr) {
+        using R = std::invoke_result_t<std::decay_t<Fn>>;
+        return future<R>::start(q, std::forward<Fn>(fn), pool);
+    }
 }
 #endif

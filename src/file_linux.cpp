@@ -182,15 +182,15 @@ namespace fast_task::file {
                 was_in_flight = in_flight;
                 in_flight = false;
                 fullifed = true;
-                if (awaiter) {
-                    if (is_read)
-                        awaiter.end_dummy([&](auto data) { auto tt = (completion_struct*)data; tt->completed_bytes = fullifed_bytes; tt->data = buffer; });
-                    else
-                        awaiter.end_dummy([&](auto data) { auto tt = (completion_struct*)data; tt->completed_bytes = fullifed_bytes; });
-                }
-                awaiters.notify_all();
                 should_delete = destroy_on_complete;
                 old_awaiter = std::move(awaiter);
+                if (old_awaiter) {
+                    if (is_read)
+                        old_awaiter.end_dummy([&](auto data) { auto tt = (completion_struct*)data; tt->completed_bytes = fullifed_bytes; tt->data = buffer; });
+                    else
+                        old_awaiter.end_dummy([&](auto data) { auto tt = (completion_struct*)data; tt->completed_bytes = fullifed_bytes; });
+                }
+                awaiters.notify_all();
             }
             old_awaiter = nullptr;
             if (should_delete)
@@ -535,7 +535,6 @@ namespace fast_task::file {
             }
             return future<std::vector<uint8_t>>::start([file, data, task_]() -> std::vector<uint8_t> {
                 task::await_task(task_);
-                file->awaiter = nullptr;
                 if (data->error != io_errors::no_error && data->error != io_errors::eof) {
                     io_error_to_exception(data->error);
                     throw std::runtime_error("Unreachable");
@@ -556,7 +555,6 @@ namespace fast_task::file {
             }
             return future<std::vector<uint8_t>>::start([file, data, task_]() -> std::vector<uint8_t> {
                 task::await_task(task_);
-                file->awaiter = nullptr;
                 if (data->error != io_errors::no_error && data->error != io_errors::eof) {
                     io_error_to_exception(data->error);
                     throw std::runtime_error("Unreachable");

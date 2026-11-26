@@ -151,8 +151,9 @@ propagates.
 
 ```cpp
 std::vector<int> input = {1, 2, 3, 4};
-future_ptr<void> done = future_tool::for_each(input, [](int& v) {
-    v *= 2;
+std::atomic<int> sum{0};
+future_ptr<void> done = future_tool::for_each(input, [&](int v) {
+    sum.fetch_add(v, std::memory_order_relaxed);
 });
 done->wait();
 ```

@@ -62,7 +62,7 @@ namespace fast_task {
 
         template <class Rep, class Period>
         size_t expires_from_now(const std::chrono::duration<Rep, Period>& duration) {
-            return expires_at(fast_task::clock::now() + duration);
+            return expires_at(fast_task::deadline_after(duration));
         }
 
 #if __cplusplus >= 202002

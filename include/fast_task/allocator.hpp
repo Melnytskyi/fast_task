@@ -16,7 +16,7 @@
 namespace fast_task {
     struct FT_API allocator_tag {};
 
-    static constexpr inline allocator_tag at{};
+    inline constexpr allocator_tag at{};
 
     FT_API void* allocate(std::size_t bytes);
     FT_API void free(void* p);

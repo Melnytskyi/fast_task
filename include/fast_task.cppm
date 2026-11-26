@@ -69,6 +69,35 @@ export namespace fast_task {
     using ::fast_task::condition_variable_any;
     using ::fast_task::semaphore;
     using ::fast_task::limiter;
+    using ::fast_task::bounded_channel;
+    using ::fast_task::unbounded_channel;
+    using ::fast_task::spsc_channel;
+    using ::fast_task::watch_channel;
+    using ::fast_task::watch_receiver;
+    using ::fast_task::oneshot;
+    using ::fast_task::oneshot_sender;
+    using ::fast_task::oneshot_receiver;
+    using ::fast_task::make_oneshot;
+    using ::fast_task::manual_reset_event;
+    using ::fast_task::auto_reset_event;
+    using ::fast_task::latch;
+    using ::fast_task::barrier;
+    using ::fast_task::once_flag;
+    using ::fast_task::call_once;
+    using ::fast_task::cancellation_source;
+    using ::fast_task::cancellation_token;
+    using ::fast_task::cancellation_callback;
+    using ::fast_task::seqlock;
+    using ::fast_task::ticker;
+    using ::fast_task::missed_tick_policy;
+    using ::fast_task::rate_limiter;
+    using ::fast_task::parallel_for;
+    using ::fast_task::parallel_reduce;
+    using ::fast_task::task_group;
+    using ::fast_task::async;
+    using ::fast_task::when_all;
+    using ::fast_task::when_any;
+    using ::fast_task::with_timeout;
     using ::fast_task::queue;
     using ::fast_task::deadline_timer;
     using ::fast_task::mutex_unify;
@@ -99,8 +128,11 @@ export namespace fast_task {
 
     using ::fast_task::task_auto_start_coro;
     using ::fast_task::task_coro;
+    using ::fast_task::task_generator;
 
     using ::fast_task::operator co_await;
+    using ::fast_task::operator==;
+    using ::fast_task::operator!=;
 }
 
 export namespace fast_task::future_tool {
