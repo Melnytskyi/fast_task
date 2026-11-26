@@ -11,8 +11,9 @@
 #include <fast_task/task/task.hpp>
 
 namespace fast_task {
-    void FT_API_LOCAL route_task(task&&, enter_state* stat = nullptr, bool pre_scheduled = false);
+    void FT_API_LOCAL route_task(task&&, enter_state* stat = nullptr, bool pre_scheduled = false, bool is_yield = false);
     void FT_API_LOCAL transfer_task(task&&, enter_state* stat = nullptr);
+    void FT_API_LOCAL yield_task(task&&);
     bool FT_API_LOCAL can_be_scheduled_task_to_hot();
 }
 

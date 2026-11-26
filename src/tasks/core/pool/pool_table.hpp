@@ -15,19 +15,24 @@
 namespace fast_task {
     struct FT_API_LOCAL pool_ref {
         worker_pool_storage* ptr = nullptr;
+        bool counted = false;
 
         pool_ref() noexcept = default;
-        explicit pool_ref(worker_pool_storage* p) noexcept : ptr(p) {}
+        explicit pool_ref(worker_pool_storage* p, bool ref_counted = true) noexcept
+            : ptr(p), counted(p != nullptr && ref_counted) {}
         pool_ref(const pool_ref&) = delete;
         pool_ref& operator=(const pool_ref&) = delete;
-        pool_ref(pool_ref&& other) noexcept : ptr(other.ptr) {
+        pool_ref(pool_ref&& other) noexcept : ptr(other.ptr), counted(other.counted) {
             other.ptr = nullptr;
+            other.counted = false;
         }
         pool_ref& operator=(pool_ref&& other) noexcept {
             if (this != &other) {
                 reset();
                 ptr = other.ptr;
+                counted = other.counted;
                 other.ptr = nullptr;
+                other.counted = false;
             }
             return *this;
         }
@@ -37,8 +42,10 @@ namespace fast_task {
 
         void reset() noexcept {
             if (ptr) {
-                ptr->active_refs.fetch_sub(1, std::memory_order_release);
+                if (counted)
+                    ptr->active_refs.fetch_sub(1, std::memory_order_release);
                 ptr = nullptr;
+                counted = false;
             }
         }
 

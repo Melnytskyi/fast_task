@@ -61,7 +61,7 @@ namespace {
             mask_out = fast_task::native::this_thread::get_affinity();
             started.fetch_add(1, std::memory_order_acq_rel);
             while (!release.load(std::memory_order_acquire))
-                fast_task::this_task::yield();
+                std::this_thread::yield();
         });
     }
 }

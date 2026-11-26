@@ -23,19 +23,27 @@ namespace fast_task {
     }
 
     namespace {
+        inline pool_ref resolve_pool_ref(uint8_t index, executors_local* loc) noexcept {
+            if (index == global_pool_index)
+                return pool_ref(&global_storage(), false);
+            if (loc && loc->owner_pool && loc->owner_pool->pool_index == index)
+                return pool_ref(loc->owner_pool, false);
+            return acquire_pool_ref(index);
+        }
+
         pool_ref assign_pool_for(executors_local* loc, task_object& raw_task) noexcept {
             pool_ref inherit;
             if (loc && loc->is_task_thread && loc->curr_task) {
                 auto& parent = get_data(loc->curr_task);
                 if (parent.get_pool_assigned())
-                    inherit = acquire_pool_ref(parent.pool_index);
+                    inherit = resolve_pool_ref(parent.pool_index, loc);
             }
 
             if (!inherit)
                 inherit = acquire_implicit_pool_ref();
 
             if (!inherit && loc && loc->owner_pool)
-                inherit = acquire_pool_ref(loc->owner_pool->pool_index);
+                inherit = resolve_pool_ref(loc->owner_pool->pool_index, loc);
 
             if (inherit && (inherit->config.inherit_pool_on_spawn || inherit->config.allow_implicit_start)) {
                 raw_task.pool_index = inherit->pool_index;
@@ -44,18 +52,18 @@ namespace fast_task {
             }
             raw_task.pool_index = global_pool_index;
             raw_task.set_pool_assigned(true);
-            return acquire_pool_ref(global_pool_index);
+            return pool_ref(&global_storage(), false);
         }
     }
 
-    void route_task(task&& task, enter_state* stat, bool pre_scheduled) {
+    void route_task(task&& task, enter_state* stat, bool pre_scheduled, bool is_yield) {
         if (!task) {
             auto& global = global_storage();
             global.ops.queue.enqueue(global, nullptr, task.release());
             return;
         }
 
-        if (!pre_scheduled) {
+        if (!pre_scheduled && get_data(task).get_execution_mode() == task_object::execution_mode::as_coroutine) {
             fast_task::lock_guard task_guard(get_data(task));
             if (get_data(task).is_suspending()) {
                 get_data(task).set_resume_requested(true);
@@ -86,36 +94,42 @@ namespace fast_task {
         if (pre_scheduled) {
             fast_task::lock_guard task_guard(*raw_task);
             if (raw_task->get_pool_assigned())
-                pool = acquire_pool_ref(raw_task->pool_index);
+                pool = resolve_pool_ref(raw_task->pool_index, loc);
             else
                 pool = assign_pool_for(loc, *raw_task);
             if (!pool) {
                 raw_task->pool_index = global_pool_index;
                 raw_task->set_pool_assigned(true);
-                pool = acquire_pool_ref(global_pool_index);
+                pool = pool_ref(&global_storage(), false);
             }
-            if (!pool)
-                std::abort();
             pool->runtime.executing_tasks.fetch_add(1, std::memory_order_acq_rel);
         } else {
             if (raw_task->get_pool_assigned())
-                pool = acquire_pool_ref(raw_task->pool_index);
+                pool = resolve_pool_ref(raw_task->pool_index, loc);
             else
                 pool = assign_pool_for(loc, *raw_task);
             if (!pool) {
                 raw_task->pool_index = global_pool_index;
                 raw_task->set_pool_assigned(true);
-                pool = acquire_pool_ref(global_pool_index);
+                pool = pool_ref(&global_storage(), false);
             }
-            if (!pool)
-                std::abort();
             if (created)
                 pool->runtime.executing_tasks.fetch_add(1, std::memory_order_acq_rel);
         }
-        pool->ops.queue.enqueue(*pool, loc, raw_task);
+
+        executors_local* enqueue_loc = loc;
+        if (is_yield && loc && loc->owner_pool == pool.get()) {
+            if (!loc->local_tasks.empty() || pool->runtime.executing_tasks.load(std::memory_order_relaxed) > 1)
+                enqueue_loc = nullptr;
+        }
+        pool->ops.queue.enqueue(*pool, enqueue_loc, raw_task);
     }
 
     void transfer_task(task&& task, enter_state* stat) {
-        route_task(std::move(task), stat);
+        route_task(std::move(task), stat, false, false);
+    }
+
+    void yield_task(task&& task) {
+        route_task(std::move(task), nullptr, false, true);
     }
 }

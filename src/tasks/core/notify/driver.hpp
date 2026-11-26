@@ -26,6 +26,7 @@ namespace fast_task {
         alignas(hardware_destructive_interference_size) std::atomic<bool> parked{false};
         std::atomic<uint16_t> parked_pool{UINT16_MAX};
         std::atomic<uint64_t> parked_deadline_ticks{UINT64_MAX};
+        std::atomic<uint64_t> armed_deadline_ticks{UINT64_MAX};
         void poll(executors_local* loc);
         void park_until(executors_local* loc, fast_task::time_point max_wait, uint32_t token_before, uint32_t work_epoch_before);
         void wake();

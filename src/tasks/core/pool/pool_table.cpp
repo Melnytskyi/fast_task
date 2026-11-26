@@ -14,21 +14,27 @@ namespace fast_task {
             if (index >= pool_table_size)
                 return {};
         }
+        if (index == global_pool_index) {
+            auto* pool = glob.pools.slots[global_pool_index].load(std::memory_order_acquire);
+            return pool_ref(pool, false);
+        }
         fast_task::shared_lock guard(glob.pools.safety);
         auto* pool = glob.pools.slots[index].load(std::memory_order_acquire);
         if (!pool)
             return {};
         pool->active_refs.fetch_add(1, std::memory_order_acq_rel);
-        return pool_ref(pool);
+        return pool_ref(pool, true);
     }
 
     pool_ref acquire_implicit_pool_ref() noexcept {
+        if (glob.pools.implicit_pool.load(std::memory_order_relaxed) == nullptr)
+            return {};
         fast_task::shared_lock guard(glob.pools.safety);
         auto* pool = glob.pools.implicit_pool.load(std::memory_order_acquire);
         if (!pool || pool->closing)
             return {};
         pool->active_refs.fetch_add(1, std::memory_order_acq_rel);
-        return pool_ref(pool);
+        return pool_ref(pool, true);
     }
 
     uint8_t allocate_pool_slot(worker_pool_storage* storage) {

@@ -100,6 +100,7 @@ namespace fast_task {
 
         const bool timers_live = glob.timing.enabled.load(std::memory_order_acquire);
         auto deadline = max_wait;
+        armed_deadline_ticks.store(UINT64_MAX, std::memory_order_seq_cst);
         if (timers_live) {
             auto next_deadline = glob.timing.wheel.next_deadline();
             if (next_deadline < deadline)
@@ -184,7 +185,14 @@ namespace fast_task {
             if (parked_ticks != UINT64_MAX && tick >= parked_ticks)
                 return;
         }
-        glob.driver.ensure_driver();
+        uint64_t cur = glob.driver.armed_deadline_ticks.load(std::memory_order_acquire);
+        while (tick < cur) {
+            if (glob.driver.armed_deadline_ticks.compare_exchange_weak(
+                    cur, tick, std::memory_order_acq_rel, std::memory_order_acquire)) {
+                glob.driver.ensure_driver();
+                return;
+            }
+        }
     }
 
     void driver_context::handoff() {

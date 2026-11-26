@@ -59,25 +59,16 @@ namespace fast_task {
         data->awake_check++;
         try {
             if (!checkCancellation()) {
-                {
-                    fast_task::lock_guard guard(*data);
-                    data->set_resume_requested(false);
-                    data->set_status(task_object::status_e::suspending);
-                }
                 if (data->on_start_override)
                     data->on_start_override->callback(data);
                 else if (data->vtable && data->vtable->on_start)
                     data->vtable->on_start(data->user_data());
                 data->get_relock().relock_start();
-                bool ended = false;
-                {
-                    fast_task::lock_guard guard(*data);
-                    if (!data->get_is_restartable()) {
-                        ended = true;
+                if (!data->get_is_restartable()) {
+                    {
+                        fast_task::lock_guard guard(*data);
                         data->set_resume_requested(false);
                     }
-                }
-                if (ended) {
                     loc.pending_timer = fast_task::time_point::min();
                     data->end_of_life_notify();
                 }
@@ -197,16 +188,22 @@ namespace fast_task {
 
         loc.is_task_thread = true;
         while (true) {
+            const auto mode = data->get_execution_mode();
             {
                 fast_task::lock_guard guard(*data);
                 if (data->is_ended())
                     goto end_task;
 
-                data->set_status(task_object::status_e::running);
+                if (mode == task_object::execution_mode::as_coroutine) {
+                    data->set_resume_requested(false);
+                    data->set_status(task_object::status_e::suspending);
+                } else {
+                    data->set_status(task_object::status_e::running);
+                }
             }
 
             worker_mode_desk("process task - ", this_task::get_id());
-            switch (data->get_execution_mode()) {
+            switch (mode) {
             case task_object::execution_mode::stackfull:
             case task_object::execution_mode::_stackfull_reserved:
                 in_stackfull_run(loc, data);
@@ -260,8 +257,7 @@ namespace fast_task {
                     if (re_enqueue)
                         transfer_task(task{loc.curr_task});
                 }
-                loc.curr_task = loc.transfer_state.pending;
-                loc.transfer_state.pending.reset();
+                loc.curr_task = std::move(loc.transfer_state.pending);
                 data = &get_data(loc.curr_task);
                 data->awake_check++;
             }
@@ -310,7 +306,9 @@ namespace fast_task {
         if (end_of_life) {
             if (should_decrement)
                 task_mark_completed(get_data(loc.curr_task), &loc);
-        } else if (do_invalid_transfer || do_yield_transfer) {
+        } else if (do_yield_transfer) {
+            yield_task(std::move(loc.curr_task));
+        } else if (do_invalid_transfer) {
             transfer_task(std::move(loc.curr_task));
         }
 

@@ -10,7 +10,7 @@
 
 namespace fast_task {
     namespace {
-        constexpr uint32_t execution_data_cache_capacity = 16;
+        constexpr uint32_t execution_data_cache_capacity = 64;
 
         struct execution_data_cache {
             void* free_list = nullptr;

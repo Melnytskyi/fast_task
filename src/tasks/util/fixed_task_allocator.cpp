@@ -252,11 +252,7 @@ namespace fast_task {
             cur->next = nullptr;
             free_count -= count;
 
-            auto* tail = head;
-            for (size_t i = 1; i < count; ++i)
-                tail = tail->next;
-
-            glob.allocators.gba.push_batch(head, tail, count);
+            glob.allocators.gba.push_batch(head, cur, count);
         }
     }
 

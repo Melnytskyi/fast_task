@@ -55,7 +55,7 @@ namespace fast_task {
         struct {
             task pending;
 #if FT_TASK_TRANSFERS_LIMIT > 0
-            std::atomic_size_t transfers{(size_t)0};
+            size_t transfers = 0;
 #endif
         } transfer_state;
 

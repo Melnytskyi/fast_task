@@ -332,11 +332,7 @@ namespace fast_task {
             cur->next = nullptr;
             free_count -= count;
 
-            auto* tail = head;
-            for (size_t i = 1; i < count; ++i)
-                tail = tail->next;
-
-            glob.allocators.timing_alloc.push_batch(head, tail, count);
+            glob.allocators.timing_alloc.push_batch(head, cur, count);
         }
     }
 
@@ -631,6 +627,7 @@ namespace fast_task {
                 if (tp < earliest)
                     earliest = tp;
                 found_l0 = true;
+                break;
             }
             from = (s + 1) & (SLOTS - 1);
         }

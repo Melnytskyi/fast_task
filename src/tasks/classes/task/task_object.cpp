@@ -141,10 +141,7 @@ namespace fast_task {
     }
 
     void task_object::unlock() noexcept {
-        uint16_t cur = state.load(std::memory_order_relaxed), next;
-        do {
-            next = static_cast<uint16_t>(cur & ~static_cast<uint16_t>(state_f::spin_lock_locked));
-        } while (!state.compare_exchange_weak(cur, next, std::memory_order_release, std::memory_order_relaxed));
+        state.fetch_and(static_cast<uint16_t>(~static_cast<uint16_t>(state_f::spin_lock_locked)), std::memory_order_release);
         interrupt_unsafe_region::unlock();
     }
 

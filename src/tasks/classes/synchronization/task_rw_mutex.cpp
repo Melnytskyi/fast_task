@@ -159,18 +159,14 @@ namespace fast_task {
     void rw_mutex::read_unlock() {
         interrupt_unsafe_region region;
         uint64_t expected = values.state.load(std::memory_order_relaxed);
-        while (true) {
-            if ((expected & private_values::READER_COUNT_MASK) == 0)
-                throw std::logic_error("Tried unlock non owned mutex");
-            if (values.state.compare_exchange_weak(
-                    expected,
-                    expected - private_values::READER_ONE,
-                    std::memory_order_acq_rel,
-                    std::memory_order_relaxed
-                ))
-                break;
+        if ((expected & private_values::READER_COUNT_MASK) == 0)
+            throw std::logic_error("Tried unlock non owned mutex");
+        uint64_t previous = values.state.fetch_sub(private_values::READER_ONE, std::memory_order_acq_rel);
+        if ((previous & private_values::READER_COUNT_MASK) == 0) {
+            values.state.fetch_add(private_values::READER_ONE, std::memory_order_relaxed);
+            throw std::logic_error("Tried unlock non owned mutex");
         }
-        reader_left(values, expected);
+        reader_left(values, previous);
     }
 
     bool rw_mutex::is_read_locked() {
